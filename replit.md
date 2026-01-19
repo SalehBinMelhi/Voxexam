@@ -129,3 +129,6 @@ npm run dev
 - Dark mode support with theme toggle
 - Manual student assignment: Professors can type student names directly when creating exams, allowing exam access before students first log in
 - Unscheduled exams are now immediately available to assigned students (shown as "Available" status)
+- Audio questions now have microphone recording UI with start/stop/play/re-record controls
+- Audio questions include a required text input for grading (text-based word matching)
+- Submit Exam button is now visible on every question, not just the last one
