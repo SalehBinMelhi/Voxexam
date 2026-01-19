@@ -40,17 +40,17 @@ import { useToast } from "@/hooks/use-toast";
 
 interface AudioRecorderProps {
   questionId: string;
-  value: string;
-  onResponseChange: (text: string) => void;
+  textValue: string;
+  audioData: string;
+  onTextChange: (text: string) => void;
+  onAudioChange: (audioBase64: string) => void;
 }
 
-function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderProps) {
+function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudioChange }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
-  const [hasRecorded, setHasRecorded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -60,9 +60,17 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
-  }, [audioUrl]);
+  }, []);
+
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
 
   const startRecording = async () => {
     try {
@@ -77,15 +85,10 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const url = URL.createObjectURL(audioBlob);
-        if (audioUrl) URL.revokeObjectURL(audioUrl);
-        setAudioUrl(url);
-        setHasRecorded(true);
-        if (!value) {
-          onResponseChange("[Audio response recorded]");
-        }
+        const base64Audio = await blobToBase64(audioBlob);
+        onAudioChange(base64Audio);
         stream.getTracks().forEach(track => track.stop());
       };
 
@@ -114,19 +117,15 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
   };
 
   const playAudio = () => {
-    if (audioUrl && audioRef.current) {
+    if (audioData && audioRef.current) {
       audioRef.current.play();
       setIsPlaying(true);
     }
   };
 
   const deleteRecording = () => {
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-      setAudioUrl(null);
-      setHasRecorded(false);
-      setRecordingTime(0);
-    }
+    onAudioChange('');
+    setRecordingTime(0);
   };
 
   const formatTime = (seconds: number) => {
@@ -134,6 +133,8 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const hasRecording = audioData && audioData.length > 0;
 
   return (
     <div className="space-y-4">
@@ -165,7 +166,7 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
               Stop Recording
             </Button>
           </>
-        ) : hasRecorded && audioUrl ? (
+        ) : hasRecording ? (
           <>
             <div className="w-20 h-20 mx-auto rounded-full bg-chart-2/20 flex items-center justify-center">
               <CheckCircle2 className="h-10 w-10 text-chart-2" />
@@ -173,7 +174,7 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
             <p className="text-sm font-medium">Recording saved</p>
             <audio 
               ref={audioRef} 
-              src={audioUrl} 
+              src={audioData} 
               onEnded={() => setIsPlaying(false)}
               className="hidden"
             />
@@ -219,12 +220,12 @@ function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderPro
       
       <div>
         <Label className="text-sm text-muted-foreground mb-2 block">
-          Type your response (required for grading):
+          Type your response for grading:
         </Label>
         <Textarea
           placeholder="Type your verbal response here..."
-          value={value}
-          onChange={(e) => onResponseChange(e.target.value)}
+          value={textValue}
+          onChange={(e) => onTextChange(e.target.value)}
           rows={3}
           data-testid="textarea-audio-response"
         />
@@ -244,6 +245,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
   const { toast } = useToast();
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [responses, setResponses] = useState<Map<string, string>>(new Map());
+  const [audioResponses, setAudioResponses] = useState<Map<string, string>>(new Map());
   const [submitted, setSubmitted] = useState(false);
   const [submissionResult, setSubmissionResult] = useState<ExamSubmission | null>(null);
 
@@ -274,7 +276,10 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
   const currentQuestion = exam.questions[currentQuestionIndex];
   const totalQuestions = exam.questions.length;
   const progress = ((currentQuestionIndex + 1) / totalQuestions) * 100;
-  const answeredCount = responses.size;
+  
+  const answeredCount = exam.questions.filter(q => 
+    responses.has(q.id) || audioResponses.has(q.id)
+  ).length;
 
   const timeRemaining = exam.endTime
     ? Math.max(0, differenceInMinutes(parseISO(exam.endTime), new Date()))
@@ -284,6 +289,16 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
     const newResponses = new Map(responses);
     newResponses.set(currentQuestion.id, value);
     setResponses(newResponses);
+  };
+
+  const handleAudioChange = (questionId: string, audioData: string) => {
+    const newAudioResponses = new Map(audioResponses);
+    if (audioData) {
+      newAudioResponses.set(questionId, audioData);
+    } else {
+      newAudioResponses.delete(questionId);
+    }
+    setAudioResponses(newAudioResponses);
   };
 
   const goToNext = () => {
@@ -302,6 +317,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
     const examResponses: ExamResponse[] = exam.questions.map((q) => ({
       questionId: q.id,
       response: responses.get(q.id) || "",
+      audioData: audioResponses.get(q.id),
     }));
 
     submitMutation.mutate({
@@ -314,6 +330,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
   const handleClose = () => {
     setCurrentQuestionIndex(0);
     setResponses(new Map());
+    setAudioResponses(new Map());
     setSubmitted(false);
     setSubmissionResult(null);
     onOpenChange(false);
@@ -429,7 +446,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
                           {currentQuestion.type.toUpperCase()}
                         </span>
                       </Badge>
-                      {responses.has(currentQuestion.id) && (
+                      {(responses.has(currentQuestion.id) || audioResponses.has(currentQuestion.id)) && (
                         <Badge variant="outline" className="text-chart-2">
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Answered
@@ -469,8 +486,10 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
                 ) : currentQuestion.type === "audio" ? (
                   <AudioRecorder
                     questionId={currentQuestion.id}
-                    value={responses.get(currentQuestion.id) || ""}
-                    onResponseChange={handleResponseChange}
+                    textValue={responses.get(currentQuestion.id) || ""}
+                    audioData={audioResponses.get(currentQuestion.id) || ""}
+                    onTextChange={handleResponseChange}
+                    onAudioChange={(audioData) => handleAudioChange(currentQuestion.id, audioData)}
                   />
                 ) : (
                   <Textarea
@@ -488,7 +507,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
               {exam.questions.map((q, i) => (
                 <Button
                   key={q.id}
-                  variant={responses.has(q.id) ? "default" : "outline"}
+                  variant={(responses.has(q.id) || audioResponses.has(q.id)) ? "default" : "outline"}
                   size="sm"
                   className={`w-9 h-9 p-0 ${
                     i === currentQuestionIndex ? "ring-2 ring-primary ring-offset-2" : ""

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { useState, useRef } from "react";
 import {
   Calendar,
   Users,
@@ -23,6 +24,9 @@ import {
   Clock,
   Trophy,
   User,
+  Play,
+  Square,
+  Volume2,
 } from "lucide-react";
 import type { Exam, ExamSubmission, QuestionType, User as UserType } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
@@ -63,10 +67,14 @@ export function ExamDetailsDialog({
 
   const { data: allUsers = [] } = useQuery<UserType[]>({
     queryKey: ["/api/users"],
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
   const { data: submissions = [] } = useQuery<ExamSubmission[]>({
     queryKey: ["/api/submissions"],
+    refetchOnMount: true,
+    staleTime: 0,
   });
 
   const examSubmissions = submissions.filter((s) => s.examId === exam.id);
@@ -172,9 +180,9 @@ export function ExamDetailsDialog({
             <div className="space-y-3">
               <h4 className="font-medium flex items-center gap-2">
                 <Users className="h-4 w-4" />
-                Assigned Students ({assignedStudents.length})
+                Assigned Students ({assignedStudents.length + (exam.assignedStudentNames?.length || 0)})
               </h4>
-              {assignedStudents.length === 0 ? (
+              {assignedStudents.length === 0 && (!exam.assignedStudentNames || exam.assignedStudentNames.length === 0) ? (
                 <p className="text-sm text-muted-foreground">
                   No students assigned to this exam.
                 </p>
@@ -194,6 +202,34 @@ export function ExamDetailsDialog({
                       >
                         <User className="h-3 w-3 mr-1" />
                         {student.username}
+                        {hasSubmitted && submission && (
+                          <span className="ml-1">
+                            ({(submission.totalScore * 100).toFixed(0)}%)
+                          </span>
+                        )}
+                      </Badge>
+                    );
+                  })}
+                  {exam.assignedStudentNames?.map((name) => {
+                    const matchedStudent = allUsers.find(
+                      u => u.username.toLowerCase() === name.toLowerCase()
+                    );
+                    const hasSubmitted = matchedStudent && examSubmissions.some(
+                      (s) => s.studentId === matchedStudent.id
+                    );
+                    const submission = matchedStudent && examSubmissions.find(
+                      (s) => s.studentId === matchedStudent.id
+                    );
+                    if (matchedStudent && assignedStudents.some(s => s.id === matchedStudent.id)) {
+                      return null;
+                    }
+                    return (
+                      <Badge
+                        key={name}
+                        variant={hasSubmitted ? "default" : "outline"}
+                      >
+                        <User className="h-3 w-3 mr-1" />
+                        {name}
                         {hasSubmitted && submission && (
                           <span className="ml-1">
                             ({(submission.totalScore * 100).toFixed(0)}%)
@@ -269,14 +305,14 @@ export function ExamDetailsDialog({
                 <Separator />
                 <div className="space-y-3">
                   <h4 className="font-medium">Submission Results</h4>
-                  <div className="space-y-2">
+                  <div className="space-y-4">
                     {examSubmissions.map((sub) => {
                       const student = allUsers.find(
                         (u) => u.id === sub.studentId
                       );
                       return (
                         <Card key={sub.id}>
-                          <CardContent className="p-4">
+                          <CardContent className="p-4 space-y-4">
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-3">
                                 <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
@@ -306,6 +342,41 @@ export function ExamDetailsDialog({
                               >
                                 {(sub.totalScore * 100).toFixed(0)}%
                               </Badge>
+                            </div>
+                            
+                            <div className="space-y-2 pl-11">
+                              {sub.responses.map((resp, idx) => {
+                                const question = exam.questions.find(q => q.id === resp.questionId);
+                                const score = sub.scores[resp.questionId] || 0;
+                                return (
+                                  <div key={resp.questionId} className="text-sm border-l-2 pl-3 py-1 border-muted">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="font-medium">Q{idx + 1}:</span>
+                                      <span className="text-muted-foreground truncate flex-1">
+                                        {question?.text.slice(0, 40)}{question && question.text.length > 40 ? "..." : ""}
+                                      </span>
+                                      <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"} className="text-xs">
+                                        {(score * 100).toFixed(0)}%
+                                      </Badge>
+                                    </div>
+                                    {resp.response && (
+                                      <p className="text-muted-foreground text-xs">
+                                        Answer: {resp.response}
+                                      </p>
+                                    )}
+                                    {resp.audioData && (
+                                      <div className="mt-1">
+                                        <audio 
+                                          controls 
+                                          src={resp.audioData} 
+                                          className="h-8 w-full max-w-xs"
+                                          data-testid={`audio-response-${resp.questionId}`}
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </CardContent>
                         </Card>
