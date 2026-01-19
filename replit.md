@@ -13,8 +13,8 @@ This is a full-stack application built with:
 
 ### For Professors
 - Create oral exams with multiple question types (MCQ, short answer, audio response)
-- Schedule exams with start and end times
-- Assign students to specific exams
+- Schedule exams with start and end times (or leave unscheduled for immediate availability)
+- Assign students to exams by selecting registered students or by typing names directly
 - View exam submissions and scores
 - Delete exams
 
@@ -93,9 +93,10 @@ This is a full-stack application built with:
 - `title`: Exam name
 - `professorId`: Creator's user ID
 - `questions`: Array of questions
-- `startTime`: ISO datetime string
-- `endTime`: ISO datetime string
+- `startTime`: ISO datetime string (optional - if not set, exam is immediately available)
+- `endTime`: ISO datetime string (optional)
 - `assignedStudentIds`: Array of student user IDs
+- `assignedStudentNames`: Array of manually typed student names (matched case-insensitively)
 
 ### ExamSubmission
 - `id`: Unique identifier
@@ -126,3 +127,5 @@ npm run dev
 - Support for three question types: MCQ, short answer, and audio (simulated as text)
 - Automatic grading with word-match scoring for short answers
 - Dark mode support with theme toggle
+- Manual student assignment: Professors can type student names directly when creating exams, allowing exam access before students first log in
+- Unscheduled exams are now immediately available to assigned students (shown as "Available" status)
