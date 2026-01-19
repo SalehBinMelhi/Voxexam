@@ -23,7 +23,6 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users } from "lucide-react";
 import type { InsertQuestion, QuestionType, User } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -170,15 +169,15 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-3xl max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle>Create New Exam</DialogTitle>
           <DialogDescription>
             Set up your oral examination with questions and scheduling
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 pr-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="space-y-6 py-4">
             <div className="space-y-2">
               <Label htmlFor="exam-title">Exam Title</Label>
@@ -383,9 +382,9 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
               </Card>
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
+        <DialogFooter className="flex-shrink-0 gap-2 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

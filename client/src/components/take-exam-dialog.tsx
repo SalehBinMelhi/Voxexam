@@ -18,7 +18,6 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ChevronLeft,
   ChevronRight,
@@ -192,8 +191,8 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
           <div className="flex items-center justify-between gap-4">
             <div>
               <DialogTitle>{exam.title}</DialogTitle>
@@ -215,7 +214,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
           <Progress value={progress} className="mt-4" />
         </DialogHeader>
 
-        <ScrollArea className="flex-1 pr-4">
+        <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="py-6">
             <Card>
               <CardContent className="p-6 space-y-6">
@@ -314,9 +313,9 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
               ))}
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2">
+        <DialogFooter className="flex-shrink-0 flex-col sm:flex-row gap-2">
           <div className="flex items-center gap-2 flex-1">
             <p className="text-sm text-muted-foreground">
               {answeredCount} of {totalQuestions} answered
