@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useAuth } from "@/lib/auth-context";
@@ -25,6 +25,10 @@ import {
   Clock,
   FileQuestion,
   Mic,
+  MicOff,
+  Square,
+  Play,
+  Trash2,
   MessageSquare,
   ListChecks,
   CheckCircle2,
@@ -33,6 +37,201 @@ import {
 import type { Exam, ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+
+interface AudioRecorderProps {
+  questionId: string;
+  value: string;
+  onResponseChange: (text: string) => void;
+}
+
+function AudioRecorder({ questionId, value, onResponseChange }: AudioRecorderProps) {
+  const [isRecording, setIsRecording] = useState(false);
+  const [hasRecorded, setHasRecorded] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [permissionDenied, setPermissionDenied] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(audioBlob);
+        if (audioUrl) URL.revokeObjectURL(audioUrl);
+        setAudioUrl(url);
+        setHasRecorded(true);
+        if (!value) {
+          onResponseChange("[Audio response recorded]");
+        }
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      timerRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+      setPermissionDenied(false);
+    } catch (err) {
+      console.error('Error accessing microphone:', err);
+      setPermissionDenied(true);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+  };
+
+  const playAudio = () => {
+    if (audioUrl && audioRef.current) {
+      audioRef.current.play();
+      setIsPlaying(true);
+    }
+  };
+
+  const deleteRecording = () => {
+    if (audioUrl) {
+      URL.revokeObjectURL(audioUrl);
+      setAudioUrl(null);
+      setHasRecorded(false);
+      setRecordingTime(0);
+    }
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="p-6 rounded-md bg-muted/50 text-center space-y-4">
+        {permissionDenied ? (
+          <>
+            <MicOff className="h-8 w-8 mx-auto text-destructive" />
+            <p className="text-sm text-destructive font-medium">Microphone access denied</p>
+            <p className="text-xs text-muted-foreground">
+              Please type your response below instead.
+            </p>
+          </>
+        ) : isRecording ? (
+          <>
+            <div className="relative">
+              <div className="w-20 h-20 mx-auto rounded-full bg-destructive/20 flex items-center justify-center animate-pulse">
+                <Mic className="h-10 w-10 text-destructive" />
+              </div>
+            </div>
+            <p className="text-2xl font-mono font-medium">{formatTime(recordingTime)}</p>
+            <p className="text-sm text-muted-foreground">Recording...</p>
+            <Button 
+              variant="destructive" 
+              size="lg"
+              onClick={stopRecording}
+              data-testid="button-stop-recording"
+            >
+              <Square className="h-4 w-4 mr-2" />
+              Stop Recording
+            </Button>
+          </>
+        ) : hasRecorded && audioUrl ? (
+          <>
+            <div className="w-20 h-20 mx-auto rounded-full bg-chart-2/20 flex items-center justify-center">
+              <CheckCircle2 className="h-10 w-10 text-chart-2" />
+            </div>
+            <p className="text-sm font-medium">Recording saved</p>
+            <audio 
+              ref={audioRef} 
+              src={audioUrl} 
+              onEnded={() => setIsPlaying(false)}
+              className="hidden"
+            />
+            <div className="flex items-center justify-center gap-2">
+              <Button 
+                variant="outline" 
+                onClick={playAudio}
+                disabled={isPlaying}
+                data-testid="button-play-recording"
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {isPlaying ? "Playing..." : "Play"}
+              </Button>
+              <Button 
+                variant="outline"
+                onClick={deleteRecording}
+                data-testid="button-delete-recording"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Re-record
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="w-20 h-20 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
+              <Mic className="h-10 w-10 text-primary" />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Click to record your verbal answer, or type below
+            </p>
+            <Button 
+              size="lg"
+              onClick={startRecording}
+              data-testid="button-start-recording"
+            >
+              <Mic className="h-4 w-4 mr-2" />
+              Start Recording
+            </Button>
+          </>
+        )}
+      </div>
+      
+      <div>
+        <Label className="text-sm text-muted-foreground mb-2 block">
+          Type your response (required for grading):
+        </Label>
+        <Textarea
+          placeholder="Type your verbal response here..."
+          value={value}
+          onChange={(e) => onResponseChange(e.target.value)}
+          rows={3}
+          data-testid="textarea-audio-response"
+        />
+      </div>
+    </div>
+  );
+}
 
 interface TakeExamDialogProps {
   exam: Exam;
@@ -268,22 +467,11 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
                     ))}
                   </RadioGroup>
                 ) : currentQuestion.type === "audio" ? (
-                  <div className="space-y-3">
-                    <div className="p-4 rounded-md bg-muted/50 text-center">
-                      <Mic className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                      <p className="text-sm text-muted-foreground">
-                        Audio recording is simulated. Please type your response
-                        below.
-                      </p>
-                    </div>
-                    <Textarea
-                      placeholder="Type your verbal response here..."
-                      value={responses.get(currentQuestion.id) || ""}
-                      onChange={(e) => handleResponseChange(e.target.value)}
-                      rows={4}
-                      data-testid="textarea-audio-response"
-                    />
-                  </div>
+                  <AudioRecorder
+                    questionId={currentQuestion.id}
+                    value={responses.get(currentQuestion.id) || ""}
+                    onResponseChange={handleResponseChange}
+                  />
                 ) : (
                   <Textarea
                     placeholder="Type your answer here..."
@@ -321,7 +509,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
               {answeredCount} of {totalQuestions} answered
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               onClick={goToPrevious}
@@ -331,21 +519,20 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
               <ChevronLeft className="h-4 w-4 mr-1" />
               Previous
             </Button>
-            {currentQuestionIndex < totalQuestions - 1 ? (
-              <Button onClick={goToNext} data-testid="button-next-question">
+            {currentQuestionIndex < totalQuestions - 1 && (
+              <Button variant="outline" onClick={goToNext} data-testid="button-next-question">
                 Next
                 <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
-            ) : (
-              <Button
-                onClick={handleSubmit}
-                disabled={submitMutation.isPending}
-                data-testid="button-submit-exam"
-              >
-                <Send className="h-4 w-4 mr-2" />
-                {submitMutation.isPending ? "Submitting..." : "Submit Exam"}
-              </Button>
             )}
+            <Button
+              onClick={handleSubmit}
+              disabled={submitMutation.isPending || answeredCount === 0}
+              data-testid="button-submit-exam"
+            >
+              <Send className="h-4 w-4 mr-2" />
+              {submitMutation.isPending ? "Submitting..." : "Submit Exam"}
+            </Button>
           </div>
         </DialogFooter>
       </DialogContent>
