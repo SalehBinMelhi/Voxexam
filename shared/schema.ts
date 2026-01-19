@@ -27,6 +27,7 @@ export const examSchema = z.object({
   startTime: z.string().nullable(),
   endTime: z.string().nullable(),
   assignedStudentIds: z.array(z.string()),
+  assignedStudentNames: z.array(z.string()),
 });
 
 export type Exam = z.infer<typeof examSchema>;
@@ -37,6 +38,7 @@ export const insertExamSchema = z.object({
   startTime: z.string().nullable().optional(),
   endTime: z.string().nullable().optional(),
   assignedStudentIds: z.array(z.string()).optional(),
+  assignedStudentNames: z.array(z.string()).optional(),
   professorId: z.string().optional(),
 });
 

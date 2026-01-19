@@ -23,7 +23,7 @@ import { format, parseISO, isAfter, isBefore } from "date-fns";
 
 function getExamStatus(exam: Exam): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; canTake: boolean } {
   if (!exam.startTime || !exam.endTime) {
-    return { label: "Not Scheduled", variant: "secondary", canTake: false };
+    return { label: "Available", variant: "default", canTake: true };
   }
   const now = new Date();
   const start = parseISO(exam.startTime);
@@ -50,7 +50,10 @@ export default function StudentDashboard() {
     queryKey: ["/api/submissions"],
   });
 
-  const myExams = exams.filter((exam) => exam.assignedStudentIds.includes(user?.id || ""));
+  const myExams = exams.filter((exam) => 
+    exam.assignedStudentIds.includes(user?.id || "") ||
+    (exam.assignedStudentNames || []).some((name) => name.toLowerCase() === user?.username?.toLowerCase())
+  );
   const mySubmissions = submissions.filter((sub) => sub.studentId === user?.id);
   const submittedExamIds = new Set(mySubmissions.map((s) => s.examId));
 

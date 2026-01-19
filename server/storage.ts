@@ -113,6 +113,7 @@ export class MemStorage implements IStorage {
       startTime: insertExam.startTime || null,
       endTime: insertExam.endTime || null,
       assignedStudentIds: insertExam.assignedStudentIds || [],
+      assignedStudentNames: insertExam.assignedStudentNames || [],
     };
 
     this.exams.set(id, exam);
@@ -133,6 +134,9 @@ export class MemStorage implements IStorage {
       ...(updates.endTime !== undefined && { endTime: updates.endTime }),
       ...(updates.assignedStudentIds !== undefined && {
         assignedStudentIds: updates.assignedStudentIds,
+      }),
+      ...(updates.assignedStudentNames !== undefined && {
+        assignedStudentNames: updates.assignedStudentNames,
       }),
     };
 

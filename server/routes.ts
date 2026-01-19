@@ -178,8 +178,14 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Exam not found" });
       }
 
-      // Check if student is assigned to exam
-      if (!exam.assignedStudentIds.includes(actualStudentId as string)) {
+      // Check if student is assigned to exam (by ID or by name)
+      const student = await storage.getUser(actualStudentId as string);
+      const isAssignedById = exam.assignedStudentIds.includes(actualStudentId as string);
+      const isAssignedByName = student && (exam.assignedStudentNames || []).some(
+        (name) => name.toLowerCase() === student.username.toLowerCase()
+      );
+      
+      if (!isAssignedById && !isAssignedByName) {
         return res.status(403).json({ error: "Student is not assigned to this exam" });
       }
 

@@ -214,7 +214,7 @@ export default function ProfessorDashboard() {
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <Users className="h-4 w-4" />
                       <span>
-                        {exam.assignedStudentIds.length} student{exam.assignedStudentIds.length !== 1 ? "s" : ""} assigned
+                        {exam.assignedStudentIds.length + (exam.assignedStudentNames?.length || 0)} student{(exam.assignedStudentIds.length + (exam.assignedStudentNames?.length || 0)) !== 1 ? "s" : ""} assigned
                       </span>
                     </div>
                   </CardContent>

@@ -40,6 +40,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
+  const [newStudentName, setNewStudentName] = useState("");
 
   const [newQuestion, setNewQuestion] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<QuestionType>("short");
@@ -59,6 +61,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       startTime: string | null;
       endTime: string | null;
       assignedStudentIds: string[];
+      assignedStudentNames: string[];
       professorId: string;
     }) => {
       const response = await apiRequest("POST", "/api/exams", data);
@@ -88,10 +91,24 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setStartTime("");
     setEndTime("");
     setSelectedStudentIds([]);
+    setManualStudentNames([]);
+    setNewStudentName("");
     setNewQuestion("");
     setNewQuestionType("short");
     setNewQuestionOptions([""]);
     setNewCorrectAnswer("");
+  };
+
+  const addStudentName = () => {
+    const name = newStudentName.trim();
+    if (name && !manualStudentNames.includes(name)) {
+      setManualStudentNames([...manualStudentNames, name]);
+      setNewStudentName("");
+    }
+  };
+
+  const removeStudentName = (name: string) => {
+    setManualStudentNames(manualStudentNames.filter((n) => n !== name));
   };
 
   const addQuestion = () => {
@@ -152,6 +169,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       startTime: startTime || null,
       endTime: endTime || null,
       assignedStudentIds: selectedStudentIds,
+      assignedStudentNames: manualStudentNames,
       professorId: user?.id || "",
     });
   };
@@ -217,30 +235,82 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
               <div className="flex items-center justify-between">
                 <Label>Assign Students</Label>
                 <span className="text-sm text-muted-foreground">
-                  {selectedStudentIds.length} selected
+                  {selectedStudentIds.length + manualStudentNames.length} assigned
                 </span>
               </div>
-              {students.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No students registered yet. Students can be assigned after they log in.
-                </p>
-              ) : (
+              
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Enter student name..."
+                  value={newStudentName}
+                  onChange={(e) => setNewStudentName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addStudentName();
+                    }
+                  }}
+                  data-testid="input-student-name"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addStudentName}
+                  disabled={!newStudentName.trim()}
+                  data-testid="button-add-student"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {(manualStudentNames.length > 0 || selectedStudentIds.length > 0) && (
                 <div className="flex flex-wrap gap-2">
-                  {students.map((student) => (
+                  {manualStudentNames.map((name) => (
+                    <Badge
+                      key={name}
+                      variant="default"
+                      className="cursor-pointer"
+                      onClick={() => removeStudentName(name)}
+                      data-testid={`badge-manual-student-${name}`}
+                    >
+                      <Users className="h-3 w-3 mr-1" />
+                      {name}
+                      <X className="h-3 w-3 ml-1" />
+                    </Badge>
+                  ))}
+                  {students.filter((s) => selectedStudentIds.includes(s.id)).map((student) => (
                     <Badge
                       key={student.id}
-                      variant={selectedStudentIds.includes(student.id) ? "default" : "outline"}
+                      variant="default"
                       className="cursor-pointer"
                       onClick={() => toggleStudent(student.id)}
                       data-testid={`badge-student-${student.id}`}
                     >
                       <Users className="h-3 w-3 mr-1" />
                       {student.username}
-                      {selectedStudentIds.includes(student.id) && (
-                        <X className="h-3 w-3 ml-1" />
-                      )}
+                      <X className="h-3 w-3 ml-1" />
                     </Badge>
                   ))}
+                </div>
+              )}
+
+              {students.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Or select from registered students:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {students.filter((s) => !selectedStudentIds.includes(s.id)).map((student) => (
+                      <Badge
+                        key={student.id}
+                        variant="outline"
+                        className="cursor-pointer"
+                        onClick={() => toggleStudent(student.id)}
+                        data-testid={`badge-available-student-${student.id}`}
+                      >
+                        <Users className="h-3 w-3 mr-1" />
+                        {student.username}
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
