@@ -17,29 +17,44 @@ const openai = new OpenAI({
 
 async function transcribeAudio(audioDataUrl: string): Promise<string> {
   try {
-    console.log("Starting audio transcription, data URL length:", audioDataUrl.length);
+    console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
     
-    // More flexible regex to handle MIME types with codec info like "audio/webm;codecs=opus"
-    const base64Match = audioDataUrl.match(/^data:audio\/([^;,]+)[^,]*;base64,(.+)$/);
-    if (!base64Match) {
-      console.warn("Invalid audio data URL format. Expected: data:audio/TYPE;base64,DATA");
-      console.warn("Received prefix:", audioDataUrl.substring(0, 50));
+    // Split on ";base64," to separate metadata from base64 data
+    const base64Separator = ";base64,";
+    const separatorIndex = audioDataUrl.indexOf(base64Separator);
+    
+    if (separatorIndex === -1) {
+      console.error("[AUDIO] Invalid audio data URL format - no ;base64, separator found");
+      console.error("[AUDIO] Received prefix:", audioDataUrl.substring(0, 100));
+      return "";
+    }
+    
+    const metadataPart = audioDataUrl.substring(0, separatorIndex);
+    const base64Data = audioDataUrl.substring(separatorIndex + base64Separator.length);
+    
+    console.log("[AUDIO] Metadata:", metadataPart);
+    console.log("[AUDIO] Base64 data length:", base64Data.length);
+    
+    // Extract format from metadata (e.g., "data:audio/webm;codecs=opus" -> "webm")
+    const formatMatch = metadataPart.match(/^data:audio\/([a-z0-9]+)/i);
+    const format = formatMatch ? formatMatch[1].toLowerCase() : "webm";
+    
+    console.log("[AUDIO] Detected format:", format);
+    
+    const audioBuffer = Buffer.from(base64Data, "base64");
+    console.log("[AUDIO] Audio buffer size:", audioBuffer.length, "bytes");
+
+    if (audioBuffer.length < 1000) {
+      console.error("[AUDIO] Audio buffer too small, likely invalid recording");
       return "";
     }
 
-    const mimeType = base64Match[1];
-    const base64Data = base64Match[2];
-    console.log("Detected MIME type:", mimeType, "Base64 data length:", base64Data.length);
-    
-    const audioBuffer = Buffer.from(base64Data, "base64");
-    console.log("Audio buffer size:", audioBuffer.length, "bytes");
-
     let extension = "webm";
-    if (mimeType.includes("mp4") || mimeType.includes("m4a")) {
+    if (format.includes("mp4") || format.includes("m4a")) {
       extension = "mp4";
-    } else if (mimeType.includes("ogg")) {
+    } else if (format.includes("ogg")) {
       extension = "ogg";
-    } else if (mimeType.includes("wav")) {
+    } else if (format.includes("wav")) {
       extension = "wav";
     }
 
@@ -47,16 +62,19 @@ async function transcribeAudio(audioDataUrl: string): Promise<string> {
       type: `audio/${extension}`,
     });
 
-    console.log("Sending to Whisper API with extension:", extension);
+    console.log("[AUDIO] Sending to Whisper API with extension:", extension);
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
       model: "whisper-1",
     });
 
-    console.log("Audio transcription result:", transcription.text);
+    console.log("[AUDIO] Transcription result:", transcription.text);
     return transcription.text || "";
-  } catch (error) {
-    console.error("Audio transcription failed:", error);
+  } catch (error: any) {
+    console.error("[AUDIO] Transcription failed with error:", error?.message || error);
+    if (error?.response?.data) {
+      console.error("[AUDIO] API response:", JSON.stringify(error.response.data));
+    }
     return "";
   }
 }
@@ -83,6 +101,11 @@ export interface IStorage {
     examId: string,
     responses: ExamResponse[]
   ): Promise<ExamSubmission>;
+  updateSubmissionScore(
+    submissionId: string,
+    questionId: string,
+    newScore: number
+  ): Promise<ExamSubmission | undefined>;
 }
 
 async function evaluateWithAI(
@@ -344,6 +367,32 @@ export class MemStorage implements IStorage {
     };
 
     this.submissions.set(id, submission);
+    return submission;
+  }
+
+  async updateSubmissionScore(
+    submissionId: string,
+    questionId: string,
+    newScore: number
+  ): Promise<ExamSubmission | undefined> {
+    const submission = this.submissions.get(submissionId);
+    if (!submission) {
+      return undefined;
+    }
+
+    // Clamp score between 0 and 1
+    const clampedScore = Math.max(0, Math.min(1, newScore));
+    
+    // Update the score for the specific question
+    submission.scores[questionId] = clampedScore;
+    
+    // Recalculate total score
+    const scores = Object.values(submission.scores);
+    submission.totalScore = scores.length > 0
+      ? scores.reduce((a, b) => a + b, 0) / scores.length
+      : 0;
+
+    this.submissions.set(submissionId, submission);
     return submission;
   }
 }

@@ -216,5 +216,34 @@ export async function registerRoutes(
     }
   });
 
+  // Update submission score (for manual grading by professor)
+  app.patch("/api/submissions/:id/score", async (req, res) => {
+    try {
+      const { questionId, score } = req.body;
+      
+      if (!questionId || typeof score !== "number") {
+        return res.status(400).json({ error: "questionId and score are required" });
+      }
+
+      if (score < 0 || score > 1) {
+        return res.status(400).json({ error: "Score must be between 0 and 1" });
+      }
+
+      const submission = await storage.updateSubmissionScore(
+        req.params.id,
+        questionId,
+        score
+      );
+
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      res.json(submission);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update submission score" });
+    }
+  });
+
   return httpServer;
 }

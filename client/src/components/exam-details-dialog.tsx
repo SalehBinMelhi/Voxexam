@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
 import { useState, useRef } from "react";
 import {
   Calendar,
@@ -27,6 +28,9 @@ import {
   Play,
   Square,
   Volume2,
+  Edit2,
+  Check,
+  X,
 } from "lucide-react";
 import type { Exam, ExamSubmission, QuestionType, User as UserType } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
@@ -102,6 +106,64 @@ export function ExamDetailsDialog({
       });
     },
   });
+
+  // State for manual grading
+  const [editingScore, setEditingScore] = useState<{
+    submissionId: string;
+    questionId: string;
+    currentScore: number;
+  } | null>(null);
+  const [newScoreValue, setNewScoreValue] = useState("");
+
+  const updateScoreMutation = useMutation({
+    mutationFn: async ({ submissionId, questionId, score }: { submissionId: string; questionId: string; score: number }) => {
+      await apiRequest("PATCH", `/api/submissions/${submissionId}/score`, { questionId, score });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
+      toast({
+        title: "Score updated",
+        description: "The grade has been manually updated.",
+      });
+      setEditingScore(null);
+      setNewScoreValue("");
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update score.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const startEditing = (submissionId: string, questionId: string, currentScore: number) => {
+    setEditingScore({ submissionId, questionId, currentScore });
+    setNewScoreValue(Math.round(currentScore * 100).toString());
+  };
+
+  const cancelEditing = () => {
+    setEditingScore(null);
+    setNewScoreValue("");
+  };
+
+  const saveScore = () => {
+    if (!editingScore) return;
+    const scorePercent = parseInt(newScoreValue, 10);
+    if (isNaN(scorePercent) || scorePercent < 0 || scorePercent > 100) {
+      toast({
+        title: "Invalid score",
+        description: "Please enter a number between 0 and 100.",
+        variant: "destructive",
+      });
+      return;
+    }
+    updateScoreMutation.mutate({
+      submissionId: editingScore.submissionId,
+      questionId: editingScore.questionId,
+      score: scorePercent / 100,
+    });
+  };
 
   const status = getExamStatus(exam);
 
@@ -344,28 +406,80 @@ export function ExamDetailsDialog({
                               </Badge>
                             </div>
                             
-                            <div className="space-y-2 pl-11">
+                            <div className="space-y-3 pl-11">
                               {sub.responses.map((resp, idx) => {
                                 const question = exam.questions.find(q => q.id === resp.questionId);
                                 const score = sub.scores[resp.questionId] || 0;
+                                const isEditing = editingScore?.submissionId === sub.id && editingScore?.questionId === resp.questionId;
                                 return (
-                                  <div key={resp.questionId} className="text-sm border-l-2 pl-3 py-1 border-muted">
-                                    <div className="flex items-center gap-2 mb-1">
+                                  <div key={resp.questionId} className="text-sm border-l-2 pl-3 py-2 border-muted">
+                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                                       <span className="font-medium">Q{idx + 1}:</span>
-                                      <span className="text-muted-foreground truncate flex-1">
+                                      <span className="text-muted-foreground truncate flex-1 min-w-0">
                                         {question?.text.slice(0, 40)}{question && question.text.length > 40 ? "..." : ""}
                                       </span>
-                                      <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"} className="text-xs">
-                                        {(score * 100).toFixed(0)}%
-                                      </Badge>
+                                      {isEditing ? (
+                                        <div className="flex items-center gap-1">
+                                          <Input
+                                            type="number"
+                                            min="0"
+                                            max="100"
+                                            value={newScoreValue}
+                                            onChange={(e) => setNewScoreValue(e.target.value)}
+                                            className="w-16 h-7 text-xs"
+                                            data-testid={`input-score-${resp.questionId}`}
+                                          />
+                                          <span className="text-xs text-muted-foreground">%</span>
+                                          <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-6 w-6"
+                                            onClick={saveScore}
+                                            disabled={updateScoreMutation.isPending}
+                                            data-testid={`button-save-score-${resp.questionId}`}
+                                          >
+                                            <Check className="h-3 w-3 text-green-600" />
+                                          </Button>
+                                          <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-6 w-6"
+                                            onClick={cancelEditing}
+                                            data-testid={`button-cancel-score-${resp.questionId}`}
+                                          >
+                                            <X className="h-3 w-3 text-red-600" />
+                                          </Button>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-1">
+                                          <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"} className="text-xs">
+                                            {(score * 100).toFixed(0)}%
+                                          </Badge>
+                                          <Button
+                                            size="icon"
+                                            variant="ghost"
+                                            className="h-6 w-6"
+                                            onClick={() => startEditing(sub.id, resp.questionId, score)}
+                                            title="Edit score"
+                                            data-testid={`button-edit-score-${resp.questionId}`}
+                                          >
+                                            <Edit2 className="h-3 w-3" />
+                                          </Button>
+                                        </div>
+                                      )}
                                     </div>
+                                    {question && (
+                                      <p className="text-muted-foreground text-xs mb-1">
+                                        Expected: {question.correctAnswer || "No expected answer"}
+                                      </p>
+                                    )}
                                     {resp.response && (
                                       <p className="text-muted-foreground text-xs">
                                         Answer: {resp.response}
                                       </p>
                                     )}
                                     {resp.audioData && (
-                                      <div className="mt-1">
+                                      <div className="mt-2">
                                         <audio 
                                           controls 
                                           src={resp.audioData} 
