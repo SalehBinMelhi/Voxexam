@@ -17,14 +17,11 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Invalid username or role" });
       }
 
-      let user = await storage.getUserByUsername(username);
+      // Look up user by both username AND role to allow same name for different roles
+      let user = await storage.getUserByUsernameAndRole(username, role);
       
       if (!user) {
         user = await storage.createUser({ username, role });
-      } else if (user.role !== role) {
-        return res.status(400).json({ 
-          error: `User ${username} is already registered as a ${user.role}` 
-        });
       }
 
       res.json(user);
