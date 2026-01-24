@@ -27,7 +27,6 @@ import {
   Mic,
   MicOff,
   Square,
-  Play,
   Trash2,
   MessageSquare,
   ListChecks,
@@ -48,13 +47,11 @@ interface AudioRecorderProps {
 
 function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudioChange }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -72,10 +69,29 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
     });
   };
 
+  const getSupportedMimeType = () => {
+    const types = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      'audio/wav',
+      ''
+    ];
+    for (const type of types) {
+      if (type === '' || MediaRecorder.isTypeSupported(type)) {
+        return type || undefined;
+      }
+    }
+    return undefined;
+  };
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const mimeType = getSupportedMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -86,7 +102,7 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
         const base64Audio = await blobToBase64(audioBlob);
         onAudioChange(base64Audio);
         stream.getTracks().forEach(track => track.stop());
@@ -113,13 +129,6 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-    }
-  };
-
-  const playAudio = () => {
-    if (audioData && audioRef.current) {
-      audioRef.current.play();
-      setIsPlaying(true);
     }
   };
 
@@ -173,30 +182,19 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
             </div>
             <p className="text-sm font-medium">Recording saved</p>
             <audio 
-              ref={audioRef} 
+              controls
               src={audioData} 
-              onEnded={() => setIsPlaying(false)}
-              className="hidden"
+              className="w-full max-w-xs mx-auto"
+              data-testid="audio-playback"
             />
-            <div className="flex items-center justify-center gap-2">
-              <Button 
-                variant="outline" 
-                onClick={playAudio}
-                disabled={isPlaying}
-                data-testid="button-play-recording"
-              >
-                <Play className="h-4 w-4 mr-2" />
-                {isPlaying ? "Playing..." : "Play"}
-              </Button>
-              <Button 
-                variant="outline"
-                onClick={deleteRecording}
-                data-testid="button-delete-recording"
-              >
-                <Trash2 className="h-4 w-4 mr-2" />
-                Re-record
-              </Button>
-            </div>
+            <Button 
+              variant="outline"
+              onClick={deleteRecording}
+              data-testid="button-delete-recording"
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Re-record
+            </Button>
           </>
         ) : (
           <>
