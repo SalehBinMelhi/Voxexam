@@ -17,15 +17,22 @@ const openai = new OpenAI({
 
 async function transcribeAudio(audioDataUrl: string): Promise<string> {
   try {
-    const base64Match = audioDataUrl.match(/^data:audio\/([^;]+);base64,(.+)$/);
+    console.log("Starting audio transcription, data URL length:", audioDataUrl.length);
+    
+    // More flexible regex to handle MIME types with codec info like "audio/webm;codecs=opus"
+    const base64Match = audioDataUrl.match(/^data:audio\/([^;,]+)[^,]*;base64,(.+)$/);
     if (!base64Match) {
-      console.warn("Invalid audio data URL format");
+      console.warn("Invalid audio data URL format. Expected: data:audio/TYPE;base64,DATA");
+      console.warn("Received prefix:", audioDataUrl.substring(0, 50));
       return "";
     }
 
     const mimeType = base64Match[1];
     const base64Data = base64Match[2];
+    console.log("Detected MIME type:", mimeType, "Base64 data length:", base64Data.length);
+    
     const audioBuffer = Buffer.from(base64Data, "base64");
+    console.log("Audio buffer size:", audioBuffer.length, "bytes");
 
     let extension = "webm";
     if (mimeType.includes("mp4") || mimeType.includes("m4a")) {
@@ -40,12 +47,13 @@ async function transcribeAudio(audioDataUrl: string): Promise<string> {
       type: `audio/${extension}`,
     });
 
+    console.log("Sending to Whisper API with extension:", extension);
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
       model: "whisper-1",
     });
 
-    console.log("Audio transcription:", transcription.text);
+    console.log("Audio transcription result:", transcription.text);
     return transcription.text || "";
   } catch (error) {
     console.error("Audio transcription failed:", error);
@@ -140,6 +148,8 @@ async function evaluateResponse(
   response: string,
   audioData?: string
 ): Promise<number> {
+  console.log(`Evaluating response for question type: ${question.type}, has audioData: ${!!audioData}, audioData length: ${audioData?.length || 0}, text response: "${response?.substring(0, 50)}..."`);
+  
   if (question.type === "mcq") {
     return response.trim().toLowerCase() ===
       (question.correctAnswer || "").toLowerCase()
@@ -147,15 +157,30 @@ async function evaluateResponse(
       : 0.0;
   }
 
-  if (question.type === "audio" && audioData) {
+  if (question.type === "audio" && audioData && audioData.length > 0) {
+    console.log("Processing audio question with recording data");
     const transcription = await transcribeAudio(audioData);
     if (transcription) {
       console.log(`Audio transcribed for grading: "${transcription}"`);
       return evaluateWithAI(question, transcription);
     }
-    if (response) {
+    console.log("Transcription failed or empty, checking for text fallback");
+    if (response && response.trim().length > 0) {
+      console.log("Using text response as fallback for grading");
       return evaluateWithAI(question, response);
     }
+    console.log("No text fallback available, returning 0");
+    return 0.0;
+  }
+
+  // For audio questions without recording, use text response
+  if (question.type === "audio" && response && response.trim().length > 0) {
+    console.log("Audio question with text-only response, grading text");
+    return evaluateWithAI(question, response);
+  }
+
+  if (!response || response.trim().length === 0) {
+    console.log("Empty response, returning 0");
     return 0.0;
   }
 
