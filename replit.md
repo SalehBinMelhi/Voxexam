@@ -110,7 +110,11 @@ This is a full-stack application built with:
 ## Grading Logic
 
 - **MCQ Questions**: Exact match comparison (case-insensitive) returns 1.0 for correct, 0.0 for incorrect
-- **Short Answer/Audio**: Word overlap comparison - calculates percentage of expected answer words present in response
+- **Short Answer/Audio**: AI-powered semantic evaluation using OpenAI (GPT-4o-mini)
+  - Uses Replit AI Integrations for API access
+  - Evaluates answers on a 0.0-1.0 scale based on semantic understanding, not just word matching
+  - Considers partial credit for partially correct answers
+  - Falls back to word overlap comparison if AI grading fails
 
 ## Development
 
