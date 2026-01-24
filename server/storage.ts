@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import type {
   User,
   InsertUser,
@@ -14,6 +14,44 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
+
+async function transcribeAudio(audioDataUrl: string): Promise<string> {
+  try {
+    const base64Match = audioDataUrl.match(/^data:audio\/([^;]+);base64,(.+)$/);
+    if (!base64Match) {
+      console.warn("Invalid audio data URL format");
+      return "";
+    }
+
+    const mimeType = base64Match[1];
+    const base64Data = base64Match[2];
+    const audioBuffer = Buffer.from(base64Data, "base64");
+
+    let extension = "webm";
+    if (mimeType.includes("mp4") || mimeType.includes("m4a")) {
+      extension = "mp4";
+    } else if (mimeType.includes("ogg")) {
+      extension = "ogg";
+    } else if (mimeType.includes("wav")) {
+      extension = "wav";
+    }
+
+    const audioFile = await toFile(audioBuffer, `audio.${extension}`, {
+      type: `audio/${extension}`,
+    });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: "whisper-1",
+    });
+
+    console.log("Audio transcription:", transcription.text);
+    return transcription.text || "";
+  } catch (error) {
+    console.error("Audio transcription failed:", error);
+    return "";
+  }
+}
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -99,13 +137,26 @@ function fallbackEvaluate(question: Question, response: string): number {
 
 async function evaluateResponse(
   question: Question,
-  response: string
+  response: string,
+  audioData?: string
 ): Promise<number> {
   if (question.type === "mcq") {
     return response.trim().toLowerCase() ===
       (question.correctAnswer || "").toLowerCase()
       ? 1.0
       : 0.0;
+  }
+
+  if (question.type === "audio" && audioData) {
+    const transcription = await transcribeAudio(audioData);
+    if (transcription) {
+      console.log(`Audio transcribed for grading: "${transcription}"`);
+      return evaluateWithAI(question, transcription);
+    }
+    if (response) {
+      return evaluateWithAI(question, response);
+    }
+    return 0.0;
   }
 
   return evaluateWithAI(question, response);
@@ -243,7 +294,11 @@ export class MemStorage implements IStorage {
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
       if (question) {
-        scores[response.questionId] = await evaluateResponse(question, response.response);
+        scores[response.questionId] = await evaluateResponse(
+          question,
+          response.response,
+          response.audioData
+        );
       }
     }
 
