@@ -110,11 +110,15 @@ This is a full-stack application built with:
 ## Grading Logic
 
 - **MCQ Questions**: Exact match comparison (case-insensitive) returns 1.0 for correct, 0.0 for incorrect
-- **Short Answer/Audio**: AI-powered semantic evaluation using OpenAI (GPT-4o-mini)
-  - Uses Replit AI Integrations for API access
-  - Evaluates answers on a 0.0-1.0 scale based on semantic understanding, not just word matching
+- **Short Answer**: AI-powered semantic evaluation using OpenAI (GPT-4o-mini)
+  - Evaluates answers on a 0.0-1.0 scale based on semantic understanding
   - Considers partial credit for partially correct answers
   - Falls back to word overlap comparison if AI grading fails
+- **Audio Questions**: Speech-to-text transcription + AI grading
+  - Uses OpenAI Whisper API to transcribe recorded audio to text
+  - Supports webm, mp4, ogg, and wav audio formats
+  - Transcription is then graded using the same AI semantic evaluation
+  - Falls back to text input if transcription fails
 
 ## Development
 
