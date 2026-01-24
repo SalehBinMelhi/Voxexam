@@ -49,12 +49,17 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [browserUnsupported, setBrowserUnsupported] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const selectedMimeTypeRef = useRef<string>('audio/webm');
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && !window.MediaRecorder) {
+      setBrowserUnsupported(true);
+    }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
@@ -69,29 +74,44 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
     });
   };
 
-  const getSupportedMimeType = () => {
+  const getSupportedMimeType = (): string => {
+    if (typeof MediaRecorder === 'undefined') {
+      return 'audio/webm';
+    }
     const types = [
       'audio/webm;codecs=opus',
       'audio/webm',
       'audio/mp4',
       'audio/ogg;codecs=opus',
-      'audio/wav',
-      ''
+      'audio/wav'
     ];
     for (const type of types) {
-      if (type === '' || MediaRecorder.isTypeSupported(type)) {
-        return type || undefined;
+      if (MediaRecorder.isTypeSupported(type)) {
+        return type;
       }
     }
-    return undefined;
+    return 'audio/webm';
   };
 
   const startRecording = async () => {
+    if (!window.MediaRecorder) {
+      setBrowserUnsupported(true);
+      return;
+    }
+    
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = getSupportedMimeType();
-      const options = mimeType ? { mimeType } : undefined;
-      const mediaRecorder = new MediaRecorder(stream, options);
+      selectedMimeTypeRef.current = mimeType;
+      
+      let mediaRecorder: MediaRecorder;
+      try {
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+      } catch {
+        mediaRecorder = new MediaRecorder(stream);
+        selectedMimeTypeRef.current = mediaRecorder.mimeType || 'audio/webm';
+      }
+      
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -102,7 +122,7 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
+        const audioBlob = new Blob(audioChunksRef.current, { type: selectedMimeTypeRef.current });
         const base64Audio = await blobToBase64(audioBlob);
         onAudioChange(base64Audio);
         stream.getTracks().forEach(track => track.stop());
@@ -148,7 +168,15 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
   return (
     <div className="space-y-4">
       <div className="p-6 rounded-md bg-muted/50 text-center space-y-4">
-        {permissionDenied ? (
+        {browserUnsupported ? (
+          <>
+            <MicOff className="h-8 w-8 mx-auto text-muted-foreground" />
+            <p className="text-sm font-medium">Audio recording not supported</p>
+            <p className="text-xs text-muted-foreground">
+              Your browser doesn't support audio recording. Please type your response below.
+            </p>
+          </>
+        ) : permissionDenied ? (
           <>
             <MicOff className="h-8 w-8 mx-auto text-destructive" />
             <p className="text-sm text-destructive font-medium">Microphone access denied</p>
