@@ -1,15 +1,19 @@
 import { randomUUID } from "crypto";
+import OpenAI from "openai";
 import type {
   User,
   InsertUser,
   Exam,
   InsertExam,
   Question,
-  InsertQuestion,
   ExamSubmission,
-  InsertExamSubmission,
   ExamResponse,
 } from "@shared/schema";
+
+const openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -35,10 +39,68 @@ export interface IStorage {
   ): Promise<ExamSubmission>;
 }
 
-function evaluateResponse(
+async function evaluateWithAI(
   question: Question,
   response: string
-): number {
+): Promise<number> {
+  try {
+    const prompt = `You are grading a student's answer to an exam question. 
+
+Question: ${question.text}
+
+Expected Answer: ${question.correctAnswer}
+
+Student's Answer: ${response}
+
+Grade the student's answer on a scale from 0.0 to 1.0, where:
+- 1.0 = Perfect or nearly perfect answer that demonstrates full understanding
+- 0.75-0.99 = Good answer with minor omissions or inaccuracies
+- 0.5-0.74 = Partial understanding, missing key points
+- 0.25-0.49 = Minimal understanding, significant errors
+- 0.0-0.24 = Incorrect or no relevant content
+
+Consider semantic meaning and understanding, not just exact word matching. Be fair but rigorous.
+
+Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 10,
+      temperature: 0.1,
+    });
+
+    const scoreText = completion.choices[0]?.message?.content?.trim() || "0";
+    const score = parseFloat(scoreText);
+    
+    if (isNaN(score) || score < 0 || score > 1) {
+      console.warn(`AI returned invalid score: ${scoreText}, falling back to word matching`);
+      return fallbackEvaluate(question, response);
+    }
+    
+    return score;
+  } catch (error) {
+    console.error("AI grading failed, using fallback:", error);
+    return fallbackEvaluate(question, response);
+  }
+}
+
+function fallbackEvaluate(question: Question, response: string): number {
+  if (!question.correctAnswer) {
+    return 0.0;
+  }
+
+  const correctWords = question.correctAnswer.toLowerCase().split(/\s+/);
+  const responseWordsSet = new Set(response.toLowerCase().split(/\s+/));
+  const commonWords = correctWords.filter((w) => responseWordsSet.has(w));
+
+  return correctWords.length > 0 ? commonWords.length / correctWords.length : 0.0;
+}
+
+async function evaluateResponse(
+  question: Question,
+  response: string
+): Promise<number> {
   if (question.type === "mcq") {
     return response.trim().toLowerCase() ===
       (question.correctAnswer || "").toLowerCase()
@@ -46,17 +108,7 @@ function evaluateResponse(
       : 0.0;
   }
 
-  if (!question.correctAnswer) {
-    return 0.0;
-  }
-
-  const correctWords = new Set(
-    question.correctAnswer.toLowerCase().split(/\s+/)
-  );
-  const responseWords = new Set(response.toLowerCase().split(/\s+/));
-  const commonWords = [...correctWords].filter((w) => responseWords.has(w));
-
-  return correctWords.size > 0 ? commonWords.length / correctWords.size : 0.0;
+  return evaluateWithAI(question, response);
 }
 
 export class MemStorage implements IStorage {
@@ -191,7 +243,7 @@ export class MemStorage implements IStorage {
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
       if (question) {
-        scores[response.questionId] = evaluateResponse(question, response.response);
+        scores[response.questionId] = await evaluateResponse(question, response.response);
       }
     }
 
