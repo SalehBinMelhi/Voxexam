@@ -43,13 +43,16 @@ interface AudioRecorderProps {
   audioData: string;
   onTextChange: (text: string) => void;
   onAudioChange: (audioBase64: string) => void;
+  transcript: string;
+  onTranscriptChange: (transcript: string) => void;
 }
 
-function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudioChange }: AudioRecorderProps) {
+function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudioChange, transcript, onTranscriptChange }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [browserUnsupported, setBrowserUnsupported] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -126,6 +129,25 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
         const base64Audio = await blobToBase64(audioBlob);
         onAudioChange(base64Audio);
         stream.getTracks().forEach(track => track.stop());
+        
+        setIsTranscribing(true);
+        try {
+          const res = await fetch("/api/transcribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ audioData: base64Audio }),
+          });
+          const data = await res.json();
+          if (data.transcript) {
+            onTranscriptChange(data.transcript);
+          } else {
+            onTranscriptChange("");
+          }
+        } catch {
+          onTranscriptChange("");
+        } finally {
+          setIsTranscribing(false);
+        }
       };
 
       mediaRecorder.start();
@@ -154,6 +176,7 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
 
   const deleteRecording = () => {
     onAudioChange('');
+    onTranscriptChange('');
     setRecordingTime(0);
   };
 
@@ -215,6 +238,21 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
               className="w-full max-w-xs mx-auto"
               data-testid="audio-playback"
             />
+            {isTranscribing && (
+              <div className="flex items-center gap-2 justify-center text-sm text-muted-foreground" data-testid="transcribing-indicator">
+                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                Transcribing your recording...
+              </div>
+            )}
+            {!isTranscribing && transcript && (
+              <div className="text-left bg-muted/80 rounded-md p-3 mt-2" data-testid="transcript-preview">
+                <p className="text-xs font-medium text-muted-foreground mb-1">AI Transcript:</p>
+                <p className="text-sm">{transcript}</p>
+              </div>
+            )}
+            {!isTranscribing && !transcript && audioData && (
+              <p className="text-xs text-muted-foreground">Transcript not available. You can type your response below.</p>
+            )}
             <Button 
               variant="outline"
               onClick={deleteRecording}
@@ -272,6 +310,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [responses, setResponses] = useState<Map<string, string>>(new Map());
   const [audioResponses, setAudioResponses] = useState<Map<string, string>>(new Map());
+  const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map());
   const [submitted, setSubmitted] = useState(false);
   const [submissionResult, setSubmissionResult] = useState<ExamSubmission | null>(null);
 
@@ -327,6 +366,16 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
     setAudioResponses(newAudioResponses);
   };
 
+  const handleTranscriptChange = (questionId: string, transcript: string) => {
+    const newTranscripts = new Map(transcripts);
+    if (transcript) {
+      newTranscripts.set(questionId, transcript);
+    } else {
+      newTranscripts.delete(questionId);
+    }
+    setTranscripts(newTranscripts);
+  };
+
   const goToNext = () => {
     if (currentQuestionIndex < totalQuestions - 1) {
       setCurrentQuestionIndex(currentQuestionIndex + 1);
@@ -357,6 +406,7 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
     setCurrentQuestionIndex(0);
     setResponses(new Map());
     setAudioResponses(new Map());
+    setTranscripts(new Map());
     setSubmitted(false);
     setSubmissionResult(null);
     onOpenChange(false);
@@ -516,6 +566,8 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
                     audioData={audioResponses.get(currentQuestion.id) || ""}
                     onTextChange={handleResponseChange}
                     onAudioChange={(audioData) => handleAudioChange(currentQuestion.id, audioData)}
+                    transcript={transcripts.get(currentQuestion.id) || ""}
+                    onTranscriptChange={(transcript) => handleTranscriptChange(currentQuestion.id, transcript)}
                   />
                 ) : (
                   <Textarea

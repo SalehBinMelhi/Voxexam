@@ -63,6 +63,7 @@ export const examResponseSchema = z.object({
   questionId: z.string(),
   response: z.string(),
   audioData: z.string().optional(),
+  transcript: z.string().optional(),
 });
 
 export type ExamResponse = z.infer<typeof examResponseSchema>;

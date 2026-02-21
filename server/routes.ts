@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage, transcribeAudio } from "./storage";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
 
 export async function registerRoutes(
@@ -242,6 +242,19 @@ export async function registerRoutes(
       res.json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to update submission score" });
+    }
+  });
+
+  app.post("/api/transcribe", async (req, res) => {
+    try {
+      const { audioData } = req.body;
+      if (!audioData || typeof audioData !== "string") {
+        return res.status(400).json({ error: "audioData is required" });
+      }
+      const transcript = await transcribeAudio(audioData);
+      res.json({ transcript });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to transcribe audio" });
     }
   });
 

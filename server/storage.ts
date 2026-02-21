@@ -17,7 +17,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-async function transcribeAudio(audioDataUrl: string): Promise<string> {
+export async function transcribeAudio(audioDataUrl: string): Promise<string> {
   try {
     console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
     
@@ -93,6 +93,7 @@ export interface IStorage {
 interface EvalResult {
   score: number;
   method: GradingMethod;
+  transcript?: string;
 }
 
 async function evaluateWithAI(
@@ -176,7 +177,8 @@ async function evaluateResponse(
     const transcription = await transcribeAudio(audioData);
     if (transcription) {
       console.log(`[AI-GRADING] Audio transcribed: "${transcription}"`);
-      return evaluateWithAI(question, transcription);
+      const result = await evaluateWithAI(question, transcription);
+      return { ...result, transcript: transcription };
     }
     console.log("[AI-GRADING] Transcription failed, checking for text fallback");
     if (response && response.trim().length > 0) {
@@ -339,6 +341,9 @@ export class MemStorage implements IStorage {
         );
         scores[response.questionId] = result.score;
         gradingMethodsMap[response.questionId] = result.method;
+        if (result.transcript) {
+          response.transcript = result.transcript;
+        }
       }
     }
 

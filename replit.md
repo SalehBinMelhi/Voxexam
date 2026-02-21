@@ -146,3 +146,5 @@ npm run dev
 - Grading method tracking: each question score shows how it was graded (AI Graded, Auto, Manual, Fallback)
 - Manual grading override: professors can click edit on any score to manually adjust it (0-100%)
 - PATCH /api/submissions/:id/score endpoint for manual score updates
+- Transcript visibility: audio transcripts are now saved in submissions and visible to both students (live preview after recording) and professors (in grading view)
+- POST /api/transcribe endpoint for live audio-to-text preview during exam-taking

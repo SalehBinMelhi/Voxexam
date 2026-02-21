@@ -496,6 +496,12 @@ export function ExamDetailsDialog({
                                         />
                                       </div>
                                     )}
+                                    {resp.transcript && (
+                                      <div className="mt-2 bg-muted/60 rounded-md p-2" data-testid={`transcript-${resp.questionId}`}>
+                                        <p className="text-[10px] font-medium text-muted-foreground mb-0.5">AI Transcript:</p>
+                                        <p className="text-xs">{resp.transcript}</p>
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
