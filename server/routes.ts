@@ -2,6 +2,8 @@ import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { createRequire } from "module";
+import fs from "fs";
+import path from "path";
 const require = createRequire(import.meta.url);
 const pdf = require("pdf-parse");
 import mammoth from "mammoth";
@@ -12,6 +14,12 @@ import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+const RECORDINGS_DIR = path.join(process.cwd(), "recordings");
+if (!fs.existsSync(RECORDINGS_DIR)) {
+  fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+}
 
 declare global {
   namespace Express {
@@ -553,6 +561,7 @@ export async function registerRoutes(
       const { examId, studentId } = req.query;
       
       let subs;
+      const includePreview = req.query.includePreview === "true";
       if (examId) {
         subs = await storage.getSubmissionsByExam(examId as string);
       } else if (studentId) {
@@ -568,6 +577,10 @@ export async function registerRoutes(
         } else {
           subs = await storage.getSubmissionsByStudent(userId);
         }
+      }
+
+      if (!includePreview) {
+        subs = subs.filter(s => s.isPreview !== "true");
       }
       
       res.json(subs);
@@ -598,7 +611,7 @@ export async function registerRoutes(
         });
       }
 
-      const { examId, responses } = parseResult.data;
+      const { examId, responses, isPreview } = parseResult.data;
       const studentId = req.user!.claims.sub;
 
       const exam = await storage.getExam(examId);
@@ -606,23 +619,25 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Exam not found" });
       }
 
-      if (exam.startTime && exam.endTime) {
-        const now = new Date();
-        const start = new Date(exam.startTime);
-        const end = new Date(exam.endTime);
-        
-        if (now < start || now > end) {
-          return res.status(400).json({ error: "Exam is not currently active" });
+      if (!isPreview) {
+        if (exam.startTime && exam.endTime) {
+          const now = new Date();
+          const start = new Date(exam.startTime);
+          const end = new Date(exam.endTime);
+          
+          if (now < start || now > end) {
+            return res.status(400).json({ error: "Exam is not currently active" });
+          }
+        }
+
+        const existingSubmissions = await storage.getSubmissionsByStudent(studentId);
+        const alreadySubmitted = existingSubmissions.some(s => s.examId === examId && s.isPreview !== "true");
+        if (alreadySubmitted) {
+          return res.status(400).json({ error: "You have already submitted this exam" });
         }
       }
 
-      const existingSubmissions = await storage.getSubmissionsByStudent(studentId);
-      const alreadySubmitted = existingSubmissions.some(s => s.examId === examId);
-      if (alreadySubmitted) {
-        return res.status(400).json({ error: "You have already submitted this exam" });
-      }
-
-      const submission = await storage.createSubmission(studentId, examId, responses);
+      const submission = await storage.createSubmission(studentId, examId, responses, !!isPreview);
       res.status(201).json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to create submission" });
@@ -730,6 +745,87 @@ export async function registerRoutes(
     } catch (error) {
       res.status(500).json({ error: "Failed to transcribe audio" });
     }
+  });
+
+  app.post("/api/submissions/:id/recordings", isAuthenticated, recordingUpload.fields([
+    { name: "screenRecording", maxCount: 1 },
+    { name: "webcamRecording", maxCount: 1 },
+  ]), async (req: any, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const submissionId = p(req.params.id);
+      const submission = await storage.getSubmission(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      if (submission.studentId !== userId) {
+        const exam = await storage.getExam(submission.examId);
+        if (!exam || exam.professorId !== userId) {
+          return res.status(403).json({ error: "Not authorized to upload recordings for this submission" });
+        }
+      }
+
+      const { submissions: submissionsTable } = await import("@shared/schema");
+      const drizzleOrm = await import("drizzle-orm");
+      const { db } = await import("./db");
+
+      const updates: any = {};
+
+      if (req.files?.screenRecording?.[0]) {
+        const file = req.files.screenRecording[0];
+        const fileName = `screen_${submissionId}_${Date.now()}.webm`;
+        const filePath = path.join(RECORDINGS_DIR, fileName);
+        fs.writeFileSync(filePath, file.buffer);
+        updates.screenRecordingUrl = `/api/recordings/${fileName}`;
+      }
+
+      if (req.files?.webcamRecording?.[0]) {
+        const file = req.files.webcamRecording[0];
+        const fileName = `webcam_${submissionId}_${Date.now()}.webm`;
+        const filePath = path.join(RECORDINGS_DIR, fileName);
+        fs.writeFileSync(filePath, file.buffer);
+        updates.webcamRecordingUrl = `/api/recordings/${fileName}`;
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await db.update(submissionsTable).set(updates).where(drizzleOrm.eq(submissionsTable.id, submissionId));
+      }
+
+      res.json({ success: true, ...updates });
+    } catch (error) {
+      console.error("Failed to upload recordings:", error);
+      res.status(500).json({ error: "Failed to upload recordings" });
+    }
+  });
+
+  app.get("/api/recordings/:filename", isAuthenticated, async (req, res) => {
+    const userId = req.user!.claims.sub;
+    const filename = p(req.params.filename);
+    if (filename.includes("..") || filename.includes("/")) {
+      return res.status(400).json({ error: "Invalid filename" });
+    }
+
+    const submissionIdMatch = filename.match(/(?:screen|webcam)_([^_]+)_/);
+    if (submissionIdMatch) {
+      const subId = submissionIdMatch[1];
+      const submission = await storage.getSubmission(subId);
+      if (submission) {
+        if (submission.studentId !== userId) {
+          const exam = await storage.getExam(submission.examId);
+          if (!exam || exam.professorId !== userId) {
+            return res.status(403).json({ error: "Not authorized to view this recording" });
+          }
+        }
+      }
+    }
+
+    const filePath = path.join(RECORDINGS_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Recording not found" });
+    }
+    res.setHeader("Content-Type", "video/webm");
+    res.sendFile(filePath);
   });
 
   return httpServer;

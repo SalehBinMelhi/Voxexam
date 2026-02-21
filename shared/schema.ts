@@ -133,6 +133,9 @@ export const submissions = pgTable("submissions", {
   totalScore: real("total_score").notNull(),
   totalUnderstandingScore: real("total_understanding_score"),
   feedback: jsonb("feedback").$type<{ strengths: string; weakPoints: string; recommendations: string } | null>(),
+  isPreview: varchar("is_preview").default("false"),
+  screenRecordingUrl: varchar("screen_recording_url"),
+  webcamRecordingUrl: varchar("webcam_recording_url"),
   submittedAt: varchar("submitted_at").notNull(),
 });
 
@@ -142,6 +145,7 @@ export const insertExamSubmissionSchema = z.object({
   examId: z.string(),
   responses: z.array(examResponseSchema),
   studentId: z.string().optional(),
+  isPreview: z.boolean().optional(),
 });
 
 export type InsertExamSubmission = z.infer<typeof insertExamSubmissionSchema>;

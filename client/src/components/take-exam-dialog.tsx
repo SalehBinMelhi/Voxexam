@@ -33,6 +33,8 @@ import {
   CheckCircle2,
   Trophy,
   Eye,
+  Video,
+  Monitor,
 } from "lucide-react";
 import type { Exam, ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
 import { format, parseISO, differenceInMinutes } from "date-fns";
@@ -306,29 +308,187 @@ interface TakeExamDialogProps {
   previewMode?: boolean;
 }
 
+type ExamPhase = "setup" | "exam" | "results";
+
 export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }: TakeExamDialogProps) {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [phase, setPhase] = useState<ExamPhase>("setup");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [responses, setResponses] = useState<Map<string, string>>(new Map());
   const [audioResponses, setAudioResponses] = useState<Map<string, string>>(new Map());
   const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map());
-  const [submitted, setSubmitted] = useState(false);
   const [submissionResult, setSubmissionResult] = useState<ExamSubmission | null>(null);
 
+  const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [webcamReady, setWebcamReady] = useState(false);
+  const [screenReady, setScreenReady] = useState(false);
+  const [webcamError, setWebcamError] = useState("");
+  const [screenError, setScreenError] = useState("");
+
+  const webcamVideoRef = useRef<HTMLVideoElement>(null);
+  const screenRecorderRef = useRef<MediaRecorder | null>(null);
+  const webcamRecorderRef = useRef<MediaRecorder | null>(null);
+  const screenChunksRef = useRef<Blob[]>([]);
+  const webcamChunksRef = useRef<Blob[]>([]);
+
+  useEffect(() => {
+    if (!open) {
+      stopAllStreams();
+      setPhase("setup");
+      setWebcamReady(false);
+      setScreenReady(false);
+      setWebcamError("");
+      setScreenError("");
+    }
+    return () => {
+      stopAllStreams();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (webcamStream && webcamVideoRef.current) {
+      webcamVideoRef.current.srcObject = webcamStream;
+    }
+  }, [webcamStream, phase]);
+
+  const stopAllStreams = () => {
+    if (screenRecorderRef.current && screenRecorderRef.current.state !== "inactive") {
+      screenRecorderRef.current.stop();
+    }
+    if (webcamRecorderRef.current && webcamRecorderRef.current.state !== "inactive") {
+      webcamRecorderRef.current.stop();
+    }
+    webcamStream?.getTracks().forEach(t => t.stop());
+    screenStream?.getTracks().forEach(t => t.stop());
+    setWebcamStream(null);
+    setScreenStream(null);
+    screenRecorderRef.current = null;
+    webcamRecorderRef.current = null;
+    screenChunksRef.current = [];
+    webcamChunksRef.current = [];
+  };
+
+  const startWebcam = async () => {
+    try {
+      setWebcamError("");
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      setWebcamStream(stream);
+      setWebcamReady(true);
+    } catch (err: any) {
+      setWebcamError("Camera access denied. You must enable your camera to take this exam.");
+      setWebcamReady(false);
+    }
+  };
+
+  const startScreenShare = async () => {
+    try {
+      setScreenError("");
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      setScreenStream(stream);
+      setScreenReady(true);
+      stream.getVideoTracks()[0].addEventListener("ended", () => {
+        setScreenStream(null);
+        setScreenReady(false);
+      });
+    } catch (err: any) {
+      setScreenError("Screen sharing denied. You must share your screen to take this exam.");
+      setScreenReady(false);
+    }
+  };
+
+  const startRecordings = () => {
+    if (screenStream) {
+      screenChunksRef.current = [];
+      const recorder = new MediaRecorder(screenStream, { mimeType: "video/webm" });
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) screenChunksRef.current.push(e.data); };
+      recorder.start(1000);
+      screenRecorderRef.current = recorder;
+    }
+    if (webcamStream) {
+      webcamChunksRef.current = [];
+      const recorder = new MediaRecorder(webcamStream, { mimeType: "video/webm" });
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) webcamChunksRef.current.push(e.data); };
+      recorder.start(1000);
+      webcamRecorderRef.current = recorder;
+    }
+  };
+
+  const stopRecordings = (): Promise<{ screenBlob: Blob | null; webcamBlob: Blob | null }> => {
+    return new Promise((resolve) => {
+      let screenBlob: Blob | null = null;
+      let webcamBlob: Blob | null = null;
+      let pending = 0;
+
+      const checkDone = () => {
+        if (pending === 0) resolve({ screenBlob, webcamBlob });
+      };
+
+      if (screenRecorderRef.current && screenRecorderRef.current.state !== "inactive") {
+        pending++;
+        screenRecorderRef.current.onstop = () => {
+          screenBlob = screenChunksRef.current.length > 0 ? new Blob(screenChunksRef.current, { type: "video/webm" }) : null;
+          pending--;
+          checkDone();
+        };
+        screenRecorderRef.current.stop();
+      }
+
+      if (webcamRecorderRef.current && webcamRecorderRef.current.state !== "inactive") {
+        pending++;
+        webcamRecorderRef.current.onstop = () => {
+          webcamBlob = webcamChunksRef.current.length > 0 ? new Blob(webcamChunksRef.current, { type: "video/webm" }) : null;
+          pending--;
+          checkDone();
+        };
+        webcamRecorderRef.current.stop();
+      }
+
+      if (pending === 0) resolve({ screenBlob, webcamBlob });
+    });
+  };
+
+  const handleStartExam = () => {
+    startRecordings();
+    setPhase("exam");
+  };
+
   const submitMutation = useMutation({
-    mutationFn: async (data: { examId: string; responses: ExamResponse[]; studentId: string }) => {
+    mutationFn: async (data: { examId: string; responses: ExamResponse[]; studentId: string; isPreview?: boolean }) => {
       const response = await apiRequest("POST", "/api/submissions", data);
       const submission = await response.json();
       return submission as ExamSubmission;
     },
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
-      setSubmitted(true);
       setSubmissionResult(result);
+      setPhase("results");
+
+      const { screenBlob, webcamBlob } = await stopRecordings();
+
+      if ((screenBlob || webcamBlob) && result.id) {
+        try {
+          const formData = new FormData();
+          if (screenBlob) formData.append("screenRecording", screenBlob, "screen.webm");
+          if (webcamBlob) formData.append("webcamRecording", webcamBlob, "webcam.webm");
+          await fetch(`/api/submissions/${result.id}/recordings`, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+          });
+        } catch (e) {
+          console.error("Failed to upload recordings:", e);
+        }
+      }
+
+      stopAllStreams();
+
       toast({
-        title: "Exam submitted",
-        description: "Your answers have been submitted successfully.",
+        title: previewMode ? "Preview graded" : "Exam submitted",
+        description: previewMode
+          ? "Your preview has been graded by AI. This is a test run."
+          : "Your answers have been submitted and graded.",
       });
     },
     onError: () => {
@@ -391,11 +551,6 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   };
 
   const handleSubmit = () => {
-    if (previewMode) {
-      setSubmitted(true);
-      setSubmissionResult(null);
-      return;
-    }
     const examResponses: ExamResponse[] = exam.questions.map((q) => ({
       questionId: q.id,
       response: responses.get(q.id) || "",
@@ -406,16 +561,22 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       examId: exam.id,
       responses: examResponses,
       studentId: user?.id || "",
+      isPreview: previewMode || undefined,
     });
   };
 
   const handleClose = () => {
+    stopAllStreams();
+    setPhase("setup");
     setCurrentQuestionIndex(0);
     setResponses(new Map());
     setAudioResponses(new Map());
     setTranscripts(new Map());
-    setSubmitted(false);
     setSubmissionResult(null);
+    setWebcamReady(false);
+    setScreenReady(false);
+    setWebcamError("");
+    setScreenError("");
     onOpenChange(false);
   };
 
@@ -430,49 +591,92 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     }
   };
 
-  if (submitted && previewMode) {
+  if (phase === "setup") {
     return (
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="max-w-md">
-          <DialogHeader className="text-center">
-            <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-              <CheckCircle2 className="h-8 w-8 text-primary" />
-            </div>
-            <DialogTitle className="text-2xl">Preview Complete</DialogTitle>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {exam.title}
+              {previewMode && <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>}
+            </DialogTitle>
             <DialogDescription>
-              This was a preview — no submission was recorded
+              Before starting, enable your camera and share your screen. Both are required during the exam.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-6 space-y-4">
-            <h4 className="font-medium text-sm">Your Responses</h4>
-            <div className="space-y-3">
-              {exam.questions.map((q, i) => {
-                const response = responses.get(q.id);
-                const hasAudio = audioResponses.has(q.id);
-                const transcript = transcripts.get(q.id);
-                return (
-                  <div key={q.id} className="rounded-md border p-3 space-y-1">
-                    <p className="text-xs font-medium text-muted-foreground">Q{i + 1}: {q.text}</p>
-                    {response ? (
-                      <p className="text-sm">{response}</p>
-                    ) : hasAudio ? (
-                      <p className="text-sm italic text-muted-foreground">{transcript || "Audio recorded"}</p>
-                    ) : (
-                      <p className="text-sm italic text-muted-foreground">No response</p>
-                    )}
-                    {q.correctAnswer && (
-                      <p className="text-xs text-green-600 dark:text-green-400 mt-1">Expected: {q.correctAnswer}</p>
-                    )}
-                  </div>
-                );
-              })}
+          <div className="space-y-4 py-4">
+            {previewMode && (
+              <div className="rounded-md bg-primary/5 border border-primary/20 p-3 flex items-center gap-2" data-testid="preview-banner">
+                <Eye className="h-4 w-4 text-primary flex-shrink-0" />
+                <p className="text-sm text-primary">Preview mode — your answers will be AI-graded but flagged as a test run.</p>
+              </div>
+            )}
+
+            <div className="rounded-md border p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Video className="h-5 w-5 text-muted-foreground" />
+                  <span className="font-medium text-sm">Camera</span>
+                </div>
+                {webcamReady ? (
+                  <Badge variant="default" className="bg-green-600" data-testid="webcam-status-ready">
+                    <CheckCircle2 className="h-3 w-3 mr-1" /> Ready
+                  </Badge>
+                ) : (
+                  <Button size="sm" onClick={startWebcam} data-testid="button-enable-webcam">
+                    <Video className="h-4 w-4 mr-1" /> Enable Camera
+                  </Button>
+                )}
+              </div>
+              {webcamReady && webcamStream && (
+                <video
+                  ref={webcamVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="w-full max-w-[200px] mx-auto rounded-md border aspect-video object-cover"
+                  data-testid="webcam-preview"
+                />
+              )}
+              {webcamError && <p className="text-sm text-destructive">{webcamError}</p>}
+            </div>
+
+            <div className="rounded-md border p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Monitor className="h-5 w-5 text-muted-foreground" />
+                  <span className="font-medium text-sm">Screen Recording</span>
+                </div>
+                {screenReady ? (
+                  <Badge variant="default" className="bg-green-600" data-testid="screen-status-ready">
+                    <CheckCircle2 className="h-3 w-3 mr-1" /> Ready
+                  </Badge>
+                ) : (
+                  <Button size="sm" onClick={startScreenShare} data-testid="button-share-screen">
+                    <Monitor className="h-4 w-4 mr-1" /> Share Screen
+                  </Button>
+                )}
+              </div>
+              {screenError && <p className="text-sm text-destructive">{screenError}</p>}
+            </div>
+
+            <div className="text-xs text-muted-foreground text-center">
+              {totalQuestions} question{totalQuestions !== 1 ? "s" : ""} · Your screen and camera will be recorded throughout the exam
             </div>
           </div>
 
           <DialogFooter>
-            <Button className="w-full" onClick={handleClose} data-testid="button-close-preview">
-              Close Preview
+            <Button variant="outline" onClick={handleClose} data-testid="button-cancel-exam">
+              Cancel
+            </Button>
+            <Button
+              onClick={handleStartExam}
+              disabled={!webcamReady || !screenReady}
+              data-testid="button-start-exam"
+            >
+              <Send className="h-4 w-4 mr-2" />
+              {previewMode ? "Start Preview" : "Start Exam"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -480,7 +684,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     );
   }
 
-  if (submitted && submissionResult) {
+  if (phase === "results" && submissionResult) {
+    const understandingScores = submissionResult.understandingScores || {};
     return (
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-md">
@@ -488,18 +693,31 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
             <div className="mx-auto w-16 h-16 rounded-full bg-chart-2/10 flex items-center justify-center mb-4">
               <Trophy className="h-8 w-8 text-chart-2" />
             </div>
-            <DialogTitle className="text-2xl">Exam Completed!</DialogTitle>
+            <DialogTitle className="text-2xl flex items-center justify-center gap-2">
+              {previewMode ? "Preview Results" : "Exam Completed!"}
+              {previewMode && <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>}
+            </DialogTitle>
             <DialogDescription>
-              Your answers have been submitted and graded
+              {previewMode
+                ? "AI grading results for your test run — this was not a real submission"
+                : "Your answers have been submitted and graded"}
             </DialogDescription>
           </DialogHeader>
 
           <div className="py-6 space-y-6">
-            <div className="text-center">
-              <p className="text-5xl font-bold text-primary">
-                {(submissionResult.totalScore * 100).toFixed(0)}%
-              </p>
-              <p className="text-muted-foreground mt-1">Overall Score</p>
+            <div className="grid grid-cols-2 gap-4 text-center">
+              <div>
+                <p className="text-4xl font-bold text-primary">
+                  {(submissionResult.totalScore * 100).toFixed(0)}%
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">Correctness</p>
+              </div>
+              <div>
+                <p className="text-4xl font-bold text-blue-600 dark:text-blue-400">
+                  {((submissionResult.totalUnderstandingScore ?? submissionResult.totalScore) * 100).toFixed(0)}%
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">Understanding</p>
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -507,30 +725,57 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               <div className="space-y-2">
                 {exam.questions.map((q, i) => {
                   const score = submissionResult.scores[q.id] || 0;
+                  const uScore = understandingScores[q.id] ?? score;
                   return (
-                    <div
-                      key={q.id}
-                      className="flex items-center justify-between text-sm"
-                    >
-                      <span className="text-muted-foreground truncate flex-1">
-                        Q{i + 1}: {q.text.slice(0, 30)}
-                        {q.text.length > 30 ? "..." : ""}
-                      </span>
-                      <Badge
-                        variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"}
-                      >
-                        {(score * 100).toFixed(0)}%
-                      </Badge>
+                    <div key={q.id} className="rounded-md border p-2 space-y-1">
+                      <p className="text-xs text-muted-foreground truncate">
+                        Q{i + 1}: {q.text.slice(0, 40)}{q.text.length > 40 ? "..." : ""}
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"}>
+                          Correctness: {(score * 100).toFixed(0)}%
+                        </Badge>
+                        <Badge variant={uScore >= 0.7 ? "default" : uScore >= 0.5 ? "secondary" : "destructive"} className="bg-blue-600/80">
+                          Understanding: {(uScore * 100).toFixed(0)}%
+                        </Badge>
+                      </div>
+                      {previewMode && q.correctAnswer && (
+                        <p className="text-xs text-green-600 dark:text-green-400">Expected: {q.correctAnswer}</p>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
+
+            {submissionResult.feedback && (
+              <div className="space-y-2">
+                <h4 className="font-medium text-sm">AI Feedback</h4>
+                {submissionResult.feedback.strengths && (
+                  <div className="rounded-md bg-green-50 dark:bg-green-950/30 p-2">
+                    <p className="text-xs font-medium text-green-700 dark:text-green-400 mb-1">Strengths</p>
+                    <p className="text-xs">{submissionResult.feedback.strengths}</p>
+                  </div>
+                )}
+                {submissionResult.feedback.weakPoints && (
+                  <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 p-2">
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">Areas to Improve</p>
+                    <p className="text-xs">{submissionResult.feedback.weakPoints}</p>
+                  </div>
+                )}
+                {submissionResult.feedback.recommendations && (
+                  <div className="rounded-md bg-blue-50 dark:bg-blue-950/30 p-2">
+                    <p className="text-xs font-medium text-blue-700 dark:text-blue-400 mb-1">Recommendations</p>
+                    <p className="text-xs">{submissionResult.feedback.recommendations}</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <DialogFooter>
-            <Button className="w-full" onClick={handleClose}>
-              Close
+            <Button className="w-full" onClick={handleClose} data-testid="button-close-results">
+              {previewMode ? "Close Preview" : "Close"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -543,27 +788,44 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       <DialogContent className="max-w-2xl max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <DialogTitle className="flex items-center gap-2">
-                {exam.title}
-                {previewMode && (
-                  <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>
-                )}
-              </DialogTitle>
-              <DialogDescription className="flex items-center gap-2 mt-1">
-                <FileQuestion className="h-4 w-4" />
-                Question {currentQuestionIndex + 1} of {totalQuestions}
-              </DialogDescription>
+            <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div>
+                <DialogTitle className="flex items-center gap-2">
+                  {exam.title}
+                  {previewMode && (
+                    <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>
+                  )}
+                </DialogTitle>
+                <DialogDescription className="flex items-center gap-2 mt-1">
+                  <FileQuestion className="h-4 w-4" />
+                  Question {currentQuestionIndex + 1} of {totalQuestions}
+                </DialogDescription>
+              </div>
             </div>
-            {timeRemaining !== null && (
-              <Badge
-                variant={timeRemaining < 10 ? "destructive" : "outline"}
-                className="flex items-center gap-1"
-              >
-                <Clock className="h-3.5 w-3.5" />
-                {timeRemaining} min left
-              </Badge>
-            )}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {webcamStream && (
+                <div className="relative">
+                  <video
+                    ref={webcamVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-16 h-12 rounded border object-cover"
+                    data-testid="webcam-feed-mini"
+                  />
+                  <div className="absolute top-0.5 right-0.5 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                </div>
+              )}
+              {timeRemaining !== null && (
+                <Badge
+                  variant={timeRemaining < 10 ? "destructive" : "outline"}
+                  className="flex items-center gap-1"
+                >
+                  <Clock className="h-3.5 w-3.5" />
+                  {timeRemaining} min left
+                </Badge>
+              )}
+            </div>
           </div>
           <Progress value={progress} className="mt-4" />
         </DialogHeader>
@@ -573,7 +835,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
             {previewMode && (
               <div className="mb-4 rounded-md bg-primary/5 border border-primary/20 p-3 flex items-center gap-2" data-testid="preview-banner">
                 <Eye className="h-4 w-4 text-primary flex-shrink-0" />
-                <p className="text-sm text-primary">You are previewing this exam as a student. No submission will be recorded.</p>
+                <p className="text-sm text-primary">Preview mode — your answers will be AI-graded but flagged as a test run.</p>
               </div>
             )}
             <Card>
@@ -692,11 +954,11 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
             )}
             <Button
               onClick={handleSubmit}
-              disabled={(!previewMode && submitMutation.isPending) || answeredCount === 0}
+              disabled={submitMutation.isPending || answeredCount === 0}
               data-testid="button-submit-exam"
             >
               <Send className="h-4 w-4 mr-2" />
-              {previewMode ? "Finish Preview" : submitMutation.isPending ? "Submitting..." : "Submit Exam"}
+              {submitMutation.isPending ? "Grading..." : previewMode ? "Submit Preview" : "Submit Exam"}
             </Button>
           </div>
         </DialogFooter>

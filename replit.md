@@ -188,6 +188,10 @@ npm run dev
 
 ## Recent Changes
 
+- **Exam Proctoring**: Webcam and screen recording required before starting any exam (student or preview). Recordings saved per submission and accessible by professors.
+- **Full Preview Pipeline**: Preview mode now runs the complete AI grading pipeline (submission, AI scoring, dual grading, feedback) — submissions flagged as preview and filtered from student results by default.
+- **Exam Setup Gate**: New setup phase before exam starts requiring camera + screen share; exam starts only after both are active.
+- **Dual Score Results View**: Results screen shows both correctness and understanding scores per question with AI feedback (strengths, weak points, recommendations).
 - **Bulk Student Assignment**: Professors can add all enrolled class students to an exam with one click ("Add all class students" button)
 - **Enhanced Results View**: Exam details show summary stats (avg correctness/understanding), expandable student submission cards with per-question scores, expected vs actual answers, and color-coded performance indicators
 - **AI Feedback Per Submission**: Each submission gets AI-generated feedback with strengths, weak points, and study recommendations; auto-generated on submission and on-demand via "Generate Feedback" button

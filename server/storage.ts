@@ -365,7 +365,7 @@ export interface IStorage {
   getSubmissionsByExam(examId: string): Promise<ExamSubmission[]>;
   getSubmissionsByStudent(studentId: string): Promise<ExamSubmission[]>;
   getAllSubmissions(): Promise<ExamSubmission[]>;
-  createSubmission(studentId: string, examId: string, responses: ExamResponse[]): Promise<ExamSubmission>;
+  createSubmission(studentId: string, examId: string, responses: ExamResponse[], isPreview?: boolean): Promise<ExamSubmission>;
   updateSubmissionScore(submissionId: string, questionId: string, newScore: number): Promise<ExamSubmission | undefined>;
 }
 
@@ -549,7 +549,8 @@ export class DatabaseStorage implements IStorage {
   async createSubmission(
     studentId: string,
     examId: string,
-    responses: ExamResponse[]
+    responses: ExamResponse[],
+    isPreview: boolean = false
   ): Promise<ExamSubmission> {
     const exam = await this.getExam(examId);
     if (!exam) throw new Error("Exam not found");
@@ -616,6 +617,7 @@ export class DatabaseStorage implements IStorage {
       totalScore,
       totalUnderstandingScore,
       feedback,
+      isPreview: isPreview ? "true" : "false",
       submittedAt: new Date().toISOString(),
     }).returning();
 
