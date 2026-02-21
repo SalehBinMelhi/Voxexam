@@ -193,7 +193,8 @@ export async function generateQuestionsFromMaterials(
   materialContent: string,
   numQuestions: number = 5,
   questionTypes: string[] = ["short", "mcq", "audio"],
-  customApiKey?: string | null
+  customApiKey?: string | null,
+  instructions?: string | null
 ): Promise<Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }>> {
   try {
     const client = customApiKey
@@ -201,8 +202,12 @@ export async function generateQuestionsFromMaterials(
       : openai;
 
     const typesStr = questionTypes.join(", ");
-    const prompt = `You are an expert exam creator. Based on the following course materials, generate ${numQuestions} exam questions.
+    const instructionsSection = instructions?.trim()
+      ? `\nProfessor's Instructions (follow these carefully):\n${instructions.trim()}\n`
+      : "";
 
+    const prompt = `You are an expert exam creator. Based on the following course materials, generate ${numQuestions} exam questions.
+${instructionsSection}
 Course Materials:
 ${materialContent.substring(0, 12000)}
 
@@ -216,6 +221,7 @@ Rules:
 - Questions should test both knowledge recall and deeper understanding
 - For MCQ, always provide exactly 4 options
 - Always provide a correctAnswer
+- If the professor provided instructions above, prioritize those guidelines for topic focus, difficulty level, question style, etc.
 
 Respond with a JSON array of objects, each with:
 - "text": the question text
@@ -260,6 +266,7 @@ export interface IStorage {
   getUniversity(id: string): Promise<University | undefined>;
   getAllUniversities(): Promise<University[]>;
   createUniversity(data: InsertUniversity): Promise<University>;
+  updateUniversityApiKey(universityId: string, apiKey: string | null): Promise<University | undefined>;
 
   // Classes
   getClass(id: string): Promise<Class | undefined>;
@@ -333,6 +340,11 @@ export class DatabaseStorage implements IStorage {
   async createUniversity(data: InsertUniversity): Promise<University> {
     const [uni] = await db.insert(universities).values(data).returning();
     return uni;
+  }
+
+  async updateUniversityApiKey(universityId: string, apiKey: string | null): Promise<University | undefined> {
+    const [uni] = await db.update(universities).set({ openaiApiKey: apiKey }).where(eq(universities.id, universityId)).returning();
+    return uni || undefined;
   }
 
   // Classes
@@ -489,7 +501,11 @@ export class DatabaseStorage implements IStorage {
     }
 
     const professor = await this.getUser(exam.professorId);
-    const customApiKey = professor?.openaiApiKey || null;
+    let customApiKey: string | null = null;
+    if (professor?.universityId) {
+      const uni = await this.getUniversity(professor.universityId);
+      if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+    }
 
     const scores: Record<string, number> = {};
     const understandingScoresMap: Record<string, number> = {};

@@ -45,6 +45,11 @@ export async function registerRoutes(
     return safe;
   };
 
+  const sanitizeUniversity = (uni: any) => {
+    const { openaiApiKey, ...safe } = uni;
+    return { ...safe, hasApiKey: !!openaiApiKey };
+  };
+
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
       const users = await storage.getAllUsers();
@@ -86,18 +91,22 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/users/:id/api-key", isAuthenticated, async (req, res) => {
+  app.patch("/api/universities/:id/api-key", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user!.claims.sub;
-      if (userId !== p(req.params.id)) {
-        return res.status(403).json({ error: "Cannot update another user's settings" });
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can manage university settings" });
+      }
+      if (user.universityId !== p(req.params.id)) {
+        return res.status(403).json({ error: "You can only manage your own university's settings" });
       }
       const { apiKey } = req.body;
-      const user = await storage.updateUserApiKey(p(req.params.id), apiKey || null);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
+      const uni = await storage.updateUniversityApiKey(p(req.params.id), apiKey || null);
+      if (!uni) {
+        return res.status(404).json({ error: "University not found" });
       }
-      res.json({ hasApiKey: !!user.openaiApiKey });
+      res.json({ hasApiKey: !!uni.openaiApiKey });
     } catch (error) {
       res.status(500).json({ error: "Failed to update API key" });
     }
@@ -111,7 +120,7 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Only professors can generate questions" });
       }
 
-      const { classId, numQuestions = 5, questionTypes: qTypes } = req.body;
+      const { classId, numQuestions = 5, questionTypes: qTypes, instructions } = req.body;
       if (!classId) {
         return res.status(400).json({ error: "Class ID is required to generate questions from materials" });
       }
@@ -129,12 +138,19 @@ export async function registerRoutes(
         return res.status(400).json({ error: "No materials uploaded for this class. Upload course materials first." });
       }
 
+      let customApiKey: string | null = null;
+      if (user.universityId) {
+        const uni = await storage.getUniversity(user.universityId);
+        if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+      }
+
       const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
       const questions = await generateQuestionsFromMaterials(
         combinedContent,
         Math.min(numQuestions, 20),
         qTypes || ["short", "mcq", "audio"],
-        user.openaiApiKey
+        customApiKey,
+        instructions
       );
 
       res.json({ questions });
@@ -147,7 +163,7 @@ export async function registerRoutes(
   app.get("/api/universities", isAuthenticated, async (req, res) => {
     try {
       const universities = await storage.getAllUniversities();
-      res.json(universities);
+      res.json(universities.map(sanitizeUniversity));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch universities" });
     }
@@ -159,7 +175,7 @@ export async function registerRoutes(
       if (!university) {
         return res.status(404).json({ error: "University not found" });
       }
-      res.json(university);
+      res.json(sanitizeUniversity(university));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch university" });
     }

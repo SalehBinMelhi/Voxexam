@@ -42,6 +42,7 @@ export const universities = pgTable("universities", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name").notNull(),
   domain: varchar("domain"),
+  openaiApiKey: varchar("openai_api_key"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

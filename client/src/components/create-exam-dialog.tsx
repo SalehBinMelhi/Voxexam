@@ -41,6 +41,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState("");
   const [numAiQuestions, setNumAiQuestions] = useState("5");
+  const [aiInstructions, setAiInstructions] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const [newQuestion, setNewQuestion] = useState("");
@@ -83,10 +84,11 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   });
 
   const generateQuestionsMutation = useMutation({
-    mutationFn: async ({ classId, numQuestions }: { classId: string; numQuestions: number }) => {
+    mutationFn: async ({ classId, numQuestions, instructions }: { classId: string; numQuestions: number; instructions?: string }) => {
       const response = await apiRequest("POST", "/api/generate-questions", {
         classId,
         numQuestions,
+        instructions: instructions || undefined,
       });
       return response.json();
     },
@@ -128,6 +130,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setNewCorrectAnswer("");
     setEditingIndex(null);
     setNumAiQuestions("5");
+    setAiInstructions("");
   };
 
   const addStudentName = () => {
@@ -244,6 +247,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     generateQuestionsMutation.mutate({
       classId,
       numQuestions: parseInt(numAiQuestions) || 5,
+      instructions: aiInstructions.trim() || undefined,
     });
   };
 
@@ -408,6 +412,23 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                   </div>
                 )}
               </div>
+
+              {selectedClassId && selectedClassId !== "none" && (
+                <div className="space-y-2">
+                  <Label htmlFor="ai-instructions">Instructions for AI (optional)</Label>
+                  <Textarea
+                    id="ai-instructions"
+                    placeholder="Describe how you'd like the exam — e.g., focus on chapter 3, make it hard, include critical thinking questions, avoid definitions..."
+                    value={aiInstructions}
+                    onChange={(e) => setAiInstructions(e.target.value)}
+                    className="min-h-[60px]"
+                    data-testid="textarea-ai-instructions"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Tell the AI what topics to focus on, difficulty level, question style, or any other preferences
+                  </p>
+                </div>
+              )}
 
               {questions.length > 0 && (
                 <div className="space-y-2">

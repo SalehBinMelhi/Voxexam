@@ -18,6 +18,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { 
   Plus, 
   LogOut, 
@@ -36,7 +43,7 @@ import {
   X,
   Settings
 } from "lucide-react";
-import type { Exam, Class, ClassMaterial } from "@shared/schema";
+import type { Exam, Class, ClassMaterial, University } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -67,6 +74,7 @@ export default function ProfessorDashboard() {
   const [materialsClassId, setMaterialsClassId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [newUniversityName, setNewUniversityName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
@@ -76,6 +84,12 @@ export default function ProfessorDashboard() {
   const { data: classes = [] } = useQuery<Class[]>({
     queryKey: ["/api/classes"],
   });
+
+  const { data: allUniversities = [] } = useQuery<(University & { hasApiKey?: boolean })[]>({
+    queryKey: ["/api/universities"],
+  });
+
+  const userUniversity = allUniversities.find(u => u.id === user?.universityId);
 
   const createClassMutation = useMutation({
     mutationFn: async ({ name }: { name: string }) => {
@@ -161,14 +175,44 @@ export default function ProfessorDashboard() {
     e.target.value = "";
   };
 
+  const createUniversityMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/universities", { name });
+      return res.json();
+    },
+    onSuccess: async (uni) => {
+      await apiRequest("PATCH", `/api/users/${user?.id}/role`, { role: "professor", universityId: uni.id });
+      queryClient.invalidateQueries({ queryKey: ["/api/universities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({ title: "University created and linked to your account" });
+      setNewUniversityName("");
+    },
+    onError: () => {
+      toast({ title: "Failed to create university", variant: "destructive" });
+    },
+  });
+
+  const linkUniversityMutation = useMutation({
+    mutationFn: async (universityId: string) => {
+      const res = await apiRequest("PATCH", `/api/users/${user?.id}/role`, { role: "professor", universityId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({ title: "University linked to your account" });
+    },
+  });
+
   const saveApiKeyMutation = useMutation({
     mutationFn: async (apiKey: string) => {
-      const res = await apiRequest("PATCH", `/api/users/${user?.id}/api-key`, { apiKey: apiKey || null });
+      if (!user?.universityId) throw new Error("No university linked");
+      const res = await apiRequest("PATCH", `/api/universities/${user.universityId}/api-key`, { apiKey: apiKey || null });
       return res.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-      toast({ title: data.hasApiKey ? "API key saved" : "API key removed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/universities"] });
+      toast({ title: data.hasApiKey ? "API key saved for your university" : "API key removed" });
       setSettingsOpen(false);
       setApiKeyInput("");
     },
@@ -537,48 +581,101 @@ export default function ProfessorDashboard() {
               Settings
             </DialogTitle>
             <DialogDescription>
-              Configure your account settings
+              Link your university and manage its OpenAI API key
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="api-key">OpenAI API Key (optional)</Label>
-              <p className="text-xs text-muted-foreground">
-                If your university has its own OpenAI plan, enter the API key here. It will be used for AI question generation and grading instead of the default key.
-              </p>
-              <Input
-                id="api-key"
-                type="password"
-                placeholder={user?.openaiApiKey ? "••••••••••••••••" : "sk-..."}
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-                data-testid="input-api-key"
-              />
-              {user?.openaiApiKey && (
-                <p className="text-xs text-green-600 dark:text-green-400">A custom API key is currently configured.</p>
+          <div className="space-y-5 py-2">
+            <div className="space-y-3">
+              <Label>University</Label>
+              {user?.universityId && userUniversity ? (
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-sm" data-testid="badge-university">
+                    <GraduationCap className="h-3.5 w-3.5 mr-1" />
+                    {userUniversity.name}
+                  </Badge>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Link your account to a university so your colleagues can share the same OpenAI API key.
+                  </p>
+                  {allUniversities.length > 0 && (
+                    <div className="space-y-2">
+                      <Select onValueChange={(v) => linkUniversityMutation.mutate(v)}>
+                        <SelectTrigger data-testid="select-university">
+                          <SelectValue placeholder="Select existing university..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {allUniversities.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground text-center">or</p>
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="New university name..."
+                      value={newUniversityName}
+                      onChange={(e) => setNewUniversityName(e.target.value)}
+                      data-testid="input-university-name"
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => createUniversityMutation.mutate(newUniversityName)}
+                      disabled={!newUniversityName.trim() || createUniversityMutation.isPending}
+                      data-testid="button-create-university"
+                    >
+                      Create
+                    </Button>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            {user?.openaiApiKey && (
-              <Button
-                variant="outline"
-                className="text-destructive"
-                onClick={() => saveApiKeyMutation.mutate("")}
-                disabled={saveApiKeyMutation.isPending}
-                data-testid="button-remove-api-key"
-              >
-                Remove Key
-              </Button>
+
+            {user?.universityId && (
+              <div className="space-y-2">
+                <Label htmlFor="api-key">University OpenAI API Key (optional)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Enter your university's OpenAI API key. All professors linked to this university will use it for AI question generation and grading.
+                </p>
+                <Input
+                  id="api-key"
+                  type="password"
+                  placeholder={userUniversity?.hasApiKey ? "••••••••••••••••" : "sk-..."}
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  data-testid="input-api-key"
+                />
+                {userUniversity?.hasApiKey && (
+                  <p className="text-xs text-green-600 dark:text-green-400">A custom API key is configured for your university.</p>
+                )}
+              </div>
             )}
-            <Button
-              onClick={() => saveApiKeyMutation.mutate(apiKeyInput)}
-              disabled={!apiKeyInput.trim() || saveApiKeyMutation.isPending}
-              data-testid="button-save-api-key"
-            >
-              {saveApiKeyMutation.isPending ? "Saving..." : "Save Key"}
-            </Button>
-          </DialogFooter>
+          </div>
+          {user?.universityId && (
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              {userUniversity?.hasApiKey && (
+                <Button
+                  variant="outline"
+                  className="text-destructive"
+                  onClick={() => saveApiKeyMutation.mutate("")}
+                  disabled={saveApiKeyMutation.isPending}
+                  data-testid="button-remove-api-key"
+                >
+                  Remove Key
+                </Button>
+              )}
+              <Button
+                onClick={() => saveApiKeyMutation.mutate(apiKeyInput)}
+                disabled={!apiKeyInput.trim() || saveApiKeyMutation.isPending}
+                data-testid="button-save-api-key"
+              >
+                {saveApiKeyMutation.isPending ? "Saving..." : "Save Key"}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
     </div>

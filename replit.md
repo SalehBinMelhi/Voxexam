@@ -190,7 +190,8 @@ npm run dev
 
 - **Branding**: Renamed to VoxExams throughout the app
 - **AI Question Generation**: Professors can generate exam questions from uploaded class materials using GPT-4o-mini
-- **Custom OpenAI API Key**: Professors can link their university's OpenAI API key in Settings for both question generation and grading
+- **University-level OpenAI API Key**: API key is now managed at the university level in Settings; all professors linked to the same university share the key for AI question generation and grading
+- **AI Exam Instructions**: Professors can provide custom instructions (topic focus, difficulty, style) when generating AI questions
 - **Enhanced Exam Creation**: Questions can be added manually or AI-generated; each question type (MCQ, short answer, audio) is selectable and editable inline
 - **Expanded File Uploads**: Now supports .docx (Word), .pptx (PowerPoint), .xlsx/.xls (Excel) in addition to PDF/TXT/MD/CSV
 - **Class Materials Upload**: Professors can upload course materials per class for AI grading context
