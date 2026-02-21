@@ -61,7 +61,20 @@ export async function registerRoutes(
 
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
-      const users = await storage.getAllUsers();
+      const userId = req.user!.claims.sub;
+      let users = await storage.getAllUsers();
+
+      const demoMatch = userId.match(/^demo-(professor|student)-(.+)$/);
+      if (demoMatch) {
+        const demoSessionId = demoMatch[2];
+        users = users.filter((u) => {
+          if (u.id.startsWith("demo-")) {
+            return u.id.endsWith(`-${demoSessionId}`);
+          }
+          return true;
+        });
+      }
+
       res.json(users.map(sanitizeUser));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch users" });

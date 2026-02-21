@@ -14,9 +14,20 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(400).json({ message: "Role must be 'professor' or 'student'" });
       }
 
-      const demoId = `demo-${role}`;
-      const demoEmail = `demo-${role}@voxexams.local`;
-      const firstName = role === "professor" ? "Demo" : "Demo";
+      let demoSessionId = req.cookies?.demo_session_id;
+      if (!demoSessionId) {
+        demoSessionId = randomUUID().slice(0, 8);
+        res.cookie("demo_session_id", demoSessionId, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === "production",
+          maxAge: 7 * 24 * 60 * 60 * 1000,
+          sameSite: "lax",
+        });
+      }
+
+      const demoId = `demo-${role}-${demoSessionId}`;
+      const demoEmail = `demo-${role}-${demoSessionId}@voxexams.local`;
+      const firstName = "Demo";
       const lastName = role === "professor" ? "Professor" : "Student";
 
       await authStorage.upsertUser({
@@ -54,7 +65,7 @@ export function registerAuthRoutes(app: Express): void {
           console.error("Demo login error:", err);
           return res.status(500).json({ message: "Login failed" });
         }
-        return res.json({ success: true });
+        return res.json({ success: true, demoSessionId });
       });
     } catch (error) {
       console.error("Demo login error:", error);
