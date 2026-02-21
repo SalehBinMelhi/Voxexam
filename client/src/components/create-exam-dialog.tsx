@@ -363,29 +363,89 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Assign Students (by name/email)</Label>
-                <div className="flex items-center gap-2">
-                  {selectedClassId && selectedClassId !== "none" && classEnrollments.length > 0 && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      onClick={addAllClassStudents}
-                      data-testid="button-add-all-class-students"
-                    >
-                      <Users className="h-3.5 w-3.5 mr-1" />
-                      Add all class students ({classEnrollments.length})
-                    </Button>
-                  )}
-                  <span className="text-sm text-muted-foreground">
-                    {manualStudentNames.length} assigned
-                  </span>
-                </div>
+                <Label>Assign Students</Label>
+                <span className="text-sm text-muted-foreground">
+                  {manualStudentNames.length} assigned
+                </span>
               </div>
-              
+
+              {selectedClassId && selectedClassId !== "none" && classEnrollments.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-muted-foreground">Enrolled students in this class:</p>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={addAllClassStudents}
+                        data-testid="button-add-all-class-students"
+                      >
+                        <Users className="h-3.5 w-3.5 mr-1" />
+                        Add All ({classEnrollments.length})
+                      </Button>
+                      {manualStudentNames.length > 0 && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setManualStudentNames([])}
+                          data-testid="button-remove-all-students"
+                        >
+                          <X className="h-3.5 w-3.5 mr-1" />
+                          Remove All
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="border rounded-md divide-y max-h-[200px] overflow-y-auto">
+                    {classEnrollments.map((enrollment) => {
+                      const student = enrollment.student;
+                      if (!student) return null;
+                      const studentName = student.firstName
+                        ? `${student.firstName} ${student.lastName || ""}`.trim()
+                        : student.email || "";
+                      if (!studentName) return null;
+                      const isSelected = manualStudentNames.includes(studentName);
+                      return (
+                        <label
+                          key={enrollment.id}
+                          className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors ${isSelected ? "bg-primary/5" : ""}`}
+                          data-testid={`label-student-${enrollment.id}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              if (isSelected) {
+                                removeStudentName(studentName);
+                              } else {
+                                setManualStudentNames([...manualStudentNames, studentName]);
+                              }
+                            }}
+                            className="rounded border-gray-300"
+                            data-testid={`checkbox-student-${enrollment.id}`}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{studentName}</p>
+                            {student.email && student.firstName && (
+                              <p className="text-xs text-muted-foreground truncate">{student.email}</p>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {(!selectedClassId || selectedClassId === "none" || classEnrollments.length === 0) && (
+                <p className="text-xs text-muted-foreground">Select a class above to see enrolled students, or add students manually below.</p>
+              )}
+
               <div className="flex gap-2">
                 <Input
-                  placeholder="Enter student name or email..."
+                  placeholder="Add student by name or email..."
                   value={newStudentName}
                   onChange={(e) => setNewStudentName(e.target.value)}
                   onKeyDown={(e) => {
