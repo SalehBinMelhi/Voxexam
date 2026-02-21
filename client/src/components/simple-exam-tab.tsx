@@ -46,6 +46,8 @@ import type { InsertQuestion, QuestionType, Exam, ExamSubmission, User as UserTy
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
+import { TakeExamDialog } from "@/components/take-exam-dialog";
+import { Eye } from "lucide-react";
 
 function getExamStatus(exam: Exam): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (!exam.startTime || !exam.endTime) {
@@ -92,6 +94,7 @@ export function SimpleExamTab() {
 
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
+  const [previewExam, setPreviewExam] = useState<Exam | null>(null);
 
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
@@ -319,7 +322,13 @@ export function SimpleExamTab() {
             <h3 className="text-lg font-semibold">{selectedExam.title}</h3>
             <p className="text-sm text-muted-foreground">{selectedExam.questions.length} question{selectedExam.questions.length !== 1 ? "s" : ""}</p>
           </div>
-          <Badge variant={status.variant}>{status.label}</Badge>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setPreviewExam(selectedExam)} disabled={selectedExam.questions.length === 0} data-testid="button-preview-simple-exam">
+              <Eye className="h-4 w-4 mr-1" />
+              Preview as Student
+            </Button>
+            <Badge variant={status.variant}>{status.label}</Badge>
+          </div>
         </div>
 
         {examSubmissions.length > 0 && (
@@ -550,6 +559,15 @@ export function SimpleExamTab() {
               )}
             </div>
           </>
+        )}
+
+        {previewExam && (
+          <TakeExamDialog
+            exam={previewExam}
+            open={!!previewExam}
+            onOpenChange={(open) => !open && setPreviewExam(null)}
+            previewMode
+          />
         )}
       </div>
     );

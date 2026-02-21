@@ -32,6 +32,7 @@ import {
   ListChecks,
   CheckCircle2,
   Trophy,
+  Eye,
 } from "lucide-react";
 import type { Exam, ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
 import { format, parseISO, differenceInMinutes } from "date-fns";
@@ -302,9 +303,10 @@ interface TakeExamDialogProps {
   exam: Exam;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  previewMode?: boolean;
 }
 
-export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps) {
+export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }: TakeExamDialogProps) {
   const { user } = useAuth();
   const { toast } = useToast();
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -389,6 +391,11 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
   };
 
   const handleSubmit = () => {
+    if (previewMode) {
+      setSubmitted(true);
+      setSubmissionResult(null);
+      return;
+    }
     const examResponses: ExamResponse[] = exam.questions.map((q) => ({
       questionId: q.id,
       response: responses.get(q.id) || "",
@@ -422,6 +429,56 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
         return <MessageSquare className="h-4 w-4" />;
     }
   };
+
+  if (submitted && previewMode) {
+    return (
+      <Dialog open={open} onOpenChange={handleClose}>
+        <DialogContent className="max-w-md">
+          <DialogHeader className="text-center">
+            <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+              <CheckCircle2 className="h-8 w-8 text-primary" />
+            </div>
+            <DialogTitle className="text-2xl">Preview Complete</DialogTitle>
+            <DialogDescription>
+              This was a preview — no submission was recorded
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-6 space-y-4">
+            <h4 className="font-medium text-sm">Your Responses</h4>
+            <div className="space-y-3">
+              {exam.questions.map((q, i) => {
+                const response = responses.get(q.id);
+                const hasAudio = audioResponses.has(q.id);
+                const transcript = transcripts.get(q.id);
+                return (
+                  <div key={q.id} className="rounded-md border p-3 space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">Q{i + 1}: {q.text}</p>
+                    {response ? (
+                      <p className="text-sm">{response}</p>
+                    ) : hasAudio ? (
+                      <p className="text-sm italic text-muted-foreground">{transcript || "Audio recorded"}</p>
+                    ) : (
+                      <p className="text-sm italic text-muted-foreground">No response</p>
+                    )}
+                    {q.correctAnswer && (
+                      <p className="text-xs text-green-600 dark:text-green-400 mt-1">Expected: {q.correctAnswer}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button className="w-full" onClick={handleClose} data-testid="button-close-preview">
+              Close Preview
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   if (submitted && submissionResult) {
     return (
@@ -487,7 +544,12 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
         <DialogHeader className="flex-shrink-0">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <DialogTitle>{exam.title}</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                {exam.title}
+                {previewMode && (
+                  <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>
+                )}
+              </DialogTitle>
               <DialogDescription className="flex items-center gap-2 mt-1">
                 <FileQuestion className="h-4 w-4" />
                 Question {currentQuestionIndex + 1} of {totalQuestions}
@@ -508,6 +570,12 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
 
         <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="py-6">
+            {previewMode && (
+              <div className="mb-4 rounded-md bg-primary/5 border border-primary/20 p-3 flex items-center gap-2" data-testid="preview-banner">
+                <Eye className="h-4 w-4 text-primary flex-shrink-0" />
+                <p className="text-sm text-primary">You are previewing this exam as a student. No submission will be recorded.</p>
+              </div>
+            )}
             <Card>
               <CardContent className="p-6 space-y-6">
                 <div className="flex items-start gap-4">
@@ -624,11 +692,11 @@ export function TakeExamDialog({ exam, open, onOpenChange }: TakeExamDialogProps
             )}
             <Button
               onClick={handleSubmit}
-              disabled={submitMutation.isPending || answeredCount === 0}
+              disabled={(!previewMode && submitMutation.isPending) || answeredCount === 0}
               data-testid="button-submit-exam"
             >
               <Send className="h-4 w-4 mr-2" />
-              {submitMutation.isPending ? "Submitting..." : "Submit Exam"}
+              {previewMode ? "Finish Preview" : submitMutation.isPending ? "Submitting..." : "Submit Exam"}
             </Button>
           </div>
         </DialogFooter>

@@ -59,6 +59,8 @@ import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { CreateExamDialog } from "@/components/create-exam-dialog";
 import { ExamDetailsDialog } from "@/components/exam-details-dialog";
+import { TakeExamDialog } from "@/components/take-exam-dialog";
+import { Eye } from "lucide-react";
 
 function getExamStatus(exam: Exam): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (!exam.startTime || !exam.endTime) return { label: "Draft", variant: "secondary" };
@@ -96,6 +98,7 @@ export function ClassesTab() {
   const [materialsClassId, setMaterialsClassId] = useState<string | null>(null);
   const [createExamOpen, setCreateExamOpen] = useState(false);
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  const [previewExam, setPreviewExam] = useState<Exam | null>(null);
 
   const { data: classes = [] } = useQuery<Class[]>({
     queryKey: ["/api/classes"],
@@ -422,9 +425,21 @@ export function ClassesTab() {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span>{examSubs.length} submission{examSubs.length !== 1 ? "s" : ""}</span>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <span>{examSubs.length} submission{examSubs.length !== 1 ? "s" : ""}</span>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={exam.questions.length === 0}
+                          onClick={(e) => { e.stopPropagation(); setPreviewExam(exam); }}
+                          data-testid={`button-preview-class-exam-${exam.id}`}
+                        >
+                          <Eye className="h-3.5 w-3.5 mr-1" />
+                          Preview
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>
@@ -493,6 +508,14 @@ export function ClassesTab() {
             exam={selectedExam}
             open={!!selectedExam}
             onOpenChange={(open) => !open && setSelectedExam(null)}
+          />
+        )}
+        {previewExam && (
+          <TakeExamDialog
+            exam={previewExam}
+            open={!!previewExam}
+            onOpenChange={(open) => !open && setPreviewExam(null)}
+            previewMode
           />
         )}
       </div>
