@@ -33,7 +33,8 @@ import {
   Trash2,
   Upload,
   FileText,
-  X
+  X,
+  Settings
 } from "lucide-react";
 import type { Exam, Class, ClassMaterial } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
@@ -64,6 +65,8 @@ export default function ProfessorDashboard() {
   const [createClassOpen, setCreateClassOpen] = useState(false);
   const [newClassName, setNewClassName] = useState("");
   const [materialsClassId, setMaterialsClassId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
@@ -158,6 +161,22 @@ export default function ProfessorDashboard() {
     e.target.value = "";
   };
 
+  const saveApiKeyMutation = useMutation({
+    mutationFn: async (apiKey: string) => {
+      const res = await apiRequest("PATCH", `/api/users/${user?.id}/api-key`, { apiKey: apiKey || null });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({ title: data.hasApiKey ? "API key saved" : "API key removed" });
+      setSettingsOpen(false);
+      setApiKeyInput("");
+    },
+    onError: () => {
+      toast({ title: "Failed to save API key", variant: "destructive" });
+    },
+  });
+
   const stats = {
     total: exams.length,
     active: exams.filter((e) => getExamStatus(e).label === "Active").length,
@@ -190,6 +209,9 @@ export default function ProfessorDashboard() {
             <span className="text-sm text-muted-foreground hidden sm:inline">
               {displayName}
             </span>
+            <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} data-testid="button-settings">
+              <Settings className="h-4 w-4" />
+            </Button>
             <ThemeToggle />
             <a href="/api/logout">
               <Button variant="ghost" size="icon" data-testid="button-logout">
@@ -502,6 +524,59 @@ export default function ProfessorDashboard() {
               data-testid="button-submit-class"
             >
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Settings
+            </DialogTitle>
+            <DialogDescription>
+              Configure your account settings
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="api-key">OpenAI API Key (optional)</Label>
+              <p className="text-xs text-muted-foreground">
+                If your university has its own OpenAI plan, enter the API key here. It will be used for AI question generation and grading instead of the default key.
+              </p>
+              <Input
+                id="api-key"
+                type="password"
+                placeholder={user?.openaiApiKey ? "••••••••••••••••" : "sk-..."}
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+                data-testid="input-api-key"
+              />
+              {user?.openaiApiKey && (
+                <p className="text-xs text-green-600 dark:text-green-400">A custom API key is currently configured.</p>
+              )}
+            </div>
+          </div>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {user?.openaiApiKey && (
+              <Button
+                variant="outline"
+                className="text-destructive"
+                onClick={() => saveApiKeyMutation.mutate("")}
+                disabled={saveApiKeyMutation.isPending}
+                data-testid="button-remove-api-key"
+              >
+                Remove Key
+              </Button>
+            )}
+            <Button
+              onClick={() => saveApiKeyMutation.mutate(apiKeyInput)}
+              disabled={!apiKeyInput.trim() || saveApiKeyMutation.isPending}
+              data-testid="button-save-api-key"
+            >
+              {saveApiKeyMutation.isPending ? "Saving..." : "Save Key"}
             </Button>
           </DialogFooter>
         </DialogContent>

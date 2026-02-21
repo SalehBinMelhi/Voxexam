@@ -80,7 +80,8 @@ interface EvalResult {
 async function evaluateWithAI(
   question: Question,
   response: string,
-  materialContext?: string
+  materialContext?: string,
+  customApiKey?: string | null
 ): Promise<EvalResult> {
   try {
     const materialSection = materialContext
@@ -116,7 +117,9 @@ A student might give a correct answer but show poor understanding (e.g., memoriz
 Respond with ONLY two numbers separated by a comma, like: 0.8,0.6
 The first number is correctness, the second is understanding.`;
 
-    const completion = await openai.chat.completions.create({
+    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+
+    const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_tokens: 20,
@@ -155,7 +158,8 @@ async function evaluateResponse(
   question: Question,
   response: string,
   audioData?: string,
-  materialContext?: string
+  materialContext?: string,
+  customApiKey?: string | null
 ): Promise<EvalResult> {
   if (question.type === "mcq") {
     const score = response.trim().toLowerCase() === (question.correctAnswer || "").toLowerCase() ? 1.0 : 0.0;
@@ -165,24 +169,84 @@ async function evaluateResponse(
   if (question.type === "audio" && audioData && audioData.length > 0) {
     const transcription = await transcribeAudio(audioData);
     if (transcription) {
-      const result = await evaluateWithAI(question, transcription, materialContext);
+      const result = await evaluateWithAI(question, transcription, materialContext, customApiKey);
       return { ...result, transcript: transcription };
     }
     if (response && response.trim().length > 0) {
-      return evaluateWithAI(question, response, materialContext);
+      return evaluateWithAI(question, response, materialContext, customApiKey);
     }
     return { score: 0.0, understandingScore: 0.0, method: "fallback" };
   }
 
   if (question.type === "audio" && response && response.trim().length > 0) {
-    return evaluateWithAI(question, response, materialContext);
+    return evaluateWithAI(question, response, materialContext, customApiKey);
   }
 
   if (!response || response.trim().length === 0) {
     return { score: 0.0, understandingScore: 0.0, method: "fallback" };
   }
 
-  return evaluateWithAI(question, response, materialContext);
+  return evaluateWithAI(question, response, materialContext, customApiKey);
+}
+
+export async function generateQuestionsFromMaterials(
+  materialContent: string,
+  numQuestions: number = 5,
+  questionTypes: string[] = ["short", "mcq", "audio"],
+  customApiKey?: string | null
+): Promise<Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }>> {
+  try {
+    const client = customApiKey
+      ? new OpenAI({ apiKey: customApiKey })
+      : openai;
+
+    const typesStr = questionTypes.join(", ");
+    const prompt = `You are an expert exam creator. Based on the following course materials, generate ${numQuestions} exam questions.
+
+Course Materials:
+${materialContent.substring(0, 12000)}
+
+Generate exactly ${numQuestions} questions. For each question, choose the most appropriate type from: ${typesStr}
+
+Rules:
+- "short" = short answer question (student writes a text response)
+- "mcq" = multiple choice question (provide 4 options, one correct)
+- "audio" = audio response question (student answers verbally - use for questions that benefit from oral explanation)
+- Mix the question types for variety
+- Questions should test both knowledge recall and deeper understanding
+- For MCQ, always provide exactly 4 options
+- Always provide a correctAnswer
+
+Respond with a JSON array of objects, each with:
+- "text": the question text
+- "type": "short" | "mcq" | "audio"
+- "options": array of 4 strings (only for mcq type)
+- "correctAnswer": the correct/expected answer
+
+Respond with ONLY the JSON array, no other text.`;
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 3000,
+      temperature: 0.7,
+    });
+
+    const responseText = completion.choices[0]?.message?.content?.trim() || "[]";
+    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    return parsed.map((q: any) => ({
+      text: q.text || "",
+      type: questionTypes.includes(q.type) ? q.type : "short",
+      options: q.type === "mcq" && Array.isArray(q.options) ? q.options : undefined,
+      correctAnswer: q.correctAnswer || undefined,
+    }));
+  } catch (error) {
+    console.error("[AI-GENERATE] Question generation failed:", error);
+    throw new Error("Failed to generate questions from materials");
+  }
 }
 
 export interface IStorage {
@@ -190,6 +254,7 @@ export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: string, universityId?: string): Promise<User | undefined>;
+  updateUserApiKey(userId: string, apiKey: string | null): Promise<User | undefined>;
 
   // Universities
   getUniversity(id: string): Promise<University | undefined>;
@@ -247,6 +312,11 @@ export class DatabaseStorage implements IStorage {
     const updates: any = { role, updatedAt: new Date() };
     if (universityId !== undefined) updates.universityId = universityId;
     const [user] = await db.update(users).set(updates).where(eq(users.id, userId)).returning();
+    return user || undefined;
+  }
+
+  async updateUserApiKey(userId: string, apiKey: string | null): Promise<User | undefined> {
+    const [user] = await db.update(users).set({ openaiApiKey: apiKey, updatedAt: new Date() }).where(eq(users.id, userId)).returning();
     return user || undefined;
   }
 
@@ -418,6 +488,9 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
+    const professor = await this.getUser(exam.professorId);
+    const customApiKey = professor?.openaiApiKey || null;
+
     const scores: Record<string, number> = {};
     const understandingScoresMap: Record<string, number> = {};
     const gradingMethodsMap: Record<string, GradingMethod> = {};
@@ -425,7 +498,7 @@ export class DatabaseStorage implements IStorage {
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
       if (question) {
-        const result = await evaluateResponse(question, response.response, response.audioData, materialContext || undefined);
+        const result = await evaluateResponse(question, response.response, response.audioData, materialContext || undefined, customApiKey);
         scores[response.questionId] = result.score;
         understandingScoresMap[response.questionId] = result.understandingScore;
         gradingMethodsMap[response.questionId] = result.method;

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useAuth } from "@/hooks/use-auth";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users } from "lucide-react";
+import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical } from "lucide-react";
 import type { InsertQuestion, QuestionType, Class } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
@@ -41,6 +40,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [selectedClassId, setSelectedClassId] = useState("");
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState("");
+  const [numAiQuestions, setNumAiQuestions] = useState("5");
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
   const [newQuestion, setNewQuestion] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<QuestionType>("short");
@@ -81,6 +82,38 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     },
   });
 
+  const generateQuestionsMutation = useMutation({
+    mutationFn: async ({ classId, numQuestions }: { classId: string; numQuestions: number }) => {
+      const response = await apiRequest("POST", "/api/generate-questions", {
+        classId,
+        numQuestions,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.questions && data.questions.length > 0) {
+        const newQuestions: InsertQuestion[] = data.questions.map((q: any) => ({
+          text: q.text,
+          type: q.type as QuestionType,
+          options: q.options || undefined,
+          correctAnswer: q.correctAnswer || undefined,
+        }));
+        setQuestions((prev) => [...prev, ...newQuestions]);
+        toast({
+          title: "Questions generated",
+          description: `${data.questions.length} questions were generated from your class materials. Review and edit them below.`,
+        });
+      }
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Generation failed",
+        description: err.message || "Could not generate questions. Make sure you have uploaded materials for the selected class.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const resetForm = () => {
     setTitle("");
     setQuestions([]);
@@ -93,6 +126,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setNewQuestionType("short");
     setNewQuestionOptions([""]);
     setNewCorrectAnswer("");
+    setEditingIndex(null);
+    setNumAiQuestions("5");
   };
 
   const addStudentName = () => {
@@ -117,14 +152,49 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       correctAnswer: newCorrectAnswer.trim() || undefined,
     };
 
-    setQuestions([...questions, question]);
+    if (editingIndex !== null) {
+      const updated = [...questions];
+      updated[editingIndex] = question;
+      setQuestions(updated);
+      setEditingIndex(null);
+    } else {
+      setQuestions([...questions, question]);
+    }
     setNewQuestion("");
+    setNewQuestionOptions([""]);
+    setNewCorrectAnswer("");
+    setNewQuestionType("short");
+  };
+
+  const editQuestion = (index: number) => {
+    const q = questions[index];
+    setNewQuestion(q.text);
+    setNewQuestionType(q.type);
+    setNewQuestionOptions(q.options && q.options.length > 0 ? [...q.options] : [""]);
+    setNewCorrectAnswer(q.correctAnswer || "");
+    setEditingIndex(index);
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+    setNewQuestion("");
+    setNewQuestionType("short");
     setNewQuestionOptions([""]);
     setNewCorrectAnswer("");
   };
 
   const removeQuestion = (index: number) => {
     setQuestions(questions.filter((_, i) => i !== index));
+    if (editingIndex === index) cancelEdit();
+  };
+
+  const updateQuestionType = (index: number, type: QuestionType) => {
+    const updated = [...questions];
+    updated[index] = { ...updated[index], type };
+    if (type !== "mcq") {
+      updated[index].options = undefined;
+    }
+    setQuestions(updated);
   };
 
   const addOption = () => {
@@ -161,6 +231,22 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     });
   };
 
+  const handleGenerateQuestions = () => {
+    const classId = selectedClassId && selectedClassId !== "none" ? selectedClassId : null;
+    if (!classId) {
+      toast({
+        title: "Select a class",
+        description: "Please select a class first. The AI generates questions from the class materials you've uploaded.",
+        variant: "destructive",
+      });
+      return;
+    }
+    generateQuestionsMutation.mutate({
+      classId,
+      numQuestions: parseInt(numAiQuestions) || 5,
+    });
+  };
+
   const getQuestionIcon = (type: QuestionType) => {
     switch (type) {
       case "mcq":
@@ -172,13 +258,21 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     }
   };
 
+  const getTypeLabel = (type: QuestionType) => {
+    switch (type) {
+      case "mcq": return "Multiple Choice";
+      case "audio": return "Audio Response";
+      default: return "Short Answer";
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle>Create New Exam</DialogTitle>
           <DialogDescription>
-            Set up your oral examination with questions and scheduling
+            Set up your examination with questions — add your own or let AI generate them from your class materials
           </DialogDescription>
         </DialogHeader>
 
@@ -197,7 +291,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
 
             {classes.length > 0 && (
               <div className="space-y-2">
-                <Label>Class (optional)</Label>
+                <Label>Class</Label>
                 <Select value={selectedClassId} onValueChange={setSelectedClassId}>
                   <SelectTrigger data-testid="select-class">
                     <SelectValue placeholder="Select a class..." />
@@ -209,6 +303,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">Select a class to enable AI question generation from uploaded materials</p>
               </div>
             )}
 
@@ -289,37 +384,89 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label>Questions ({questions.length})</Label>
+                {selectedClassId && selectedClassId !== "none" && (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={numAiQuestions}
+                      onChange={(e) => setNumAiQuestions(e.target.value)}
+                      className="w-16 h-8 text-sm"
+                      data-testid="input-num-ai-questions"
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleGenerateQuestions}
+                      disabled={generateQuestionsMutation.isPending}
+                      data-testid="button-generate-questions"
+                    >
+                      <Sparkles className="h-4 w-4 mr-1" />
+                      {generateQuestionsMutation.isPending ? "Generating..." : "AI Generate"}
+                    </Button>
+                  </div>
+                )}
               </div>
 
               {questions.length > 0 && (
                 <div className="space-y-2">
                   {questions.map((q, i) => (
-                    <Card key={i}>
-                      <CardContent className="p-3 flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2 flex-1">
-                          <div className="mt-0.5">{getQuestionIcon(q.type)}</div>
-                          <div className="flex-1">
-                            <p className="text-sm font-medium">{q.text}</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <Badge variant="secondary" className="text-xs">
-                                {q.type.toUpperCase()}
-                              </Badge>
+                    <Card key={i} className={editingIndex === i ? "ring-2 ring-primary" : ""}>
+                      <CardContent className="p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2 flex-1">
+                            <div className="mt-0.5">{getQuestionIcon(q.type)}</div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium">{q.text}</p>
+                              {q.correctAnswer && (
+                                <p className="text-xs text-muted-foreground mt-1 truncate">
+                                  Expected: {q.correctAnswer}
+                                </p>
+                              )}
                               {q.options && q.options.length > 0 && (
-                                <span className="text-xs text-muted-foreground">
-                                  {q.options.length} options
-                                </span>
+                                <div className="flex flex-wrap gap-1 mt-1">
+                                  {q.options.map((opt, oi) => (
+                                    <span key={oi} className="text-xs bg-muted px-1.5 py-0.5 rounded">{opt}</span>
+                                  ))}
+                                </div>
                               )}
                             </div>
                           </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <Select
+                              value={q.type}
+                              onValueChange={(v) => updateQuestionType(i, v as QuestionType)}
+                            >
+                              <SelectTrigger className="h-7 w-[110px] text-xs" data-testid={`select-type-${i}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="short">Short Answer</SelectItem>
+                                <SelectItem value="mcq">MCQ</SelectItem>
+                                <SelectItem value="audio">Audio</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => editQuestion(i)}
+                              data-testid={`button-edit-question-${i}`}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => removeQuestion(i)}
+                              data-testid={`button-remove-question-${i}`}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                            </Button>
+                          </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => removeQuestion(i)}
-                          data-testid={`button-remove-question-${i}`}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
                       </CardContent>
                     </Card>
                   ))}
@@ -330,7 +477,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium flex items-center gap-2">
                     <FileQuestion className="h-4 w-4" />
-                    Add New Question
+                    {editingIndex !== null ? "Edit Question" : "Add New Question"}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -411,14 +558,21 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                     </div>
                   )}
 
-                  <Button
-                    onClick={addQuestion}
-                    disabled={!newQuestion.trim()}
-                    data-testid="button-add-question"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Question
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={addQuestion}
+                      disabled={!newQuestion.trim()}
+                      data-testid="button-add-question"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      {editingIndex !== null ? "Save Changes" : "Add Question"}
+                    </Button>
+                    {editingIndex !== null && (
+                      <Button variant="outline" onClick={cancelEdit} data-testid="button-cancel-edit">
+                        Cancel
+                      </Button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </div>

@@ -9,7 +9,12 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const userId = req.user.claims.sub;
       const user = await authStorage.getUser(userId);
-      res.json(user);
+      if (user) {
+        const { openaiApiKey, ...safeUser } = user;
+        res.json({ ...safeUser, openaiApiKey: openaiApiKey ? "configured" : null });
+      } else {
+        res.json(null);
+      }
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });

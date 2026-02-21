@@ -189,7 +189,11 @@ npm run dev
 ## Recent Changes
 
 - **Branding**: Renamed to VoxExams throughout the app
-- **Class Materials Upload**: Professors can upload PDF/TXT/MD/CSV files per class for AI grading context
+- **AI Question Generation**: Professors can generate exam questions from uploaded class materials using GPT-4o-mini
+- **Custom OpenAI API Key**: Professors can link their university's OpenAI API key in Settings for both question generation and grading
+- **Enhanced Exam Creation**: Questions can be added manually or AI-generated; each question type (MCQ, short answer, audio) is selectable and editable inline
+- **Expanded File Uploads**: Now supports .docx (Word), .pptx (PowerPoint), .xlsx/.xls (Excel) in addition to PDF/TXT/MD/CSV
+- **Class Materials Upload**: Professors can upload course materials per class for AI grading context
 - **Dual AI Grading**: Each answer receives both a correctness score and an understanding score
 - **Major refactor**: Migrated from in-memory storage to PostgreSQL with Drizzle ORM
 - **Authentication**: Replaced simple username/role login with Replit Auth (Google, GitHub, Apple, email+password)

@@ -7,7 +7,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
 
@@ -40,10 +40,15 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   // Users routes
+  const sanitizeUser = (user: any) => {
+    const { openaiApiKey, ...safe } = user;
+    return safe;
+  };
+
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
       const users = await storage.getAllUsers();
-      res.json(users);
+      res.json(users.map(sanitizeUser));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch users" });
     }
@@ -55,7 +60,7 @@ export async function registerRoutes(
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(user);
+      res.json(sanitizeUser(user));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch user" });
     }
@@ -78,6 +83,63 @@ export async function registerRoutes(
       res.json(user);
     } catch (error) {
       res.status(500).json({ error: "Failed to update user role" });
+    }
+  });
+
+  app.patch("/api/users/:id/api-key", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      if (userId !== p(req.params.id)) {
+        return res.status(403).json({ error: "Cannot update another user's settings" });
+      }
+      const { apiKey } = req.body;
+      const user = await storage.updateUserApiKey(p(req.params.id), apiKey || null);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json({ hasApiKey: !!user.openaiApiKey });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update API key" });
+    }
+  });
+
+  app.post("/api/generate-questions", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can generate questions" });
+      }
+
+      const { classId, numQuestions = 5, questionTypes: qTypes } = req.body;
+      if (!classId) {
+        return res.status(400).json({ error: "Class ID is required to generate questions from materials" });
+      }
+
+      const cls = await storage.getClass(classId);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      if (cls.professorId !== userId) {
+        return res.status(403).json({ error: "You can only generate questions from your own classes" });
+      }
+
+      const materials = await storage.getMaterialsByClass(classId);
+      if (materials.length === 0) {
+        return res.status(400).json({ error: "No materials uploaded for this class. Upload course materials first." });
+      }
+
+      const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
+      const questions = await generateQuestionsFromMaterials(
+        combinedContent,
+        Math.min(numQuestions, 20),
+        qTypes || ["short", "mcq", "audio"],
+        user.openaiApiKey
+      );
+
+      res.json({ questions });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate questions" });
     }
   });
 
