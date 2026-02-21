@@ -60,6 +60,7 @@ import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { CreateExamDialog } from "@/components/create-exam-dialog";
 import { ExamDetailsDialog } from "@/components/exam-details-dialog";
 import { TakeExamDialog } from "@/components/take-exam-dialog";
+import { StudentDetailPanel } from "@/components/student-detail-panel";
 import { Eye } from "lucide-react";
 
 function getExamStatus(exam: Exam): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
@@ -100,6 +101,8 @@ export function ClassesTab() {
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
   const [addStudentInput, setAddStudentInput] = useState("");
+  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+  const [selectedStudentName, setSelectedStudentName] = useState<string | null>(null);
 
   const { data: classes = [] } = useQuery<Class[]>({
     queryKey: ["/api/classes"],
@@ -237,6 +240,19 @@ export function ClassesTab() {
   const selectedClass = visibleClasses.find(c => c.id === selectedClassId);
   const classExams = exams.filter(e => e.classId === selectedClassId);
 
+  if (selectedClass && selectedStudentId && selectedStudentName) {
+    const classSubmissions = submissions.filter(s => classExams.some(e => e.id === s.examId));
+    return (
+      <StudentDetailPanel
+        studentId={selectedStudentId}
+        studentName={selectedStudentName}
+        exams={classExams}
+        submissions={classSubmissions}
+        onClose={() => { setSelectedStudentId(null); setSelectedStudentName(null); }}
+      />
+    );
+  }
+
   if (selectedClass) {
     const classSubmissions = submissions.filter(s => classExams.some(e => e.id === s.examId));
 
@@ -364,19 +380,40 @@ export function ClassesTab() {
 
           {(selectedClass.roster && selectedClass.roster.length > 0) && (
             <div className="flex flex-wrap gap-2">
-              {selectedClass.roster.map((name) => (
-                <Badge
-                  key={name}
-                  variant="default"
-                  className="text-xs cursor-pointer"
-                  data-testid={`badge-roster-${name}`}
-                  onClick={() => updateRosterMutation.mutate({ classId: selectedClass.id, removeStudents: [name] })}
-                >
-                  <User className="h-3 w-3 mr-1" />
-                  {name}
-                  <X className="h-3 w-3 ml-1" />
-                </Badge>
-              ))}
+              {selectedClass.roster.map((rosterName) => {
+                const matchingUser = allUsers.find(u => {
+                  const displayName = u.firstName ? `${u.firstName} ${u.lastName || ""}`.trim() : u.email || "";
+                  return displayName === rosterName;
+                });
+                return (
+                  <Badge
+                    key={rosterName}
+                    variant="default"
+                    className="text-xs cursor-pointer hover:bg-primary/80 transition-colors"
+                    data-testid={`badge-roster-${rosterName}`}
+                    onClick={() => {
+                      if (matchingUser) {
+                        setSelectedStudentId(matchingUser.id);
+                        setSelectedStudentName(rosterName);
+                      }
+                    }}
+                  >
+                    <User className="h-3 w-3 mr-1" />
+                    {rosterName}
+                    <button
+                      type="button"
+                      className="ml-1 hover:text-destructive transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        updateRosterMutation.mutate({ classId: selectedClass.id, removeStudents: [rosterName] });
+                      }}
+                      data-testid={`button-remove-roster-${rosterName}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                );
+              })}
             </div>
           )}
           {classEnrollments.length > 0 && (
@@ -389,7 +426,13 @@ export function ClassesTab() {
                     ? (student.firstName ? `${student.firstName} ${student.lastName || ""}`.trim() : student.email || "Unknown")
                     : "Unknown";
                   return (
-                    <Badge key={enrollment.id} variant="outline" className="text-xs" data-testid={`badge-enrolled-student-${enrollment.id}`}>
+                    <Badge
+                      key={enrollment.id}
+                      variant="outline"
+                      className="text-xs cursor-pointer hover:bg-primary/10 transition-colors"
+                      onClick={() => { setSelectedStudentId(enrollment.studentId); setSelectedStudentName(name); }}
+                      data-testid={`badge-enrolled-student-${enrollment.id}`}
+                    >
                       <User className="h-3 w-3 mr-1" />
                       {name}
                     </Badge>
@@ -511,7 +554,12 @@ export function ClassesTab() {
               </h4>
               <div className="space-y-2">
                 {performanceList.map((student) => (
-                  <Card key={student.id} data-testid={`card-student-performance-${student.id}`}>
+                  <Card
+                    key={student.id}
+                    className="cursor-pointer hover-elevate transition-all"
+                    onClick={() => { setSelectedStudentId(student.id); setSelectedStudentName(student.name); }}
+                    data-testid={`card-student-performance-${student.id}`}
+                  >
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-3">
@@ -519,7 +567,7 @@ export function ClassesTab() {
                             <User className="h-4 w-4 text-primary" />
                           </div>
                           <div>
-                            <p className="text-sm font-medium">{student.name}</p>
+                            <p className="text-sm font-medium text-primary underline-offset-2 hover:underline">{student.name}</p>
                             <p className="text-xs text-muted-foreground">{student.examsTaken} exam{student.examsTaken !== 1 ? "s" : ""} taken</p>
                           </div>
                         </div>
