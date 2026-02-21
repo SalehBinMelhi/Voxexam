@@ -29,14 +29,13 @@ import {
   BookOpen,
   CheckCircle2,
   AlertCircle,
-  School,
   Layers,
   Trash2,
   Upload,
   FileText,
   X
 } from "lucide-react";
-import type { Exam, Class, University, ClassMaterial } from "@shared/schema";
+import type { Exam, Class, ClassMaterial } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -63,10 +62,7 @@ export default function ProfessorDashboard() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
   const [createClassOpen, setCreateClassOpen] = useState(false);
-  const [createUniOpen, setCreateUniOpen] = useState(false);
   const [newClassName, setNewClassName] = useState("");
-  const [newUniName, setNewUniName] = useState("");
-  const [selectedUniId, setSelectedUniId] = useState("");
   const [materialsClassId, setMaterialsClassId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -78,26 +74,9 @@ export default function ProfessorDashboard() {
     queryKey: ["/api/classes"],
   });
 
-  const { data: universities = [] } = useQuery<University[]>({
-    queryKey: ["/api/universities"],
-  });
-
-  const createUniMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await apiRequest("POST", "/api/universities", { name });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/universities"] });
-      toast({ title: "University created" });
-      setCreateUniOpen(false);
-      setNewUniName("");
-    },
-  });
-
   const createClassMutation = useMutation({
-    mutationFn: async ({ name, universityId }: { name: string; universityId: string }) => {
-      const res = await apiRequest("POST", "/api/classes", { name, universityId });
+    mutationFn: async ({ name }: { name: string }) => {
+      const res = await apiRequest("POST", "/api/classes", { name });
       return res.json();
     },
     onSuccess: () => {
@@ -105,7 +84,6 @@ export default function ProfessorDashboard() {
       toast({ title: "Class created" });
       setCreateClassOpen(false);
       setNewClassName("");
-      setSelectedUniId("");
     },
   });
 
@@ -229,10 +207,6 @@ export default function ProfessorDashboard() {
             <p className="text-muted-foreground">Create and manage your oral examinations</p>
           </div>
           <div className="flex gap-2 flex-wrap">
-            <Button variant="outline" onClick={() => setCreateUniOpen(true)} data-testid="button-create-university">
-              <School className="h-4 w-4 mr-2" />
-              Add University
-            </Button>
             <Button variant="outline" onClick={() => setCreateClassOpen(true)} data-testid="button-create-class">
               <Layers className="h-4 w-4 mr-2" />
               Add Class
@@ -248,7 +222,7 @@ export default function ProfessorDashboard() {
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept=".pdf,.txt,.md,.csv,.json"
+          accept=".pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx,.xls"
           onChange={onFileSelected}
           data-testid="input-file-upload"
         />
@@ -261,7 +235,6 @@ export default function ProfessorDashboard() {
             </h3>
             <div className="flex flex-wrap gap-3">
               {classes.map((cls) => {
-                const uni = universities.find(u => u.id === cls.universityId);
                 const classExams = exams.filter(e => e.classId === cls.id);
                 return (
                   <Card key={cls.id} className="w-64" data-testid={`card-class-${cls.id}`}>
@@ -269,7 +242,6 @@ export default function ProfessorDashboard() {
                       <div className="flex items-start justify-between gap-2">
                         <div>
                           <p className="font-medium">{cls.name}</p>
-                          {uni && <p className="text-xs text-muted-foreground">{uni.name}</p>}
                           <p className="text-xs text-muted-foreground mt-1">{classExams.length} exams</p>
                         </div>
                         <div className="flex gap-1">
@@ -444,37 +416,6 @@ export default function ProfessorDashboard() {
         />
       )}
 
-      <Dialog open={createUniOpen} onOpenChange={setCreateUniOpen}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Add University</DialogTitle>
-            <DialogDescription>Create a new university to organize your classes</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="uni-name">University Name</Label>
-              <Input
-                id="uni-name"
-                placeholder="e.g., MIT"
-                value={newUniName}
-                onChange={(e) => setNewUniName(e.target.value)}
-                data-testid="input-university-name"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateUniOpen(false)}>Cancel</Button>
-            <Button
-              onClick={() => createUniMutation.mutate(newUniName)}
-              disabled={!newUniName.trim() || createUniMutation.isPending}
-              data-testid="button-submit-university"
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <Dialog open={!!materialsClassId} onOpenChange={(open) => !open && setMaterialsClassId(null)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -483,7 +424,7 @@ export default function ProfessorDashboard() {
               Class Materials
             </DialogTitle>
             <DialogDescription>
-              Upload course materials (PDF, TXT, MD, CSV) so the AI can use them to better evaluate student answers.
+              Upload course materials (PDF, Word, PowerPoint, Excel, TXT, MD, CSV) so the AI can use them to better evaluate student answers.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -539,29 +480,9 @@ export default function ProfessorDashboard() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Add Class</DialogTitle>
-            <DialogDescription>Create a class within a university</DialogDescription>
+            <DialogDescription>Create a new class for your courses</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>University</Label>
-              {universities.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No universities yet. Create one first.</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {universities.map((uni) => (
-                    <Badge
-                      key={uni.id}
-                      variant={selectedUniId === uni.id ? "default" : "outline"}
-                      className="cursor-pointer"
-                      onClick={() => setSelectedUniId(uni.id)}
-                      data-testid={`badge-university-${uni.id}`}
-                    >
-                      {uni.name}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
             <div className="space-y-2">
               <Label htmlFor="class-name">Class Name</Label>
               <Input
@@ -576,8 +497,8 @@ export default function ProfessorDashboard() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateClassOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => createClassMutation.mutate({ name: newClassName, universityId: selectedUniId })}
-              disabled={!newClassName.trim() || !selectedUniId || createClassMutation.isPending}
+              onClick={() => createClassMutation.mutate({ name: newClassName })}
+              disabled={!newClassName.trim() || createClassMutation.isPending}
               data-testid="button-submit-class"
             >
               Create

@@ -4,6 +4,9 @@ import multer from "multer";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const pdf = require("pdf-parse");
+import mammoth from "mammoth";
+import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import { storage, transcribeAudio } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
@@ -161,8 +164,8 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Only professors can create classes" });
       }
       const { name, universityId } = req.body;
-      if (!name || !universityId) {
-        return res.status(400).json({ error: "Class name and university are required" });
+      if (!name) {
+        return res.status(400).json({ error: "Class name is required" });
       }
       const cls = await storage.createClass({ name, universityId, professorId: userId });
       res.status(201).json(cls);
@@ -299,11 +302,52 @@ export async function registerRoutes(
         } catch {
           return res.status(400).json({ error: "Could not parse PDF file" });
         }
+      } else if (fileName.endsWith(".docx") || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
+        try {
+          const result = await mammoth.extractRawText({ buffer: file.buffer });
+          content = result.value;
+        } catch {
+          return res.status(400).json({ error: "Could not parse Word document" });
+        }
+      } else if (fileName.endsWith(".pptx") || mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
+        try {
+          const zip = await JSZip.loadAsync(file.buffer);
+          const slideTexts: string[] = [];
+          const slideFiles = Object.keys(zip.files).filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/)).sort();
+          for (const slideFile of slideFiles) {
+            const xmlContent = await zip.files[slideFile].async("text");
+            const textMatches = xmlContent.match(/<a:t>([^<]*)<\/a:t>/g);
+            if (textMatches) {
+              const slideText = textMatches.map(m => m.replace(/<\/?a:t>/g, "")).join(" ");
+              slideTexts.push(slideText);
+            }
+          }
+          content = slideTexts.join("\n\n");
+        } catch {
+          return res.status(400).json({ error: "Could not parse PowerPoint file" });
+        }
+      } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls") ||
+                 mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+                 mimeType === "application/vnd.ms-excel") {
+        try {
+          const workbook = XLSX.read(file.buffer, { type: "buffer" });
+          const sheetTexts: string[] = [];
+          for (const sheetName of workbook.SheetNames) {
+            const sheet = workbook.Sheets[sheetName];
+            const csv = XLSX.utils.sheet_to_csv(sheet);
+            if (csv.trim()) {
+              sheetTexts.push(`Sheet: ${sheetName}\n${csv}`);
+            }
+          }
+          content = sheetTexts.join("\n\n");
+        } catch {
+          return res.status(400).json({ error: "Could not parse Excel file" });
+        }
       } else if (mimeType.startsWith("text/") || mimeType === "application/json" ||
                  fileName.endsWith(".txt") || fileName.endsWith(".md") || fileName.endsWith(".csv")) {
         content = file.buffer.toString("utf-8");
       } else {
-        return res.status(400).json({ error: "Unsupported file type. Please upload PDF, TXT, MD, or CSV files." });
+        return res.status(400).json({ error: "Unsupported file type. Please upload PDF, Word, PowerPoint, Excel, TXT, MD, or CSV files." });
       }
 
       if (!content.trim()) {

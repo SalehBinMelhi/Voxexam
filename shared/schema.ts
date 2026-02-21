@@ -52,7 +52,7 @@ export type InsertUniversity = typeof universities.$inferInsert;
 export const classes = pgTable("classes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: varchar("name").notNull(),
-  universityId: varchar("university_id").notNull(),
+  universityId: varchar("university_id"),
   professorId: varchar("professor_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
