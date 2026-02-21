@@ -140,3 +140,8 @@ npm run dev
 - Audio questions now have microphone recording UI with start/stop/play/re-record controls
 - Audio questions include a required text input for grading (text-based word matching)
 - Submit Exam button is now visible on every question, not just the last one
+- AI-powered grading using OpenAI GPT-4o-mini for short answer and audio questions (semantic evaluation on 0-1 scale)
+- Audio transcription using OpenAI Whisper API (speech-to-text before grading)
+- Grading method tracking: each question score shows how it was graded (AI Graded, Auto, Manual, Fallback)
+- Manual grading override: professors can click edit on any score to manually adjust it (0-100%)
+- PATCH /api/submissions/:id/score endpoint for manual score updates
