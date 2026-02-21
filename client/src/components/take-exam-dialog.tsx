@@ -688,8 +688,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     const understandingScores = submissionResult.understandingScores || {};
     return (
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="max-w-md">
-          <DialogHeader className="text-center">
+        <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden">
+          <DialogHeader className="text-center flex-shrink-0">
             <div className="mx-auto w-16 h-16 rounded-full bg-chart-2/10 flex items-center justify-center mb-4">
               <Trophy className="h-8 w-8 text-chart-2" />
             </div>
@@ -704,7 +704,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-6 space-y-6">
+          <div className="flex-1 overflow-y-auto py-6 space-y-6">
             <div className="grid grid-cols-2 gap-4 text-center">
               <div>
                 <p className="text-4xl font-bold text-primary">
@@ -773,7 +773,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="flex-shrink-0">
             <Button className="w-full" onClick={handleClose} data-testid="button-close-results">
               {previewMode ? "Close Preview" : "Close"}
             </Button>

@@ -105,14 +105,14 @@ Please evaluate with TWO scores, each from 0.0 to 1.0:
 - 0.25-0.49 = Mostly incorrect
 - 0.0-0.24 = Wrong or no relevant content
 
-2. UNDERSTANDING SCORE: Does the student demonstrate deep understanding of the subject?
-- 1.0 = Excellent explanation showing thorough understanding and reasoning
+2. UNDERSTANDING SCORE: Does the student demonstrate understanding of the subject?
+- 1.0 = Correct answer that fully addresses the question's complexity
 - 0.75-0.99 = Good understanding with clear reasoning
-- 0.5-0.74 = Basic understanding but lacks depth or reasoning
-- 0.25-0.49 = Superficial understanding, memorized answer without explanation
+- 0.5-0.74 = Partial understanding, missing key concepts
+- 0.25-0.49 = Superficial understanding, major gaps in reasoning
 - 0.0-0.24 = No demonstrated understanding
 
-A student might give a correct answer but show poor understanding (e.g., memorized without explanation), or show good understanding but have factual errors.
+IMPORTANT: For simple, objective, or factual questions (e.g., basic math, definitions, single-fact recall), a correct and concise answer IS sufficient proof of understanding. Do NOT penalize brevity when the question itself is straightforward — a short correct answer to a simple question deserves a high understanding score (0.9-1.0). Only expect detailed explanations for complex, analytical, or open-ended questions.
 
 Respond with ONLY two numbers separated by a comma, like: 0.8,0.6
 The first number is correctness, the second is understanding.`;
