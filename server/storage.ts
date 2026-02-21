@@ -282,7 +282,7 @@ export async function generateFeedback(
       };
     });
 
-    const prompt = `You are an expert academic evaluator. Analyze this student's exam performance and provide detailed feedback.
+    const prompt = `You are an expert academic evaluator. Analyze this student's exam performance and provide feedback.
 
 ${materialContext ? `Course Materials Context:\n${materialContext.substring(0, 4000)}\n` : ""}
 
@@ -290,9 +290,15 @@ Student's Performance:
 ${JSON.stringify(questionResults, null, 2)}
 
 Provide a JSON object with exactly these three fields:
-- "strengths": A concise paragraph describing what the student understood well and demonstrated strong knowledge in. Be specific about which topics or concepts they grasped.
-- "weakPoints": A concise paragraph identifying specific topics, concepts, or areas where the student struggled or showed gaps in understanding. Mention which questions revealed these weaknesses.
-- "recommendations": A concise paragraph with actionable study recommendations. What specific topics should the student review? What concepts need more practice?
+- "strengths": What the student did well. Be specific about which topics or concepts they demonstrated knowledge in.
+- "weakPoints": Specific areas where the student struggled or showed gaps. If there are no real weaknesses (e.g., all scores are high and questions were straightforward), set this to an empty string "".
+- "recommendations": Actionable study recommendations. If the student performed well on all questions, set this to an empty string "".
+
+IMPORTANT RULES:
+- Be proportionate to the exam difficulty and results. For simple questions answered correctly, do NOT manufacture weaknesses or recommendations that don't exist.
+- If a student scores 90%+ on both correctness and understanding, weakPoints and recommendations should be empty strings unless there are genuine areas for improvement.
+- Keep feedback concise and genuinely useful — avoid padding with generic advice.
+- Never criticize brevity on simple factual or arithmetic questions.
 
 Respond with ONLY the JSON object, no other text.`;
 

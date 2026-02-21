@@ -385,7 +385,11 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   const startScreenShare = async () => {
     try {
       setScreenError("");
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { displaySurface: "monitor" } as any,
+        audio: false,
+        preferCurrentTab: false,
+      } as any);
       setScreenStream(stream);
       setScreenReady(true);
       stream.getVideoTracks()[0].addEventListener("ended", () => {
@@ -659,6 +663,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                 )}
               </div>
               {screenError && <p className="text-sm text-destructive">{screenError}</p>}
+              {!screenReady && <p className="text-xs text-muted-foreground">Please select "Entire Screen" when prompted for the best experience</p>}
             </div>
 
             <div className="text-xs text-muted-foreground text-center">
