@@ -188,6 +188,9 @@ npm run dev
 
 ## Recent Changes
 
+- **Bulk Student Assignment**: Professors can add all enrolled class students to an exam with one click ("Add all class students" button)
+- **Enhanced Results View**: Exam details show summary stats (avg correctness/understanding), expandable student submission cards with per-question scores, expected vs actual answers, and color-coded performance indicators
+- **AI Feedback Per Submission**: Each submission gets AI-generated feedback with strengths, weak points, and study recommendations; auto-generated on submission and on-demand via "Generate Feedback" button
 - **Branding**: Renamed to VoxExams throughout the app
 - **AI Question Generation**: Professors can generate exam questions from uploaded class materials using GPT-4o-mini
 - **University-level OpenAI API Key**: API key is now managed at the university level in Settings; all professors linked to the same university share the key for AI question generation and grading

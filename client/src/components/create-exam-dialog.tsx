@@ -52,6 +52,11 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     queryKey: ["/api/classes"],
   });
 
+  const { data: classEnrollments = [] } = useQuery<Array<{ id: string; studentId: string; classId: string; student?: { id: string; email?: string; firstName?: string; lastName?: string } }>>({
+    queryKey: ["/api/classes", selectedClassId, "enrollments"],
+    enabled: !!selectedClassId && selectedClassId !== "none",
+  });
+
   const createExamMutation = useMutation({
     mutationFn: async (data: {
       title: string;
@@ -140,6 +145,32 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
 
   const removeStudentName = (name: string) => {
     setManualStudentNames(manualStudentNames.filter((n) => n !== name));
+  };
+
+  const addAllClassStudents = () => {
+    const newNames: string[] = [];
+    for (const enrollment of classEnrollments) {
+      const student = enrollment.student;
+      if (!student) continue;
+      const name = student.firstName
+        ? `${student.firstName} ${student.lastName || ""}`.trim()
+        : student.email || "";
+      if (name && !manualStudentNames.includes(name)) {
+        newNames.push(name);
+      }
+    }
+    if (newNames.length > 0) {
+      setManualStudentNames([...manualStudentNames, ...newNames]);
+      toast({
+        title: "Students added",
+        description: `${newNames.length} student${newNames.length !== 1 ? "s" : ""} from the class have been added.`,
+      });
+    } else {
+      toast({
+        title: "No new students",
+        description: "All enrolled students are already assigned, or no students are enrolled in this class.",
+      });
+    }
   };
 
   const addQuestion = () => {
@@ -333,9 +364,23 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Label>Assign Students (by name/email)</Label>
-                <span className="text-sm text-muted-foreground">
-                  {manualStudentNames.length} assigned
-                </span>
+                <div className="flex items-center gap-2">
+                  {selectedClassId && selectedClassId !== "none" && classEnrollments.length > 0 && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={addAllClassStudents}
+                      data-testid="button-add-all-class-students"
+                    >
+                      <Users className="h-3.5 w-3.5 mr-1" />
+                      Add all class students ({classEnrollments.length})
+                    </Button>
+                  )}
+                  <span className="text-sm text-muted-foreground">
+                    {manualStudentNames.length} assigned
+                  </span>
+                </div>
               </div>
               
               <div className="flex gap-2">

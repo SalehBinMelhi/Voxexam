@@ -7,7 +7,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
 
@@ -659,6 +659,63 @@ export async function registerRoutes(
       res.json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to update submission score" });
+    }
+  });
+
+  app.post("/api/submissions/:id/feedback", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+
+      const submission = await storage.getSubmission(p(req.params.id));
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const exam = await storage.getExam(submission.examId);
+      if (!exam) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+
+      if (exam.professorId !== userId && submission.studentId !== userId) {
+        return res.status(403).json({ error: "Not authorized to generate feedback for this submission" });
+      }
+
+      let materialContext = "";
+      if (exam.classId) {
+        const materials = await storage.getMaterialsByClass(exam.classId);
+        if (materials.length > 0) {
+          const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
+          materialContext = combinedContent.length > 8000
+            ? combinedContent.substring(0, 8000) + "\n[Content truncated for length]"
+            : combinedContent;
+        }
+      }
+
+      const professor = await storage.getUser(exam.professorId);
+      let customApiKey: string | null = null;
+      if (professor?.universityId) {
+        const uni = await storage.getUniversity(professor.universityId);
+        if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+      }
+
+      const feedback = await generateFeedback(
+        exam,
+        submission.responses,
+        submission.scores,
+        submission.understandingScores || {},
+        materialContext || undefined,
+        customApiKey
+      );
+
+      const { submissions: submissionsTable } = await import("@shared/schema");
+      const drizzleOrm = await import("drizzle-orm");
+      const { db } = await import("./db");
+      await db.update(submissionsTable).set({ feedback }).where(drizzleOrm.eq(submissionsTable.id, submission.id));
+
+      res.json({ feedback });
+    } catch (error) {
+      console.error("Failed to generate feedback:", error);
+      res.status(500).json({ error: "Failed to generate feedback" });
     }
   });
 

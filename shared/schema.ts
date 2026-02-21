@@ -131,6 +131,7 @@ export const submissions = pgTable("submissions", {
   gradingMethods: jsonb("grading_methods").$type<Record<string, GradingMethod>>(),
   totalScore: real("total_score").notNull(),
   totalUnderstandingScore: real("total_understanding_score"),
+  feedback: jsonb("feedback").$type<{ strengths: string; weakPoints: string; recommendations: string } | null>(),
   submittedAt: varchar("submitted_at").notNull(),
 });
 

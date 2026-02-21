@@ -260,6 +260,66 @@ Respond with ONLY the JSON array, no other text.`;
   }
 }
 
+export async function generateFeedback(
+  exam: { questions: Array<{ id: string; text: string; type: string; correctAnswer?: string }> },
+  responses: ExamResponse[],
+  scores: Record<string, number>,
+  understandingScores: Record<string, number>,
+  materialContext?: string,
+  customApiKey?: string | null
+): Promise<{ strengths: string; weakPoints: string; recommendations: string }> {
+  try {
+    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+
+    const questionResults = responses.map((resp) => {
+      const question = exam.questions.find((q) => q.id === resp.questionId);
+      return {
+        question: question?.text || "Unknown question",
+        expectedAnswer: question?.correctAnswer || "N/A",
+        studentAnswer: resp.transcript || resp.response || "No answer",
+        correctnessScore: Math.round((scores[resp.questionId] || 0) * 100),
+        understandingScore: Math.round((understandingScores[resp.questionId] || 0) * 100),
+      };
+    });
+
+    const prompt = `You are an expert academic evaluator. Analyze this student's exam performance and provide detailed feedback.
+
+${materialContext ? `Course Materials Context:\n${materialContext.substring(0, 4000)}\n` : ""}
+
+Student's Performance:
+${JSON.stringify(questionResults, null, 2)}
+
+Provide a JSON object with exactly these three fields:
+- "strengths": A concise paragraph describing what the student understood well and demonstrated strong knowledge in. Be specific about which topics or concepts they grasped.
+- "weakPoints": A concise paragraph identifying specific topics, concepts, or areas where the student struggled or showed gaps in understanding. Mention which questions revealed these weaknesses.
+- "recommendations": A concise paragraph with actionable study recommendations. What specific topics should the student review? What concepts need more practice?
+
+Respond with ONLY the JSON object, no other text.`;
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1000,
+      temperature: 0.5,
+    });
+
+    const responseText = completion.choices[0]?.message?.content?.trim() || "{}";
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return { strengths: "Unable to generate feedback.", weakPoints: "", recommendations: "" };
+    }
+    const parsed = JSON.parse(jsonMatch[0]);
+    return {
+      strengths: parsed.strengths || "",
+      weakPoints: parsed.weakPoints || parsed.weak_points || "",
+      recommendations: parsed.recommendations || "",
+    };
+  } catch (error) {
+    console.error("[AI-FEEDBACK] Feedback generation failed:", error);
+    return { strengths: "Feedback generation failed.", weakPoints: "", recommendations: "" };
+  }
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -539,6 +599,13 @@ export class DatabaseStorage implements IStorage {
       ? understandingValues.reduce((a, b) => a + b, 0) / understandingValues.length
       : 0;
 
+    let feedback: { strengths: string; weakPoints: string; recommendations: string } | null = null;
+    try {
+      feedback = await generateFeedback(exam, responses, scores, understandingScoresMap, materialContext || undefined, customApiKey);
+    } catch (e) {
+      console.error("[AI-FEEDBACK] Failed to generate feedback during submission:", e);
+    }
+
     const [submission] = await db.insert(submissions).values({
       examId,
       studentId,
@@ -548,6 +615,7 @@ export class DatabaseStorage implements IStorage {
       gradingMethods: gradingMethodsMap,
       totalScore,
       totalUnderstandingScore,
+      feedback,
       submittedAt: new Date().toISOString(),
     }).returning();
 
