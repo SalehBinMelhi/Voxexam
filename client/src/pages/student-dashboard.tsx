@@ -73,7 +73,7 @@ export default function StudentDashboard() {
               <GraduationCap className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="font-semibold">OralExam</h1>
+              <h1 className="font-semibold">VoxExams</h1>
               <p className="text-xs text-muted-foreground">Student Dashboard</p>
             </div>
           </div>
@@ -236,9 +236,26 @@ export default function StudentDashboard() {
                     <CardHeader className="pb-3">
                       <div className="flex items-start justify-between gap-2">
                         <CardTitle className="text-lg line-clamp-1">{exam.title}</CardTitle>
-                        <Badge variant="default">
-                          {submission ? `${(submission.totalScore * 100).toFixed(0)}%` : "Completed"}
-                        </Badge>
+                        <div className="flex flex-col gap-1">
+                          {submission && (
+                            <>
+                              <Badge
+                                variant={submission.totalScore >= 0.7 ? "default" : submission.totalScore >= 0.5 ? "secondary" : "destructive"}
+                                data-testid={`badge-correctness-${exam.id}`}
+                              >
+                                Correctness: {(submission.totalScore * 100).toFixed(0)}%
+                              </Badge>
+                              {submission.totalUnderstandingScore != null && (
+                                <Badge
+                                  variant={submission.totalUnderstandingScore >= 0.7 ? "default" : submission.totalUnderstandingScore >= 0.5 ? "secondary" : "destructive"}
+                                  data-testid={`badge-understanding-${exam.id}`}
+                                >
+                                  Understanding: {(submission.totalUnderstandingScore * 100).toFixed(0)}%
+                                </Badge>
+                              )}
+                            </>
+                          )}
+                        </div>
                       </div>
                       <CardDescription className="flex items-center gap-1">
                         <FileQuestion className="h-3.5 w-3.5" />

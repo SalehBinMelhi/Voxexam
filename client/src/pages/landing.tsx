@@ -12,7 +12,7 @@ export default function LandingPage() {
             <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
               <GraduationCap className="h-5 w-5 text-primary-foreground" />
             </div>
-            <span className="font-semibold text-lg">OralExam</span>
+            <span className="font-semibold text-lg">VoxExams</span>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
@@ -57,7 +57,7 @@ export default function LandingPage() {
                     <GraduationCap className="h-10 w-10 text-primary" />
                   </div>
                   <div className="text-center space-y-2">
-                    <h3 className="font-semibold text-lg">Oral Examination Platform</h3>
+                    <h3 className="font-semibold text-lg">VoxExams Platform</h3>
                     <p className="text-sm text-muted-foreground">MCQ, Short Answer & Audio Responses</p>
                   </div>
                   <div className="flex gap-2">
@@ -115,7 +115,7 @@ export default function LandingPage() {
 
       <footer className="border-t py-8">
         <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
-          <p>OralExam Platform - Built for university oral examinations</p>
+          <p>VoxExams - Built for university oral examinations</p>
         </div>
       </footer>
     </div>

@@ -1,6 +1,6 @@
-# Oral Exam Management System
+# VoxExams - Oral Exam Management System
 
-A comprehensive web application for conducting and managing university oral examinations. Professors can create and schedule exams with various question types, while students can take assigned exams and receive automatic grading.
+A comprehensive web application for conducting and managing university oral examinations. Professors can create and schedule exams with various question types, upload class materials for AI context, while students can take assigned exams and receive dual AI grading (correctness + understanding).
 
 ## Overview
 
@@ -153,18 +153,30 @@ Users authenticate via Replit Auth (supports Google, GitHub, Apple, email+passwo
 - `gradingMethods`: JSONB object (questionId -> "ai"|"exact"|"fallback"|"manual")
 - `totalScore`: float, `submittedAt`: ISO string
 
-## Grading Logic
+## Class Materials
 
-- **MCQ Questions**: Exact match comparison (case-insensitive) returns 1.0 for correct, 0.0 for incorrect
-- **Short Answer**: AI-powered semantic evaluation using OpenAI (GPT-4o-mini)
-  - Evaluates answers on a 0.0-1.0 scale based on semantic understanding
-  - Considers partial credit for partially correct answers
-  - Falls back to word overlap comparison if AI grading fails
-- **Audio Questions**: Speech-to-text transcription + AI grading
+Professors can upload course materials (PDF, TXT, MD, CSV) per class. These materials are:
+- Stored as extracted text in the `class_materials` table
+- Passed as context to the AI grading prompt when evaluating student answers
+- Truncated to 8000 chars if too long for the AI context window
+- PDF text extraction via `pdf-parse`, text files read directly
+
+## Grading Logic (Dual Scoring)
+
+Each question receives TWO scores from the AI:
+1. **Correctness Score** (0-100%): Is the answer factually correct?
+2. **Understanding Score** (0-100%): Does the student demonstrate deep subject understanding?
+
+This means a student might score high on correctness but low on understanding (e.g., memorized answer without explanation).
+
+- **MCQ Questions**: Exact match (both scores are 1.0 or 0.0)
+- **Short Answer**: AI dual evaluation using GPT-4o-mini with class materials context
+- **Audio Questions**: Speech-to-text transcription + AI dual grading
   - Uses gpt-4o-mini-transcribe model via Replit AI Integrations for speech-to-text
   - Audio format auto-conversion via ffmpeg (WebM/OGG -> WAV) before transcription
-  - Transcription is then graded using the same AI semantic evaluation
-  - Falls back to text input if transcription fails
+  - Falls back to word overlap if AI fails
+
+Scores stored in `submissions.scores` (correctness) and `submissions.understandingScores` (understanding).
 
 ## Development
 
@@ -176,13 +188,12 @@ npm run dev
 
 ## Recent Changes
 
+- **Branding**: Renamed to VoxExams throughout the app
+- **Class Materials Upload**: Professors can upload PDF/TXT/MD/CSV files per class for AI grading context
+- **Dual AI Grading**: Each answer receives both a correctness score and an understanding score
 - **Major refactor**: Migrated from in-memory storage to PostgreSQL with Drizzle ORM
 - **Authentication**: Replaced simple username/role login with Replit Auth (Google, GitHub, Apple, email+password)
 - **University/Class hierarchy**: Added universities, classes, and enrollments tables
-- **Role selection**: New first-login role selection page
-- **Landing page**: New landing page for logged-out users
-- **Frontend overhaul**: Updated all dashboards and dialogs for new auth and data model
 - AI-powered grading using OpenAI GPT-4o-mini for short answer and audio questions
 - Audio transcription using gpt-4o-mini-transcribe with ffmpeg format conversion
 - Manual grading override with grading method indicators
-- Transcript visibility for both students and professors

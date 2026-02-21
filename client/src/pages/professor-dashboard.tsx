@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -31,9 +31,12 @@ import {
   AlertCircle,
   School,
   Layers,
-  Trash2
+  Trash2,
+  Upload,
+  FileText,
+  X
 } from "lucide-react";
-import type { Exam, Class, University } from "@shared/schema";
+import type { Exam, Class, University, ClassMaterial } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -64,6 +67,8 @@ export default function ProfessorDashboard() {
   const [newClassName, setNewClassName] = useState("");
   const [newUniName, setNewUniName] = useState("");
   const [selectedUniId, setSelectedUniId] = useState("");
+  const [materialsClassId, setMaterialsClassId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
@@ -114,6 +119,67 @@ export default function ProfessorDashboard() {
     },
   });
 
+  const { data: classMaterialsList = [] } = useQuery<ClassMaterial[]>({
+    queryKey: ["/api/classes", materialsClassId, "materials"],
+    queryFn: async () => {
+      if (!materialsClassId) return [];
+      const res = await fetch(`/api/classes/${materialsClassId}/materials`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!materialsClassId,
+  });
+
+  const uploadMaterialMutation = useMutation({
+    mutationFn: async ({ classId, file }: { classId: string; file: File }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/classes/${classId}/materials`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Upload failed");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classes", materialsClassId, "materials"] });
+      toast({ title: "Material uploaded successfully" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const deleteMaterialMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/materials/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classes", materialsClassId, "materials"] });
+      toast({ title: "Material deleted" });
+    },
+  });
+
+  const handleFileUpload = (classId: string) => {
+    if (fileInputRef.current) {
+      fileInputRef.current.setAttribute("data-class-id", classId);
+      fileInputRef.current.click();
+    }
+  };
+
+  const onFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const classId = e.target.getAttribute("data-class-id");
+    if (file && classId) {
+      uploadMaterialMutation.mutate({ classId, file });
+    }
+    e.target.value = "";
+  };
+
   const stats = {
     total: exams.length,
     active: exams.filter((e) => getExamStatus(e).label === "Active").length,
@@ -134,7 +200,7 @@ export default function ProfessorDashboard() {
               <GraduationCap className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="font-semibold">OralExam</h1>
+              <h1 className="font-semibold">VoxExams</h1>
               <p className="text-xs text-muted-foreground">Professor Dashboard</p>
             </div>
           </div>
@@ -178,6 +244,15 @@ export default function ProfessorDashboard() {
           </div>
         </div>
 
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept=".pdf,.txt,.md,.csv,.json"
+          onChange={onFileSelected}
+          data-testid="input-file-upload"
+        />
+
         {classes.length > 0 && (
           <div className="space-y-3">
             <h3 className="text-lg font-semibold flex items-center gap-2">
@@ -197,15 +272,27 @@ export default function ProfessorDashboard() {
                           {uni && <p className="text-xs text-muted-foreground">{uni.name}</p>}
                           <p className="text-xs text-muted-foreground mt-1">{classExams.length} exams</p>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => deleteClassMutation.mutate(cls.id)}
-                          data-testid={`button-delete-class-${cls.id}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => setMaterialsClassId(cls.id)}
+                            data-testid={`button-materials-${cls.id}`}
+                            title="Manage class materials"
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => deleteClassMutation.mutate(cls.id)}
+                            data-testid={`button-delete-class-${cls.id}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -385,6 +472,66 @@ export default function ProfessorDashboard() {
               Create
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!materialsClassId} onOpenChange={(open) => !open && setMaterialsClassId(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Class Materials
+            </DialogTitle>
+            <DialogDescription>
+              Upload course materials (PDF, TXT, MD, CSV) so the AI can use them to better evaluate student answers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={() => materialsClassId && handleFileUpload(materialsClassId)}
+              disabled={uploadMaterialMutation.isPending}
+              data-testid="button-upload-material"
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              {uploadMaterialMutation.isPending ? "Uploading..." : "Upload File"}
+            </Button>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {classMaterialsList.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No materials uploaded yet
+                </p>
+              ) : (
+                classMaterialsList.map((material) => (
+                  <div
+                    key={material.id}
+                    className="flex items-center justify-between gap-2 p-2 rounded-md border"
+                    data-testid={`material-${material.id}`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{material.fileName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {material.createdAt ? format(new Date(material.createdAt), "MMM d, yyyy") : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 flex-shrink-0"
+                      onClick={() => deleteMaterialMutation.mutate(material.id)}
+                      data-testid={`button-delete-material-${material.id}`}
+                    >
+                      <X className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

@@ -1,8 +1,14 @@
 import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
+import multer from "multer";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const pdf = require("pdf-parse");
 import { storage, transcribeAudio } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 declare global {
   namespace Express {
@@ -250,6 +256,90 @@ export async function registerRoutes(
     }
   });
 
+  // Class Materials routes
+  app.get("/api/classes/:classId/materials", isAuthenticated, async (req, res) => {
+    try {
+      const materials = await storage.getMaterialsByClass(p(req.params.classId));
+      res.json(materials.map(m => ({ ...m, content: m.content.substring(0, 200) + (m.content.length > 200 ? "..." : "") })));
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch materials" });
+    }
+  });
+
+  app.post("/api/classes/:classId/materials", isAuthenticated, upload.single("file"), async (req: any, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can upload materials" });
+      }
+
+      const classId = p(req.params.classId);
+      const cls = await storage.getClass(classId);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      if (cls.professorId !== userId) {
+        return res.status(403).json({ error: "You can only upload materials to your own classes" });
+      }
+
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      let content = "";
+      const fileName = file.originalname || "unknown";
+      const mimeType = file.mimetype || "";
+
+      if (mimeType === "application/pdf") {
+        try {
+          const pdfData = await pdf(file.buffer);
+          content = pdfData.text;
+        } catch {
+          return res.status(400).json({ error: "Could not parse PDF file" });
+        }
+      } else if (mimeType.startsWith("text/") || mimeType === "application/json" ||
+                 fileName.endsWith(".txt") || fileName.endsWith(".md") || fileName.endsWith(".csv")) {
+        content = file.buffer.toString("utf-8");
+      } else {
+        return res.status(400).json({ error: "Unsupported file type. Please upload PDF, TXT, MD, or CSV files." });
+      }
+
+      if (!content.trim()) {
+        return res.status(400).json({ error: "File has no readable text content" });
+      }
+
+      const material = await storage.createMaterial({
+        classId,
+        professorId: userId,
+        fileName,
+        content,
+      });
+
+      res.status(201).json({ ...material, content: content.substring(0, 200) + (content.length > 200 ? "..." : "") });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to upload material" });
+    }
+  });
+
+  app.delete("/api/materials/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can delete materials" });
+      }
+      const deleted = await storage.deleteMaterial(p(req.params.id));
+      if (!deleted) {
+        return res.status(404).json({ error: "Material not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete material" });
+    }
+  });
+
   // Exams routes
   app.get("/api/exams", isAuthenticated, async (req, res) => {
     try {
@@ -419,7 +509,7 @@ export async function registerRoutes(
 
   app.patch("/api/submissions/:id/score", isAuthenticated, async (req, res) => {
     try {
-      const { questionId, score } = req.body;
+      const { questionId, score, understandingScore } = req.body;
       
       if (!questionId || typeof score !== "number") {
         return res.status(400).json({ error: "questionId and score are required" });
@@ -429,10 +519,15 @@ export async function registerRoutes(
         return res.status(400).json({ error: "Score must be between 0 and 1" });
       }
 
+      if (understandingScore !== undefined && (understandingScore < 0 || understandingScore > 1)) {
+        return res.status(400).json({ error: "Understanding score must be between 0 and 1" });
+      }
+
       const submission = await storage.updateSubmissionScore(
         p(req.params.id),
         questionId,
-        score
+        score,
+        understandingScore
       );
 
       if (!submission) {

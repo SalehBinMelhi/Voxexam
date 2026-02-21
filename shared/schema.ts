@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { pgTable, varchar, timestamp, jsonb, real } from "drizzle-orm/pg-core";
+import { pgTable, varchar, timestamp, jsonb, real, text } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -60,6 +60,19 @@ export const classes = pgTable("classes", {
 export type Class = typeof classes.$inferSelect;
 export type InsertClass = typeof classes.$inferInsert;
 
+// Class materials table (uploaded by professors for AI context)
+export const classMaterials = pgTable("class_materials", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  classId: varchar("class_id").notNull(),
+  professorId: varchar("professor_id").notNull(),
+  fileName: varchar("file_name").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type ClassMaterial = typeof classMaterials.$inferSelect;
+export type InsertClassMaterial = typeof classMaterials.$inferInsert;
+
 // Enrollments table (students enrolled in classes)
 export const enrollments = pgTable("enrollments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -100,6 +113,12 @@ export const insertExamSchema = z.object({
 
 export type InsertExam = z.infer<typeof insertExamSchema>;
 
+// Dual score structure per question
+export interface DualScore {
+  correctness: number;
+  understanding: number;
+}
+
 // Submissions table
 export const submissions = pgTable("submissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -107,8 +126,10 @@ export const submissions = pgTable("submissions", {
   studentId: varchar("student_id").notNull(),
   responses: jsonb("responses").notNull().$type<ExamResponse[]>(),
   scores: jsonb("scores").notNull().$type<Record<string, number>>(),
+  understandingScores: jsonb("understanding_scores").$type<Record<string, number>>(),
   gradingMethods: jsonb("grading_methods").$type<Record<string, GradingMethod>>(),
   totalScore: real("total_score").notNull(),
+  totalUnderstandingScore: real("total_understanding_score"),
   submittedAt: varchar("submitted_at").notNull(),
 });
 
@@ -130,6 +151,11 @@ export const universitiesRelations = relations(universities, ({ many }) => ({
 export const classesRelations = relations(classes, ({ many }) => ({
   enrollments: many(enrollments),
   exams: many(exams),
+  materials: many(classMaterials),
+}));
+
+export const classMaterialsRelations = relations(classMaterials, ({ one }) => ({
+  class: one(classes, { fields: [classMaterials.classId], references: [classes.id] }),
 }));
 
 export const enrollmentsRelations = relations(enrollments, ({ one }) => ({

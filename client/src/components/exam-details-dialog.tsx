@@ -310,17 +310,33 @@ export function ExamDetailsDialog({
                                   </p>
                                 </div>
                               </div>
-                              <Badge
-                                variant={sub.totalScore >= 0.7 ? "default" : sub.totalScore >= 0.5 ? "secondary" : "destructive"}
-                              >
-                                {(sub.totalScore * 100).toFixed(0)}%
-                              </Badge>
+                              <div className="flex gap-2 items-center">
+                                <div className="text-right">
+                                  <Badge
+                                    variant={sub.totalScore >= 0.7 ? "default" : sub.totalScore >= 0.5 ? "secondary" : "destructive"}
+                                    data-testid={`badge-correctness-${sub.id}`}
+                                  >
+                                    Correctness: {(sub.totalScore * 100).toFixed(0)}%
+                                  </Badge>
+                                </div>
+                                {sub.totalUnderstandingScore != null && (
+                                  <div className="text-right">
+                                    <Badge
+                                      variant={sub.totalUnderstandingScore >= 0.7 ? "default" : sub.totalUnderstandingScore >= 0.5 ? "secondary" : "destructive"}
+                                      data-testid={`badge-understanding-${sub.id}`}
+                                    >
+                                      Understanding: {(sub.totalUnderstandingScore * 100).toFixed(0)}%
+                                    </Badge>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             
                             <div className="space-y-3 pl-11">
                               {sub.responses.map((resp, idx) => {
                                 const question = exam.questions.find(q => q.id === resp.questionId);
                                 const score = sub.scores[resp.questionId] || 0;
+                                const understandingScore = sub.understandingScores?.[resp.questionId];
                                 const gradingMethod = sub.gradingMethods?.[resp.questionId];
                                 const isEditing = editingScore?.submissionId === sub.id && editingScore?.questionId === resp.questionId;
                                 const methodLabel = gradingMethod === "ai" ? "AI Graded" : gradingMethod === "manual" ? "Manual" : gradingMethod === "exact" ? "Auto" : gradingMethod === "fallback" ? "Fallback" : "";
@@ -352,10 +368,15 @@ export function ExamDetailsDialog({
                                           </Button>
                                         </div>
                                       ) : (
-                                        <div className="flex items-center gap-1">
-                                          <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"} className="text-xs">
-                                            {(score * 100).toFixed(0)}%
+                                        <div className="flex items-center gap-2">
+                                          <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"} className="text-xs" data-testid={`score-correctness-${resp.questionId}`}>
+                                            Correct: {(score * 100).toFixed(0)}%
                                           </Badge>
+                                          {understandingScore != null && (
+                                            <Badge variant={understandingScore >= 0.7 ? "default" : understandingScore >= 0.5 ? "secondary" : "destructive"} className="text-xs" data-testid={`score-understanding-${resp.questionId}`}>
+                                              Understand: {(understandingScore * 100).toFixed(0)}%
+                                            </Badge>
+                                          )}
                                           {methodLabel && (
                                             <span className={`text-[10px] font-medium ${methodColor}`} data-testid={`grading-method-${resp.questionId}`}>
                                               {methodLabel}

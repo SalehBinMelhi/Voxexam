@@ -8,6 +8,7 @@ import {
   enrollments,
   exams,
   submissions,
+  classMaterials,
   type User,
   type University,
   type InsertUniversity,
@@ -21,6 +22,8 @@ import {
   type ExamResponse,
   type Question,
   type GradingMethod,
+  type ClassMaterial,
+  type InsertClassMaterial,
 } from "@shared/schema";
 import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
@@ -69,52 +72,74 @@ export async function transcribeAudio(audioDataUrl: string): Promise<string> {
 
 interface EvalResult {
   score: number;
+  understandingScore: number;
   method: GradingMethod;
   transcript?: string;
 }
 
 async function evaluateWithAI(
   question: Question,
-  response: string
+  response: string,
+  materialContext?: string
 ): Promise<EvalResult> {
   try {
-    const prompt = `You are grading a student's answer to an exam question. 
+    const materialSection = materialContext
+      ? `\nClass Materials Context (use this to assess the answer):\n${materialContext}\n`
+      : "";
 
+    const prompt = `You are grading a student's answer to an oral exam question. You must provide TWO separate scores.
+${materialSection}
 Question: ${question.text}
 
-Expected Answer: ${question.correctAnswer}
+Expected Answer: ${question.correctAnswer || "No specific expected answer provided"}
 
 Student's Answer: ${response}
 
-Grade the student's answer on a scale from 0.0 to 1.0, where:
-- 1.0 = Perfect or nearly perfect answer that demonstrates full understanding
-- 0.75-0.99 = Good answer with minor omissions or inaccuracies
-- 0.5-0.74 = Partial understanding, missing key points
-- 0.25-0.49 = Minimal understanding, significant errors
-- 0.0-0.24 = Incorrect or no relevant content
+Please evaluate with TWO scores, each from 0.0 to 1.0:
 
-Consider semantic meaning and understanding, not just exact word matching. Be fair but rigorous.
+1. CORRECTNESS SCORE: Is the answer factually correct?
+- 1.0 = Completely correct
+- 0.75-0.99 = Mostly correct with minor inaccuracies
+- 0.5-0.74 = Partially correct
+- 0.25-0.49 = Mostly incorrect
+- 0.0-0.24 = Wrong or no relevant content
 
-Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
+2. UNDERSTANDING SCORE: Does the student demonstrate deep understanding of the subject?
+- 1.0 = Excellent explanation showing thorough understanding and reasoning
+- 0.75-0.99 = Good understanding with clear reasoning
+- 0.5-0.74 = Basic understanding but lacks depth or reasoning
+- 0.25-0.49 = Superficial understanding, memorized answer without explanation
+- 0.0-0.24 = No demonstrated understanding
+
+A student might give a correct answer but show poor understanding (e.g., memorized without explanation), or show good understanding but have factual errors.
+
+Respond with ONLY two numbers separated by a comma, like: 0.8,0.6
+The first number is correctness, the second is understanding.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 10,
+      max_tokens: 20,
       temperature: 0.1,
     });
 
-    const scoreText = completion.choices[0]?.message?.content?.trim() || "0";
-    const score = parseFloat(scoreText);
+    const responseText = completion.choices[0]?.message?.content?.trim() || "0,0";
+    const parts = responseText.split(",").map(s => parseFloat(s.trim()));
     
-    if (isNaN(score) || score < 0 || score > 1) {
-      return { score: fallbackScore(question, response), method: "fallback" };
+    const correctness = parts[0];
+    const understanding = parts.length > 1 ? parts[1] : parts[0];
+    
+    if (isNaN(correctness) || correctness < 0 || correctness > 1 ||
+        isNaN(understanding) || understanding < 0 || understanding > 1) {
+      const fb = fallbackScore(question, response);
+      return { score: fb, understandingScore: fb, method: "fallback" };
     }
     
-    return { score, method: "ai" };
+    return { score: correctness, understandingScore: understanding, method: "ai" };
   } catch (error) {
     console.error("[AI-GRADING] AI grading failed, using fallback:", error);
-    return { score: fallbackScore(question, response), method: "fallback" };
+    const fb = fallbackScore(question, response);
+    return { score: fb, understandingScore: fb, method: "fallback" };
   }
 }
 
@@ -129,34 +154,35 @@ function fallbackScore(question: Question, response: string): number {
 async function evaluateResponse(
   question: Question,
   response: string,
-  audioData?: string
+  audioData?: string,
+  materialContext?: string
 ): Promise<EvalResult> {
   if (question.type === "mcq") {
     const score = response.trim().toLowerCase() === (question.correctAnswer || "").toLowerCase() ? 1.0 : 0.0;
-    return { score, method: "exact" };
+    return { score, understandingScore: score, method: "exact" };
   }
 
   if (question.type === "audio" && audioData && audioData.length > 0) {
     const transcription = await transcribeAudio(audioData);
     if (transcription) {
-      const result = await evaluateWithAI(question, transcription);
+      const result = await evaluateWithAI(question, transcription, materialContext);
       return { ...result, transcript: transcription };
     }
     if (response && response.trim().length > 0) {
-      return evaluateWithAI(question, response);
+      return evaluateWithAI(question, response, materialContext);
     }
-    return { score: 0.0, method: "fallback" };
+    return { score: 0.0, understandingScore: 0.0, method: "fallback" };
   }
 
   if (question.type === "audio" && response && response.trim().length > 0) {
-    return evaluateWithAI(question, response);
+    return evaluateWithAI(question, response, materialContext);
   }
 
   if (!response || response.trim().length === 0) {
-    return { score: 0.0, method: "fallback" };
+    return { score: 0.0, understandingScore: 0.0, method: "fallback" };
   }
 
-  return evaluateWithAI(question, response);
+  return evaluateWithAI(question, response, materialContext);
 }
 
 export interface IStorage {
@@ -182,6 +208,11 @@ export interface IStorage {
   getEnrollmentsByStudent(studentId: string): Promise<Enrollment[]>;
   createEnrollment(data: InsertEnrollment): Promise<Enrollment>;
   deleteEnrollment(studentId: string, classId: string): Promise<boolean>;
+
+  // Class Materials
+  getMaterialsByClass(classId: string): Promise<ClassMaterial[]>;
+  createMaterial(data: InsertClassMaterial): Promise<ClassMaterial>;
+  deleteMaterial(id: string): Promise<boolean>;
 
   // Exams
   getExam(id: string): Promise<Exam | undefined>;
@@ -279,6 +310,21 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
+  // Class Materials
+  async getMaterialsByClass(classId: string): Promise<ClassMaterial[]> {
+    return db.select().from(classMaterials).where(eq(classMaterials.classId, classId));
+  }
+
+  async createMaterial(data: InsertClassMaterial): Promise<ClassMaterial> {
+    const [material] = await db.insert(classMaterials).values(data).returning();
+    return material;
+  }
+
+  async deleteMaterial(id: string): Promise<boolean> {
+    const result = await db.delete(classMaterials).where(eq(classMaterials.id, id)).returning();
+    return result.length > 0;
+  }
+
   // Exams
   async getExam(id: string): Promise<Exam | undefined> {
     const [exam] = await db.select().from(exams).where(eq(exams.id, id));
@@ -361,14 +407,27 @@ export class DatabaseStorage implements IStorage {
     const exam = await this.getExam(examId);
     if (!exam) throw new Error("Exam not found");
 
+    let materialContext = "";
+    if (exam.classId) {
+      const materials = await this.getMaterialsByClass(exam.classId);
+      if (materials.length > 0) {
+        const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
+        materialContext = combinedContent.length > 8000 
+          ? combinedContent.substring(0, 8000) + "\n[Content truncated for length]"
+          : combinedContent;
+      }
+    }
+
     const scores: Record<string, number> = {};
+    const understandingScoresMap: Record<string, number> = {};
     const gradingMethodsMap: Record<string, GradingMethod> = {};
 
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
       if (question) {
-        const result = await evaluateResponse(question, response.response, response.audioData);
+        const result = await evaluateResponse(question, response.response, response.audioData, materialContext || undefined);
         scores[response.questionId] = result.score;
+        understandingScoresMap[response.questionId] = result.understandingScore;
         gradingMethodsMap[response.questionId] = result.method;
         if (result.transcript) {
           response.transcript = result.transcript;
@@ -376,18 +435,25 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    const totalScore =
-      Object.values(scores).length > 0
-        ? Object.values(scores).reduce((a, b) => a + b, 0) / Object.values(scores).length
-        : 0;
+    const scoreValues = Object.values(scores);
+    const totalScore = scoreValues.length > 0
+      ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
+      : 0;
+
+    const understandingValues = Object.values(understandingScoresMap);
+    const totalUnderstandingScore = understandingValues.length > 0
+      ? understandingValues.reduce((a, b) => a + b, 0) / understandingValues.length
+      : 0;
 
     const [submission] = await db.insert(submissions).values({
       examId,
       studentId,
       responses,
       scores,
+      understandingScores: understandingScoresMap,
       gradingMethods: gradingMethodsMap,
       totalScore,
+      totalUnderstandingScore,
       submittedAt: new Date().toISOString(),
     }).returning();
 
@@ -397,7 +463,8 @@ export class DatabaseStorage implements IStorage {
   async updateSubmissionScore(
     submissionId: string,
     questionId: string,
-    newScore: number
+    newScore: number,
+    newUnderstandingScore?: number
   ): Promise<ExamSubmission | undefined> {
     const [sub] = await db.select().from(submissions).where(eq(submissions.id, submissionId));
     if (!sub) return undefined;
@@ -406,15 +473,27 @@ export class DatabaseStorage implements IStorage {
     const updatedScores = { ...sub.scores, [questionId]: clampedScore };
     const updatedMethods = { ...(sub.gradingMethods || {}), [questionId]: "manual" as GradingMethod };
 
+    const updatedUnderstanding = { ...(sub.understandingScores || {}) };
+    if (newUnderstandingScore !== undefined) {
+      updatedUnderstanding[questionId] = Math.max(0, Math.min(1, newUnderstandingScore));
+    }
+
     const scoreValues = Object.values(updatedScores);
     const newTotalScore = scoreValues.length > 0
       ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
       : 0;
 
+    const understandingValues = Object.values(updatedUnderstanding);
+    const newTotalUnderstanding = understandingValues.length > 0
+      ? understandingValues.reduce((a, b) => a + b, 0) / understandingValues.length
+      : 0;
+
     const [updated] = await db.update(submissions).set({
       scores: updatedScores,
+      understandingScores: updatedUnderstanding,
       gradingMethods: updatedMethods,
       totalScore: newTotalScore,
+      totalUnderstandingScore: newTotalUnderstanding,
     }).where(eq(submissions.id, submissionId)).returning();
 
     return updated || undefined;
