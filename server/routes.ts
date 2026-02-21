@@ -241,11 +241,11 @@ export async function registerRoutes(
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can create classes" });
       }
-      const { name, universityId } = req.body;
+      const { name, universityId, roster } = req.body;
       if (!name) {
         return res.status(400).json({ error: "Class name is required" });
       }
-      const cls = await storage.createClass({ name, universityId, professorId: userId });
+      const cls = await storage.createClass({ name, universityId, professorId: userId, roster: roster || [] });
       res.status(201).json(cls);
     } catch (error) {
       res.status(500).json({ error: "Failed to create class" });

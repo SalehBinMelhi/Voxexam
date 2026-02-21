@@ -55,6 +55,7 @@ export const classes = pgTable("classes", {
   name: varchar("name").notNull(),
   universityId: varchar("university_id"),
   professorId: varchar("professor_id").notNull(),
+  roster: jsonb("roster").$type<string[]>().default([]),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
