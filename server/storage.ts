@@ -377,6 +377,7 @@ export interface IStorage {
   getClassesByUniversity(universityId: string): Promise<Class[]>;
   getClassesByProfessor(professorId: string): Promise<Class[]>;
   createClass(data: InsertClass): Promise<Class>;
+  updateClassRoster(id: string, roster: string[]): Promise<Class | undefined>;
   deleteClass(id: string): Promise<boolean>;
 
   // Enrollments
@@ -468,6 +469,11 @@ export class DatabaseStorage implements IStorage {
   async createClass(data: InsertClass): Promise<Class> {
     const [cls] = await db.insert(classes).values(data).returning();
     return cls;
+  }
+
+  async updateClassRoster(id: string, roster: string[]): Promise<Class | undefined> {
+    const [updated] = await db.update(classes).set({ roster }).where(eq(classes.id, id)).returning();
+    return updated;
   }
 
   async deleteClass(id: string): Promise<boolean> {

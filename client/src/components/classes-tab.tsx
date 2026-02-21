@@ -99,6 +99,7 @@ export function ClassesTab() {
   const [createExamOpen, setCreateExamOpen] = useState(false);
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
+  const [addStudentInput, setAddStudentInput] = useState("");
 
   const { data: classes = [] } = useQuery<Class[]>({
     queryKey: ["/api/classes"],
@@ -146,6 +147,21 @@ export function ClassesTab() {
       setCreateClassOpen(false);
       setNewClassName("");
       setNewClassStudents([]);
+    },
+  });
+
+  const updateRosterMutation = useMutation({
+    mutationFn: async ({ classId, addStudents, removeStudents }: { classId: string; addStudents?: string[]; removeStudents?: string[] }) => {
+      const res = await apiRequest("PATCH", `/api/classes/${classId}/roster`, { addStudents, removeStudents });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classes"] });
+      toast({ title: "Student roster updated" });
+      setAddStudentInput("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update roster", description: err.message, variant: "destructive" });
     },
   });
 
@@ -311,20 +327,56 @@ export function ClassesTab() {
           <div className="flex items-center justify-between gap-2">
             <h4 className="text-sm font-medium flex items-center gap-2">
               <Users className="h-4 w-4" />
-              Enrolled Students
+              Students
             </h4>
           </div>
+
+          <div className="flex gap-2">
+            <Input
+              placeholder="Add student by name or email..."
+              value={addStudentInput}
+              onChange={(e) => setAddStudentInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  const name = addStudentInput.trim();
+                  if (name) {
+                    updateRosterMutation.mutate({ classId: selectedClass.id, addStudents: [name] });
+                  }
+                }
+              }}
+              data-testid="input-add-student-to-class"
+            />
+            <Button
+              variant="outline"
+              onClick={() => {
+                const name = addStudentInput.trim();
+                if (name) {
+                  updateRosterMutation.mutate({ classId: selectedClass.id, addStudents: [name] });
+                }
+              }}
+              disabled={!addStudentInput.trim() || updateRosterMutation.isPending}
+              data-testid="button-add-student-to-class"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+
           {(selectedClass.roster && selectedClass.roster.length > 0) && (
-            <div className="space-y-1">
-              <p className="text-xs text-muted-foreground">Student Roster</p>
-              <div className="flex flex-wrap gap-2">
-                {selectedClass.roster.map((name) => (
-                  <Badge key={name} variant="default" className="text-xs" data-testid={`badge-roster-${name}`}>
-                    <User className="h-3 w-3 mr-1" />
-                    {name}
-                  </Badge>
-                ))}
-              </div>
+            <div className="flex flex-wrap gap-2">
+              {selectedClass.roster.map((name) => (
+                <Badge
+                  key={name}
+                  variant="default"
+                  className="text-xs cursor-pointer"
+                  data-testid={`badge-roster-${name}`}
+                  onClick={() => updateRosterMutation.mutate({ classId: selectedClass.id, removeStudents: [name] })}
+                >
+                  <User className="h-3 w-3 mr-1" />
+                  {name}
+                  <X className="h-3 w-3 ml-1" />
+                </Badge>
+              ))}
             </div>
           )}
           {classEnrollments.length > 0 && (
@@ -347,7 +399,7 @@ export function ClassesTab() {
             </div>
           )}
           {(!selectedClass.roster || selectedClass.roster.length === 0) && classEnrollments.length === 0 && (
-            <p className="text-sm text-muted-foreground">No students added yet. Add students when creating the class or assign them to exams.</p>
+            <p className="text-sm text-muted-foreground">No students added yet. Type a name above to add students to this class.</p>
           )}
         </div>
 

@@ -650,89 +650,9 @@ export function SimpleExamTab() {
               <Label>Assign Students</Label>
               <span className="text-sm text-muted-foreground">{manualStudentNames.length} assigned</span>
             </div>
-
-            {(() => {
-              const studentUsers = allUsers.filter((u) => u.role === "student");
-              if (studentUsers.length > 0) {
-                return (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs text-muted-foreground">Available students:</p>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            const newNames: string[] = [];
-                            for (const s of studentUsers) {
-                              const name = s.firstName ? `${s.firstName} ${s.lastName || ""}`.trim() : s.email || "";
-                              if (name && !manualStudentNames.includes(name)) newNames.push(name);
-                            }
-                            if (newNames.length > 0) setManualStudentNames([...manualStudentNames, ...newNames]);
-                          }}
-                          data-testid="button-simple-add-all-students"
-                        >
-                          <Users className="h-3.5 w-3.5 mr-1" />
-                          Add All ({studentUsers.length})
-                        </Button>
-                        {manualStudentNames.length > 0 && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setManualStudentNames([])}
-                            data-testid="button-simple-remove-all-students"
-                          >
-                            <X className="h-3.5 w-3.5 mr-1" />
-                            Remove All
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="border rounded-md divide-y max-h-[200px] overflow-y-auto">
-                      {studentUsers.map((s) => {
-                        const studentName = s.firstName ? `${s.firstName} ${s.lastName || ""}`.trim() : s.email || "";
-                        if (!studentName) return null;
-                        const isSelected = manualStudentNames.includes(studentName);
-                        return (
-                          <label
-                            key={s.id}
-                            className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors ${isSelected ? "bg-primary/5" : ""}`}
-                            data-testid={`label-simple-student-${s.id}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => {
-                                if (isSelected) {
-                                  removeStudentName(studentName);
-                                } else {
-                                  setManualStudentNames([...manualStudentNames, studentName]);
-                                }
-                              }}
-                              className="rounded border-gray-300"
-                              data-testid={`checkbox-simple-student-${s.id}`}
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">{studentName}</p>
-                              {s.email && s.firstName && (
-                                <p className="text-xs text-muted-foreground truncate">{s.email}</p>
-                              )}
-                            </div>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              }
-              return null;
-            })()}
-
             <div className="flex gap-2">
               <Input
-                placeholder="Or add student by name or email..."
+                placeholder="Student name or email..."
                 value={newStudentName}
                 onChange={(e) => setNewStudentName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addStudentName(); } }}

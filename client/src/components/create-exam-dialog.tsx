@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical } from "lucide-react";
+import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical, ChevronDown, ChevronUp } from "lucide-react";
 import type { InsertQuestion, QuestionType, Class } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
@@ -42,6 +42,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [newStudentName, setNewStudentName] = useState("");
   const [aiInstructions, setAiInstructions] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [studentPickerOpen, setStudentPickerOpen] = useState(false);
 
   const [newQuestion, setNewQuestion] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<QuestionType>("short");
@@ -56,6 +57,22 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     queryKey: ["/api/classes", selectedClassId, "enrollments"],
     enabled: !!selectedClassId && selectedClassId !== "none",
   });
+
+  const selectedClassData = classes.find(c => c.id === selectedClassId);
+  const classRoster = selectedClassData?.roster || [];
+
+  const allClassStudents: string[] = [];
+  for (const name of classRoster) {
+    if (name && !allClassStudents.includes(name)) allClassStudents.push(name);
+  }
+  for (const enrollment of classEnrollments) {
+    const student = enrollment.student;
+    if (!student) continue;
+    const name = student.firstName
+      ? `${student.firstName} ${student.lastName || ""}`.trim()
+      : student.email || "";
+    if (name && !allClassStudents.includes(name)) allClassStudents.push(name);
+  }
 
   const createExamMutation = useMutation({
     mutationFn: async (data: {
@@ -133,6 +150,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setNewCorrectAnswer("");
     setEditingIndex(null);
     setAiInstructions("");
+    setStudentPickerOpen(false);
   };
 
   const addStudentName = () => {
@@ -148,17 +166,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   };
 
   const addAllClassStudents = () => {
-    const newNames: string[] = [];
-    for (const enrollment of classEnrollments) {
-      const student = enrollment.student;
-      if (!student) continue;
-      const name = student.firstName
-        ? `${student.firstName} ${student.lastName || ""}`.trim()
-        : student.email || "";
-      if (name && !manualStudentNames.includes(name)) {
-        newNames.push(name);
-      }
-    }
+    const newNames = allClassStudents.filter(n => !manualStudentNames.includes(n));
     if (newNames.length > 0) {
       setManualStudentNames([...manualStudentNames, ...newNames]);
       toast({
@@ -168,7 +176,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     } else {
       toast({
         title: "No new students",
-        description: "All enrolled students are already assigned, or no students are enrolled in this class.",
+        description: "All class students are already assigned.",
       });
     }
   };
@@ -369,78 +377,82 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                 </span>
               </div>
 
-              {selectedClassId && selectedClassId !== "none" && classEnrollments.length > 0 && (
+              {selectedClassId && selectedClassId !== "none" && allClassStudents.length > 0 && (
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground">Enrolled students in this class:</p>
-                    <div className="flex gap-2">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        onClick={addAllClassStudents}
-                        data-testid="button-add-all-class-students"
-                      >
-                        <Users className="h-3.5 w-3.5 mr-1" />
-                        Add All ({classEnrollments.length})
-                      </Button>
-                      {manualStudentNames.length > 0 && (
+                  <button
+                    type="button"
+                    className="w-full flex items-center justify-between px-3 py-2 border rounded-md hover:bg-muted/50 transition-colors text-left"
+                    onClick={() => setStudentPickerOpen(!studentPickerOpen)}
+                    data-testid="button-toggle-student-picker"
+                  >
+                    <span className="text-sm">
+                      {manualStudentNames.length > 0
+                        ? `${manualStudentNames.length} of ${allClassStudents.length} students selected`
+                        : `Select from ${allClassStudents.length} class students`}
+                    </span>
+                    {studentPickerOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                  </button>
+
+                  {studentPickerOpen && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-end gap-2">
                         <Button
                           type="button"
-                          variant="outline"
+                          variant="secondary"
                           size="sm"
-                          onClick={() => setManualStudentNames([])}
-                          data-testid="button-remove-all-students"
+                          onClick={addAllClassStudents}
+                          data-testid="button-add-all-class-students"
                         >
-                          <X className="h-3.5 w-3.5 mr-1" />
-                          Remove All
+                          <Users className="h-3.5 w-3.5 mr-1" />
+                          Add All ({allClassStudents.length})
                         </Button>
-                      )}
+                        {manualStudentNames.length > 0 && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setManualStudentNames([])}
+                            data-testid="button-remove-all-students"
+                          >
+                            <X className="h-3.5 w-3.5 mr-1" />
+                            Remove All
+                          </Button>
+                        )}
+                      </div>
+                      <div className="border rounded-md divide-y max-h-[200px] overflow-y-auto">
+                        {allClassStudents.map((studentName) => {
+                          const isSelected = manualStudentNames.includes(studentName);
+                          return (
+                            <label
+                              key={studentName}
+                              className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors ${isSelected ? "bg-primary/5" : ""}`}
+                              data-testid={`label-student-${studentName}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  if (isSelected) {
+                                    removeStudentName(studentName);
+                                  } else {
+                                    setManualStudentNames([...manualStudentNames, studentName]);
+                                  }
+                                }}
+                                className="rounded border-gray-300"
+                                data-testid={`checkbox-student-${studentName}`}
+                              />
+                              <p className="text-sm font-medium truncate flex-1">{studentName}</p>
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                  <div className="border rounded-md divide-y max-h-[200px] overflow-y-auto">
-                    {classEnrollments.map((enrollment) => {
-                      const student = enrollment.student;
-                      if (!student) return null;
-                      const studentName = student.firstName
-                        ? `${student.firstName} ${student.lastName || ""}`.trim()
-                        : student.email || "";
-                      if (!studentName) return null;
-                      const isSelected = manualStudentNames.includes(studentName);
-                      return (
-                        <label
-                          key={enrollment.id}
-                          className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 transition-colors ${isSelected ? "bg-primary/5" : ""}`}
-                          data-testid={`label-student-${enrollment.id}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {
-                              if (isSelected) {
-                                removeStudentName(studentName);
-                              } else {
-                                setManualStudentNames([...manualStudentNames, studentName]);
-                              }
-                            }}
-                            className="rounded border-gray-300"
-                            data-testid={`checkbox-student-${enrollment.id}`}
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{studentName}</p>
-                            {student.email && student.firstName && (
-                              <p className="text-xs text-muted-foreground truncate">{student.email}</p>
-                            )}
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
+                  )}
                 </div>
               )}
 
-              {(!selectedClassId || selectedClassId === "none" || classEnrollments.length === 0) && (
-                <p className="text-xs text-muted-foreground">Select a class above to see enrolled students, or add students manually below.</p>
+              {(!selectedClassId || selectedClassId === "none" || allClassStudents.length === 0) && (
+                <p className="text-xs text-muted-foreground">Select a class above to see class students, or add students manually below.</p>
               )}
 
               <div className="flex gap-2">

@@ -274,6 +274,42 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/classes/:id/roster", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can update class roster" });
+      }
+      const classId = p(req.params.id);
+      const cls = await storage.getClass(classId);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      if (cls.professorId !== userId) {
+        return res.status(403).json({ error: "You can only modify your own classes" });
+      }
+      const { addStudents, removeStudents } = req.body;
+      let roster = cls.roster || [];
+      if (addStudents && Array.isArray(addStudents)) {
+        for (const name of addStudents) {
+          const trimmed = String(name).trim();
+          if (trimmed && !roster.includes(trimmed)) {
+            roster.push(trimmed);
+          }
+        }
+      }
+      if (removeStudents && Array.isArray(removeStudents)) {
+        roster = roster.filter((n: string) => !removeStudents.includes(n));
+      }
+      await storage.updateClassRoster(classId, roster);
+      const updated = await storage.getClass(classId);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update roster" });
+    }
+  });
+
   app.delete("/api/classes/:id", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user!.claims.sub;
