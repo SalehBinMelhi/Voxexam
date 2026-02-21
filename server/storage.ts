@@ -8,6 +8,7 @@ import type {
   Question,
   ExamSubmission,
   ExamResponse,
+  GradingMethod,
 } from "@shared/schema";
 
 const openai = new OpenAI({
@@ -108,10 +109,15 @@ export interface IStorage {
   ): Promise<ExamSubmission | undefined>;
 }
 
+interface EvalResult {
+  score: number;
+  method: GradingMethod;
+}
+
 async function evaluateWithAI(
   question: Question,
   response: string
-): Promise<number> {
+): Promise<EvalResult> {
   try {
     const prompt = `You are grading a student's answer to an exam question. 
 
@@ -132,6 +138,7 @@ Consider semantic meaning and understanding, not just exact word matching. Be fa
 
 Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
 
+    console.log("[AI-GRADING] Sending to GPT-4o-mini for evaluation...");
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
@@ -143,18 +150,19 @@ Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
     const score = parseFloat(scoreText);
     
     if (isNaN(score) || score < 0 || score > 1) {
-      console.warn(`AI returned invalid score: ${scoreText}, falling back to word matching`);
-      return fallbackEvaluate(question, response);
+      console.warn(`[AI-GRADING] AI returned invalid score: ${scoreText}, falling back to word matching`);
+      return { score: fallbackScore(question, response), method: "fallback" };
     }
     
-    return score;
+    console.log(`[AI-GRADING] AI score: ${score}`);
+    return { score, method: "ai" };
   } catch (error) {
-    console.error("AI grading failed, using fallback:", error);
-    return fallbackEvaluate(question, response);
+    console.error("[AI-GRADING] AI grading failed, using fallback:", error);
+    return { score: fallbackScore(question, response), method: "fallback" };
   }
 }
 
-function fallbackEvaluate(question: Question, response: string): number {
+function fallbackScore(question: Question, response: string): number {
   if (!question.correctAnswer) {
     return 0.0;
   }
@@ -170,41 +178,41 @@ async function evaluateResponse(
   question: Question,
   response: string,
   audioData?: string
-): Promise<number> {
-  console.log(`Evaluating response for question type: ${question.type}, has audioData: ${!!audioData}, audioData length: ${audioData?.length || 0}, text response: "${response?.substring(0, 50)}..."`);
+): Promise<EvalResult> {
+  console.log(`[AI-GRADING] Evaluating question type: ${question.type}, hasAudio: ${!!audioData}, textResponse: "${response?.substring(0, 50)}..."`);
   
   if (question.type === "mcq") {
-    return response.trim().toLowerCase() ===
+    const score = response.trim().toLowerCase() ===
       (question.correctAnswer || "").toLowerCase()
       ? 1.0
       : 0.0;
+    console.log(`[AI-GRADING] MCQ exact match score: ${score}`);
+    return { score, method: "exact" };
   }
 
   if (question.type === "audio" && audioData && audioData.length > 0) {
-    console.log("Processing audio question with recording data");
+    console.log("[AI-GRADING] Processing audio question with recording data");
     const transcription = await transcribeAudio(audioData);
     if (transcription) {
-      console.log(`Audio transcribed for grading: "${transcription}"`);
+      console.log(`[AI-GRADING] Audio transcribed: "${transcription}"`);
       return evaluateWithAI(question, transcription);
     }
-    console.log("Transcription failed or empty, checking for text fallback");
+    console.log("[AI-GRADING] Transcription failed, checking for text fallback");
     if (response && response.trim().length > 0) {
-      console.log("Using text response as fallback for grading");
       return evaluateWithAI(question, response);
     }
-    console.log("No text fallback available, returning 0");
-    return 0.0;
+    console.log("[AI-GRADING] No text fallback, returning 0");
+    return { score: 0.0, method: "fallback" };
   }
 
-  // For audio questions without recording, use text response
   if (question.type === "audio" && response && response.trim().length > 0) {
-    console.log("Audio question with text-only response, grading text");
+    console.log("[AI-GRADING] Audio question with text-only response");
     return evaluateWithAI(question, response);
   }
 
   if (!response || response.trim().length === 0) {
-    console.log("Empty response, returning 0");
-    return 0.0;
+    console.log("[AI-GRADING] Empty response, returning 0");
+    return { score: 0.0, method: "fallback" };
   }
 
   return evaluateWithAI(question, response);
@@ -338,15 +346,18 @@ export class MemStorage implements IStorage {
 
     const id = randomUUID();
     const scores: Record<string, number> = {};
+    const gradingMethodsMap: Record<string, "ai" | "fallback" | "exact" | "manual"> = {};
 
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
       if (question) {
-        scores[response.questionId] = await evaluateResponse(
+        const result = await evaluateResponse(
           question,
           response.response,
           response.audioData
         );
+        scores[response.questionId] = result.score;
+        gradingMethodsMap[response.questionId] = result.method;
       }
     }
 
@@ -362,6 +373,7 @@ export class MemStorage implements IStorage {
       studentId,
       responses,
       scores,
+      gradingMethods: gradingMethodsMap,
       totalScore,
       submittedAt: new Date().toISOString(),
     };
@@ -383,8 +395,11 @@ export class MemStorage implements IStorage {
     // Clamp score between 0 and 1
     const clampedScore = Math.max(0, Math.min(1, newScore));
     
-    // Update the score for the specific question
     submission.scores[questionId] = clampedScore;
+    if (!submission.gradingMethods) {
+      submission.gradingMethods = {};
+    }
+    submission.gradingMethods[questionId] = "manual";
     
     // Recalculate total score
     const scores = Object.values(submission.scores);

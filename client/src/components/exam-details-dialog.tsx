@@ -410,7 +410,10 @@ export function ExamDetailsDialog({
                               {sub.responses.map((resp, idx) => {
                                 const question = exam.questions.find(q => q.id === resp.questionId);
                                 const score = sub.scores[resp.questionId] || 0;
+                                const gradingMethod = sub.gradingMethods?.[resp.questionId];
                                 const isEditing = editingScore?.submissionId === sub.id && editingScore?.questionId === resp.questionId;
+                                const methodLabel = gradingMethod === "ai" ? "AI Graded" : gradingMethod === "manual" ? "Manual" : gradingMethod === "exact" ? "Auto" : gradingMethod === "fallback" ? "Fallback" : "";
+                                const methodColor = gradingMethod === "ai" ? "text-blue-500" : gradingMethod === "manual" ? "text-orange-500" : gradingMethod === "exact" ? "text-green-500" : "text-yellow-500";
                                 return (
                                   <div key={resp.questionId} className="text-sm border-l-2 pl-3 py-2 border-muted">
                                     <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -455,6 +458,11 @@ export function ExamDetailsDialog({
                                           <Badge variant={score >= 0.7 ? "default" : score >= 0.5 ? "secondary" : "destructive"} className="text-xs">
                                             {(score * 100).toFixed(0)}%
                                           </Badge>
+                                          {methodLabel && (
+                                            <span className={`text-[10px] font-medium ${methodColor}`} data-testid={`grading-method-${resp.questionId}`}>
+                                              {methodLabel}
+                                            </span>
+                                          )}
                                           <Button
                                             size="icon"
                                             variant="ghost"

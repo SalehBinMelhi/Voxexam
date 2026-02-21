@@ -67,12 +67,16 @@ export const examResponseSchema = z.object({
 
 export type ExamResponse = z.infer<typeof examResponseSchema>;
 
+export const gradingMethods = ["ai", "fallback", "exact", "manual"] as const;
+export type GradingMethod = typeof gradingMethods[number];
+
 export const examSubmissionSchema = z.object({
   id: z.string(),
   examId: z.string(),
   studentId: z.string(),
   responses: z.array(examResponseSchema),
   scores: z.record(z.string(), z.number()),
+  gradingMethods: z.record(z.string(), z.enum(gradingMethods)).optional(),
   totalScore: z.number(),
   submittedAt: z.string(),
 });
