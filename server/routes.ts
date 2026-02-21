@@ -1,37 +1,37 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import { storage, transcribeAudio } from "./storage";
+import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
+
+declare global {
+  namespace Express {
+    interface User {
+      claims: {
+        sub: string;
+        email?: string;
+        first_name?: string;
+        last_name?: string;
+        profile_image_url?: string;
+      };
+      access_token?: string;
+      refresh_token?: string;
+      expires_at?: number;
+    }
+  }
+}
+
+function p(val: string | string[] | undefined): string {
+  return Array.isArray(val) ? val[0] : val || "";
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
-  // Auth routes
-  app.post("/api/auth/login", async (req, res) => {
-    try {
-      const { username, role } = req.body;
-      
-      if (!username || !role || (role !== "professor" && role !== "student")) {
-        return res.status(400).json({ error: "Invalid username or role" });
-      }
-
-      // Look up user by both username AND role to allow same name for different roles
-      let user = await storage.getUserByUsernameAndRole(username, role);
-      
-      if (!user) {
-        user = await storage.createUser({ username, role });
-      }
-
-      res.json(user);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to login" });
-    }
-  });
 
   // Users routes
-  app.get("/api/users", async (req, res) => {
+  app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
       const users = await storage.getAllUsers();
       res.json(users);
@@ -40,9 +40,9 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/users/:id", async (req, res) => {
+  app.get("/api/users/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.params.id);
+      const user = await storage.getUser(p(req.params.id));
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -52,19 +52,238 @@ export async function registerRoutes(
     }
   });
 
-  // Exams routes
-  app.get("/api/exams", async (req, res) => {
+  app.patch("/api/users/:id/role", isAuthenticated, async (req, res) => {
     try {
-      const exams = await storage.getAllExams();
-      res.json(exams);
+      const userId = req.user!.claims.sub;
+      if (userId !== p(req.params.id)) {
+        return res.status(403).json({ error: "Cannot update another user's role" });
+      }
+      const { role, universityId } = req.body;
+      if (!role || (role !== "professor" && role !== "student")) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+      const user = await storage.updateUserRole(p(req.params.id), role, universityId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update user role" });
+    }
+  });
+
+  // Universities routes
+  app.get("/api/universities", isAuthenticated, async (req, res) => {
+    try {
+      const universities = await storage.getAllUniversities();
+      res.json(universities);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch universities" });
+    }
+  });
+
+  app.get("/api/universities/:id", isAuthenticated, async (req, res) => {
+    try {
+      const university = await storage.getUniversity(p(req.params.id));
+      if (!university) {
+        return res.status(404).json({ error: "University not found" });
+      }
+      res.json(university);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch university" });
+    }
+  });
+
+  app.post("/api/universities", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can create universities" });
+      }
+      const { name, domain } = req.body;
+      if (!name) {
+        return res.status(400).json({ error: "University name is required" });
+      }
+      const university = await storage.createUniversity({ name, domain });
+      res.status(201).json(university);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create university" });
+    }
+  });
+
+  // Classes routes
+  app.get("/api/classes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      if (user.role === "professor") {
+        const classes = await storage.getClassesByProfessor(userId);
+        res.json(classes);
+      } else if (user.role === "student") {
+        const enrollmentsList = await storage.getEnrollmentsByStudent(userId);
+        const classIds = enrollmentsList.map(e => e.classId);
+        const allClasses = await Promise.all(classIds.map(id => storage.getClass(id)));
+        res.json(allClasses.filter(Boolean));
+      } else {
+        res.json([]);
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch classes" });
+    }
+  });
+
+  app.get("/api/classes/:id", isAuthenticated, async (req, res) => {
+    try {
+      const cls = await storage.getClass(p(req.params.id));
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      res.json(cls);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch class" });
+    }
+  });
+
+  app.post("/api/classes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can create classes" });
+      }
+      const { name, universityId } = req.body;
+      if (!name || !universityId) {
+        return res.status(400).json({ error: "Class name and university are required" });
+      }
+      const cls = await storage.createClass({ name, universityId, professorId: userId });
+      res.status(201).json(cls);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create class" });
+    }
+  });
+
+  app.delete("/api/classes/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can delete classes" });
+      }
+      const deleted = await storage.deleteClass(p(req.params.id));
+      if (!deleted) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete class" });
+    }
+  });
+
+  // Enrollments routes
+  app.get("/api/classes/:classId/enrollments", isAuthenticated, async (req, res) => {
+    try {
+      const enrollmentsList = await storage.getEnrollmentsByClass(p(req.params.classId));
+      const students = await Promise.all(
+        enrollmentsList.map(async (e) => {
+          const user = await storage.getUser(e.studentId);
+          return { ...e, student: user };
+        })
+      );
+      res.json(students);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch enrollments" });
+    }
+  });
+
+  app.post("/api/classes/:classId/enroll", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const classId = p(req.params.classId);
+      
+      const existingEnrollments = await storage.getEnrollmentsByStudent(userId);
+      const alreadyEnrolled = existingEnrollments.some(e => e.classId === classId);
+      if (alreadyEnrolled) {
+        return res.status(400).json({ error: "Already enrolled in this class" });
+      }
+      
+      const enrollment = await storage.createEnrollment({ studentId: userId, classId });
+      res.status(201).json(enrollment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to enroll" });
+    }
+  });
+
+  app.post("/api/classes/:classId/enrollments", isAuthenticated, async (req, res) => {
+    try {
+      const { studentId } = req.body;
+      const classId = p(req.params.classId);
+      
+      if (!studentId) {
+        return res.status(400).json({ error: "Student ID is required" });
+      }
+      
+      const existingEnrollments = await storage.getEnrollmentsByClass(classId);
+      const alreadyEnrolled = existingEnrollments.some(e => e.studentId === studentId);
+      if (alreadyEnrolled) {
+        return res.status(400).json({ error: "Student already enrolled" });
+      }
+      
+      const enrollment = await storage.createEnrollment({ studentId, classId });
+      res.status(201).json(enrollment);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to add enrollment" });
+    }
+  });
+
+  app.delete("/api/classes/:classId/enrollments/:studentId", isAuthenticated, async (req, res) => {
+    try {
+      const deleted = await storage.deleteEnrollment(p(req.params.studentId), p(req.params.classId));
+      if (!deleted) {
+        return res.status(404).json({ error: "Enrollment not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to remove enrollment" });
+    }
+  });
+
+  // Exams routes
+  app.get("/api/exams", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      if (user.role === "professor") {
+        const examsList = await storage.getExamsByProfessor(userId);
+        res.json(examsList);
+      } else {
+        const enrollmentsList = await storage.getEnrollmentsByStudent(userId);
+        const classIds = enrollmentsList.map(e => e.classId);
+        
+        const allExams = await storage.getAllExams();
+        const myExams = allExams.filter(exam => {
+          const assignedById = exam.assignedStudentIds.includes(userId);
+          const assignedByName = (exam.assignedStudentNames || []).some(
+            n => n.toLowerCase() === (user.firstName?.toLowerCase() + " " + user.lastName?.toLowerCase()) ||
+                 n.toLowerCase() === (user.email?.toLowerCase() || "")
+          );
+          const inClass = exam.classId && classIds.includes(exam.classId);
+          return assignedById || assignedByName || inClass;
+        });
+        res.json(myExams);
+      }
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch exams" });
     }
   });
 
-  app.get("/api/exams/:id", async (req, res) => {
+  app.get("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const exam = await storage.getExam(req.params.id);
+      const exam = await storage.getExam(p(req.params.id));
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
       }
@@ -74,7 +293,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/exams", async (req, res) => {
+  app.post("/api/exams", isAuthenticated, async (req, res) => {
     try {
       const parseResult = insertExamSchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -84,21 +303,17 @@ export async function registerRoutes(
         });
       }
 
-      const professorId = parseResult.data.professorId || req.headers["x-user-id"];
-      if (!professorId) {
-        return res.status(400).json({ error: "Professor ID is required" });
-      }
-
-      const exam = await storage.createExam(professorId as string, parseResult.data);
+      const professorId = req.user!.claims.sub;
+      const exam = await storage.createExam(professorId, parseResult.data);
       res.status(201).json(exam);
     } catch (error) {
       res.status(500).json({ error: "Failed to create exam" });
     }
   });
 
-  app.patch("/api/exams/:id", async (req, res) => {
+  app.patch("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const exam = await storage.updateExam(req.params.id, req.body);
+      const exam = await storage.updateExam(p(req.params.id), req.body);
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
       }
@@ -108,9 +323,9 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/exams/:id", async (req, res) => {
+  app.delete("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const deleted = await storage.deleteExam(req.params.id);
+      const deleted = await storage.deleteExam(p(req.params.id));
       if (!deleted) {
         return res.status(404).json({ error: "Exam not found" });
       }
@@ -121,28 +336,37 @@ export async function registerRoutes(
   });
 
   // Submissions routes
-  app.get("/api/submissions", async (req, res) => {
+  app.get("/api/submissions", isAuthenticated, async (req, res) => {
     try {
       const { examId, studentId } = req.query;
       
-      let submissions;
+      let subs;
       if (examId) {
-        submissions = await storage.getSubmissionsByExam(examId as string);
+        subs = await storage.getSubmissionsByExam(examId as string);
       } else if (studentId) {
-        submissions = await storage.getSubmissionsByStudent(studentId as string);
+        subs = await storage.getSubmissionsByStudent(studentId as string);
       } else {
-        submissions = await storage.getAllSubmissions();
+        const userId = req.user!.claims.sub;
+        const user = await storage.getUser(userId);
+        if (user?.role === "professor") {
+          const profExams = await storage.getExamsByProfessor(userId);
+          const examIds = profExams.map(e => e.id);
+          const allSubs = await storage.getAllSubmissions();
+          subs = allSubs.filter(s => examIds.includes(s.examId));
+        } else {
+          subs = await storage.getSubmissionsByStudent(userId);
+        }
       }
       
-      res.json(submissions);
+      res.json(subs);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch submissions" });
     }
   });
 
-  app.get("/api/submissions/:id", async (req, res) => {
+  app.get("/api/submissions/:id", isAuthenticated, async (req, res) => {
     try {
-      const submission = await storage.getSubmission(req.params.id);
+      const submission = await storage.getSubmission(p(req.params.id));
       if (!submission) {
         return res.status(404).json({ error: "Submission not found" });
       }
@@ -152,7 +376,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/submissions", async (req, res) => {
+  app.post("/api/submissions", isAuthenticated, async (req, res) => {
     try {
       const parseResult = insertExamSubmissionSchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -162,31 +386,14 @@ export async function registerRoutes(
         });
       }
 
-      const { examId, responses, studentId } = parseResult.data;
+      const { examId, responses } = parseResult.data;
+      const studentId = req.user!.claims.sub;
 
-      const actualStudentId = studentId || req.headers["x-user-id"];
-      if (!actualStudentId) {
-        return res.status(400).json({ error: "Student ID is required" });
-      }
-
-      // Check if exam exists
       const exam = await storage.getExam(examId);
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
       }
 
-      // Check if student is assigned to exam (by ID or by name)
-      const student = await storage.getUser(actualStudentId as string);
-      const isAssignedById = exam.assignedStudentIds.includes(actualStudentId as string);
-      const isAssignedByName = student && (exam.assignedStudentNames || []).some(
-        (name) => name.toLowerCase() === student.username.toLowerCase()
-      );
-      
-      if (!isAssignedById && !isAssignedByName) {
-        return res.status(403).json({ error: "Student is not assigned to this exam" });
-      }
-
-      // Check if exam is active
       if (exam.startTime && exam.endTime) {
         const now = new Date();
         const start = new Date(exam.startTime);
@@ -197,27 +404,20 @@ export async function registerRoutes(
         }
       }
 
-      // Check if student has already submitted
-      const existingSubmissions = await storage.getSubmissionsByStudent(actualStudentId as string);
+      const existingSubmissions = await storage.getSubmissionsByStudent(studentId);
       const alreadySubmitted = existingSubmissions.some(s => s.examId === examId);
       if (alreadySubmitted) {
         return res.status(400).json({ error: "You have already submitted this exam" });
       }
 
-      const submission = await storage.createSubmission(
-        actualStudentId as string,
-        examId,
-        responses
-      );
-      
+      const submission = await storage.createSubmission(studentId, examId, responses);
       res.status(201).json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to create submission" });
     }
   });
 
-  // Update submission score (for manual grading by professor)
-  app.patch("/api/submissions/:id/score", async (req, res) => {
+  app.patch("/api/submissions/:id/score", isAuthenticated, async (req, res) => {
     try {
       const { questionId, score } = req.body;
       
@@ -230,7 +430,7 @@ export async function registerRoutes(
       }
 
       const submission = await storage.updateSubmissionScore(
-        req.params.id,
+        p(req.params.id),
         questionId,
         score
       );
@@ -245,7 +445,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/transcribe", async (req, res) => {
+  app.post("/api/transcribe", isAuthenticated, async (req, res) => {
     try {
       const { audioData } = req.body;
       if (!audioData || typeof audioData !== "string") {

@@ -6,24 +6,37 @@ A comprehensive web application for conducting and managing university oral exam
 
 This is a full-stack application built with:
 - **Frontend**: React with TypeScript, Vite, TailwindCSS, and shadcn/ui components
-- **Backend**: Express.js with in-memory storage
+- **Backend**: Express.js with PostgreSQL database (Drizzle ORM)
+- **Authentication**: Replit Auth (Google, GitHub, Apple, email+password)
 - **State Management**: TanStack Query for server state
+- **AI Grading**: OpenAI GPT-4o-mini via Replit AI Integrations
 
 ## Features
 
 ### For Professors
 - Create oral exams with multiple question types (MCQ, short answer, audio response)
 - Schedule exams with start and end times (or leave unscheduled for immediate availability)
-- Assign students to exams by selecting registered students or by typing names directly
-- View exam submissions and scores
-- Delete exams
+- Manage universities and classes
+- Assign students to exams by typing names/emails directly
+- View exam submissions and scores with grading method indicators
+- Manually override AI scores
+- Delete exams and classes
 
 ### For Students
 - View assigned exams (active, upcoming, completed)
 - Take active exams with a clean question-by-question interface
+- Record audio responses with microphone
 - Navigate between questions freely during the exam
 - Receive immediate scoring upon submission
 - View past exam scores
+
+## Authentication
+
+Users authenticate via Replit Auth (supports Google, GitHub, Apple, email+password). On first login, users select their role (professor or student) via a role selection page. The role is stored in the users table.
+
+- `/api/login` - Redirects to Replit Auth login
+- `/api/logout` - Logs out and redirects to home
+- `/api/auth/user` - Returns current authenticated user
 
 ## Project Structure
 
@@ -36,76 +49,109 @@ This is a full-stack application built with:
 │   │   │   ├── exam-details-dialog.tsx
 │   │   │   ├── take-exam-dialog.tsx
 │   │   │   └── theme-toggle.tsx
-│   │   ├── lib/          # Utilities and context
-│   │   │   ├── auth-context.tsx  # Authentication context
-│   │   │   └── queryClient.ts    # TanStack Query setup
+│   │   ├── hooks/        # Custom hooks
+│   │   │   ├── use-auth.ts    # Auth hook (useAuth)
+│   │   │   └── use-toast.ts
+│   │   ├── lib/          # Utilities
+│   │   │   ├── auth-utils.ts  # Auth utility functions
+│   │   │   └── queryClient.ts # TanStack Query setup
 │   │   ├── pages/        # Page components
-│   │   │   ├── login.tsx
+│   │   │   ├── landing.tsx            # Landing page (logged out)
+│   │   │   ├── role-select.tsx        # Role selection (first login)
 │   │   │   ├── professor-dashboard.tsx
 │   │   │   └── student-dashboard.tsx
-│   │   ├── App.tsx       # Main app component with routing
+│   │   ├── App.tsx       # Main app with auth-based routing
 │   │   └── index.css     # Global styles and theme
 ├── server/                # Backend Express application
+│   ├── db.ts             # Database connection (Drizzle + Neon)
 │   ├── routes.ts         # API route handlers
-│   ├── storage.ts        # In-memory data storage
-│   └── index.ts          # Server entry point
+│   ├── storage.ts        # DatabaseStorage with AI grading logic
+│   ├── index.ts          # Server entry point with auth setup
+│   └── replit_integrations/  # Replit auth integration
+│       └── auth.ts
 ├── shared/               # Shared code between frontend and backend
-│   └── schema.ts         # TypeScript types and Zod schemas
+│   ├── schema.ts         # Drizzle schema + Zod schemas
+│   └── models/
+│       └── auth.ts       # Users and sessions tables
 ```
 
 ## API Endpoints
 
 ### Authentication
-- `POST /api/auth/login` - Login with username and role
+- `GET /api/auth/user` - Get current authenticated user
+- `GET /api/login` - Redirect to Replit Auth
+- `GET /api/logout` - Logout
+- `PATCH /api/users/:id/role` - Set user role (professor/student)
 
 ### Users
 - `GET /api/users` - Get all users
 - `GET /api/users/:id` - Get user by ID
 
+### Universities
+- `GET /api/universities` - Get all universities
+- `GET /api/universities/:id` - Get university by ID
+- `POST /api/universities` - Create university
+
+### Classes
+- `GET /api/classes` - Get classes (filtered by role: professor sees own, student sees enrolled)
+- `GET /api/classes/:id` - Get class by ID
+- `POST /api/classes` - Create class (professor)
+- `DELETE /api/classes/:id` - Delete class
+
+### Enrollments
+- `GET /api/classes/:classId/enrollments` - Get class enrollments
+- `POST /api/classes/:classId/enroll` - Self-enroll student
+- `POST /api/classes/:classId/enrollments` - Add student enrollment
+- `DELETE /api/classes/:classId/enrollments/:studentId` - Remove enrollment
+
 ### Exams
-- `GET /api/exams` - Get all exams
+- `GET /api/exams` - Get exams (filtered by role)
 - `GET /api/exams/:id` - Get exam by ID
 - `POST /api/exams` - Create a new exam
 - `PATCH /api/exams/:id` - Update an exam
 - `DELETE /api/exams/:id` - Delete an exam
 
 ### Submissions
-- `GET /api/submissions` - Get all submissions (supports ?examId and ?studentId filters)
+- `GET /api/submissions` - Get submissions (filtered by role)
 - `GET /api/submissions/:id` - Get submission by ID
 - `POST /api/submissions` - Submit exam responses
+- `PATCH /api/submissions/:id/score` - Manual score update
+
+### Transcription
+- `POST /api/transcribe` - Transcribe audio to text (live preview)
 
 ## Data Models
 
-### User
-- `id`: Unique identifier
-- `username`: User's name
-- `role`: "professor" or "student"
+### User (shared/models/auth.ts)
+- `id`: UUID primary key
+- `email`: Unique email
+- `firstName`, `lastName`: Name fields
+- `profileImageUrl`: Avatar URL
+- `role`: "professor" | "student" | null (set on first login)
+- `universityId`: Optional university association
 
-### Question
-- `id`: Unique identifier
-- `text`: Question content
-- `type`: "mcq", "short", or "audio"
-- `options`: Array of options (for MCQ)
-- `correctAnswer`: Expected answer for grading
+### University
+- `id`: UUID, `name`: string, `domain`: optional string
+
+### Class
+- `id`: UUID, `name`: string, `universityId`: FK, `professorId`: FK
+
+### Enrollment
+- `id`: UUID, `studentId`: FK, `classId`: FK
 
 ### Exam
-- `id`: Unique identifier
-- `title`: Exam name
-- `professorId`: Creator's user ID
-- `questions`: Array of questions
-- `startTime`: ISO datetime string (optional - if not set, exam is immediately available)
-- `endTime`: ISO datetime string (optional)
-- `assignedStudentIds`: Array of student user IDs
-- `assignedStudentNames`: Array of manually typed student names (matched case-insensitively)
+- `id`: UUID, `title`: string, `professorId`: FK, `classId`: optional FK
+- `questions`: JSONB array of Question objects
+- `startTime`, `endTime`: Optional ISO strings
+- `assignedStudentIds`: JSONB string array
+- `assignedStudentNames`: JSONB string array
 
 ### ExamSubmission
-- `id`: Unique identifier
-- `examId`: Associated exam
-- `studentId`: Student who submitted
-- `responses`: Array of question responses
-- `scores`: Object mapping questionId to score (0-1)
-- `totalScore`: Average of all scores (0-1)
-- `submittedAt`: Submission timestamp
+- `id`: UUID, `examId`: FK, `studentId`: FK
+- `responses`: JSONB array of ExamResponse
+- `scores`: JSONB object (questionId -> 0-1 score)
+- `gradingMethods`: JSONB object (questionId -> "ai"|"exact"|"fallback"|"manual")
+- `totalScore`: float, `submittedAt`: ISO string
 
 ## Grading Logic
 
@@ -117,7 +163,6 @@ This is a full-stack application built with:
 - **Audio Questions**: Speech-to-text transcription + AI grading
   - Uses gpt-4o-mini-transcribe model via Replit AI Integrations for speech-to-text
   - Audio format auto-conversion via ffmpeg (WebM/OGG -> WAV) before transcription
-  - Supports webm, mp4, ogg, and wav audio formats
   - Transcription is then graded using the same AI semantic evaluation
   - Falls back to text input if transcription fails
 
@@ -125,26 +170,19 @@ This is a full-stack application built with:
 
 The application runs on port 5000 with both frontend and backend served together via Vite's proxy setup.
 
-To start development:
 ```bash
 npm run dev
 ```
 
 ## Recent Changes
 
-- Initial implementation: Complete oral exam system with professor and student dashboards
-- Support for three question types: MCQ, short answer, and audio (simulated as text)
-- Automatic grading with word-match scoring for short answers
-- Dark mode support with theme toggle
-- Manual student assignment: Professors can type student names directly when creating exams, allowing exam access before students first log in
-- Unscheduled exams are now immediately available to assigned students (shown as "Available" status)
-- Audio questions now have microphone recording UI with start/stop/play/re-record controls
-- Audio questions include a required text input for grading (text-based word matching)
-- Submit Exam button is now visible on every question, not just the last one
-- AI-powered grading using OpenAI GPT-4o-mini for short answer and audio questions (semantic evaluation on 0-1 scale)
-- Audio transcription using gpt-4o-mini-transcribe (speech-to-text before grading, with ffmpeg format conversion)
-- Grading method tracking: each question score shows how it was graded (AI Graded, Auto, Manual, Fallback)
-- Manual grading override: professors can click edit on any score to manually adjust it (0-100%)
-- PATCH /api/submissions/:id/score endpoint for manual score updates
-- Transcript visibility: audio transcripts are now saved in submissions and visible to both students (live preview after recording) and professors (in grading view)
-- POST /api/transcribe endpoint for live audio-to-text preview during exam-taking
+- **Major refactor**: Migrated from in-memory storage to PostgreSQL with Drizzle ORM
+- **Authentication**: Replaced simple username/role login with Replit Auth (Google, GitHub, Apple, email+password)
+- **University/Class hierarchy**: Added universities, classes, and enrollments tables
+- **Role selection**: New first-login role selection page
+- **Landing page**: New landing page for logged-out users
+- **Frontend overhaul**: Updated all dashboards and dialogs for new auth and data model
+- AI-powered grading using OpenAI GPT-4o-mini for short answer and audio questions
+- Audio transcription using gpt-4o-mini-transcribe with ffmpeg format conversion
+- Manual grading override with grading method indicators
+- Transcript visibility for both students and professors

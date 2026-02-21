@@ -1,13 +1,23 @@
 import { useState } from "react";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CreateExamDialog } from "@/components/create-exam-dialog";
 import { ExamDetailsDialog } from "@/components/exam-details-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { 
   Plus, 
   LogOut, 
@@ -18,10 +28,14 @@ import {
   GraduationCap,
   BookOpen,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  School,
+  Layers,
+  Trash2
 } from "lucide-react";
-import type { Exam } from "@shared/schema";
+import type { Exam, Class, University } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
+import { useToast } from "@/hooks/use-toast";
 
 function getExamStatus(exam: Exam): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
   if (!exam.startTime || !exam.endTime) {
@@ -42,21 +56,74 @@ function getExamStatus(exam: Exam): { label: string; variant: "default" | "secon
 
 export default function ProfessorDashboard() {
   const { user, logout } = useAuth();
+  const { toast } = useToast();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  const [createClassOpen, setCreateClassOpen] = useState(false);
+  const [createUniOpen, setCreateUniOpen] = useState(false);
+  const [newClassName, setNewClassName] = useState("");
+  const [newUniName, setNewUniName] = useState("");
+  const [selectedUniId, setSelectedUniId] = useState("");
 
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
   });
 
-  const myExams = exams.filter((exam) => exam.professorId === user?.id);
+  const { data: classes = [] } = useQuery<Class[]>({
+    queryKey: ["/api/classes"],
+  });
+
+  const { data: universities = [] } = useQuery<University[]>({
+    queryKey: ["/api/universities"],
+  });
+
+  const createUniMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/universities", { name });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/universities"] });
+      toast({ title: "University created" });
+      setCreateUniOpen(false);
+      setNewUniName("");
+    },
+  });
+
+  const createClassMutation = useMutation({
+    mutationFn: async ({ name, universityId }: { name: string; universityId: string }) => {
+      const res = await apiRequest("POST", "/api/classes", { name, universityId });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classes"] });
+      toast({ title: "Class created" });
+      setCreateClassOpen(false);
+      setNewClassName("");
+      setSelectedUniId("");
+    },
+  });
+
+  const deleteClassMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/classes/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classes"] });
+      toast({ title: "Class deleted" });
+    },
+  });
 
   const stats = {
-    total: myExams.length,
-    active: myExams.filter((e) => getExamStatus(e).label === "Active").length,
-    scheduled: myExams.filter((e) => getExamStatus(e).label === "Scheduled").length,
-    completed: myExams.filter((e) => getExamStatus(e).label === "Completed").length,
+    total: exams.length,
+    active: exams.filter((e) => getExamStatus(e).label === "Active").length,
+    scheduled: exams.filter((e) => getExamStatus(e).label === "Scheduled").length,
+    completed: exams.filter((e) => getExamStatus(e).label === "Completed").length,
   };
+
+  const displayName = user?.firstName
+    ? `${user.firstName} ${user.lastName || ""}`.trim()
+    : user?.email || "Professor";
 
   return (
     <div className="min-h-screen bg-background">
@@ -67,19 +134,24 @@ export default function ProfessorDashboard() {
               <GraduationCap className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="font-semibold">Oral Exam System</h1>
+              <h1 className="font-semibold">OralExam</h1>
               <p className="text-xs text-muted-foreground">Professor Dashboard</p>
             </div>
           </div>
           
           <div className="flex items-center gap-2">
+            {user?.profileImageUrl && (
+              <img src={user.profileImageUrl} alt="" className="w-7 h-7 rounded-full" />
+            )}
             <span className="text-sm text-muted-foreground hidden sm:inline">
-              Welcome, <span className="font-medium text-foreground">{user?.username}</span>
+              {displayName}
             </span>
             <ThemeToggle />
-            <Button variant="ghost" size="icon" onClick={logout} data-testid="button-logout">
-              <LogOut className="h-4 w-4" />
-            </Button>
+            <a href="/api/logout">
+              <Button variant="ghost" size="icon" data-testid="button-logout">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </a>
           </div>
         </div>
       </header>
@@ -90,11 +162,58 @@ export default function ProfessorDashboard() {
             <h2 className="text-2xl font-bold">My Exams</h2>
             <p className="text-muted-foreground">Create and manage your oral examinations</p>
           </div>
-          <Button onClick={() => setCreateDialogOpen(true)} data-testid="button-create-exam">
-            <Plus className="h-4 w-4 mr-2" />
-            Create Exam
-          </Button>
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" onClick={() => setCreateUniOpen(true)} data-testid="button-create-university">
+              <School className="h-4 w-4 mr-2" />
+              Add University
+            </Button>
+            <Button variant="outline" onClick={() => setCreateClassOpen(true)} data-testid="button-create-class">
+              <Layers className="h-4 w-4 mr-2" />
+              Add Class
+            </Button>
+            <Button onClick={() => setCreateDialogOpen(true)} data-testid="button-create-exam">
+              <Plus className="h-4 w-4 mr-2" />
+              Create Exam
+            </Button>
+          </div>
         </div>
+
+        {classes.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Layers className="h-5 w-5" />
+              My Classes
+            </h3>
+            <div className="flex flex-wrap gap-3">
+              {classes.map((cls) => {
+                const uni = universities.find(u => u.id === cls.universityId);
+                const classExams = exams.filter(e => e.classId === cls.id);
+                return (
+                  <Card key={cls.id} className="w-64" data-testid={`card-class-${cls.id}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-medium">{cls.name}</p>
+                          {uni && <p className="text-xs text-muted-foreground">{uni.name}</p>}
+                          <p className="text-xs text-muted-foreground mt-1">{classExams.length} exams</p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => deleteClassMutation.mutate(cls.id)}
+                          data-testid={`button-delete-class-${cls.id}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
@@ -103,7 +222,7 @@ export default function ProfessorDashboard() {
                 <BookOpen className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{stats.total}</p>
+                <p className="text-2xl font-bold" data-testid="text-total-exams">{stats.total}</p>
                 <p className="text-xs text-muted-foreground">Total Exams</p>
               </div>
             </CardContent>
@@ -160,7 +279,7 @@ export default function ProfessorDashboard() {
               </Card>
             ))}
           </div>
-        ) : myExams.length === 0 ? (
+        ) : exams.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
               <div className="w-16 h-16 rounded-full bg-muted mx-auto mb-4 flex items-center justify-center">
@@ -178,8 +297,9 @@ export default function ProfessorDashboard() {
           </Card>
         ) : (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {myExams.map((exam) => {
+            {exams.map((exam) => {
               const status = getExamStatus(exam);
+              const cls = classes.find(c => c.id === exam.classId);
               return (
                 <Card
                   key={exam.id}
@@ -195,6 +315,9 @@ export default function ProfessorDashboard() {
                     <CardDescription className="flex items-center gap-1">
                       <FileQuestion className="h-3.5 w-3.5" />
                       {exam.questions.length} question{exam.questions.length !== 1 ? "s" : ""}
+                      {cls && (
+                        <span className="ml-2 text-xs">| {cls.name}</span>
+                      )}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -233,6 +356,88 @@ export default function ProfessorDashboard() {
           onOpenChange={(open) => !open && setSelectedExam(null)}
         />
       )}
+
+      <Dialog open={createUniOpen} onOpenChange={setCreateUniOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add University</DialogTitle>
+            <DialogDescription>Create a new university to organize your classes</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="uni-name">University Name</Label>
+              <Input
+                id="uni-name"
+                placeholder="e.g., MIT"
+                value={newUniName}
+                onChange={(e) => setNewUniName(e.target.value)}
+                data-testid="input-university-name"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateUniOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createUniMutation.mutate(newUniName)}
+              disabled={!newUniName.trim() || createUniMutation.isPending}
+              data-testid="button-submit-university"
+            >
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createClassOpen} onOpenChange={setCreateClassOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Class</DialogTitle>
+            <DialogDescription>Create a class within a university</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>University</Label>
+              {universities.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No universities yet. Create one first.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {universities.map((uni) => (
+                    <Badge
+                      key={uni.id}
+                      variant={selectedUniId === uni.id ? "default" : "outline"}
+                      className="cursor-pointer"
+                      onClick={() => setSelectedUniId(uni.id)}
+                      data-testid={`badge-university-${uni.id}`}
+                    >
+                      {uni.name}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="class-name">Class Name</Label>
+              <Input
+                id="class-name"
+                placeholder="e.g., CS101 - Intro to Programming"
+                value={newClassName}
+                onChange={(e) => setNewClassName(e.target.value)}
+                data-testid="input-class-name"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateClassOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createClassMutation.mutate({ name: newClassName, universityId: selectedUniId })}
+              disabled={!newClassName.trim() || !selectedUniId || createClassMutation.isPending}
+              data-testid="button-submit-class"
+            >
+              Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

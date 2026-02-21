@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +39,7 @@ function getExamStatus(exam: Exam): { label: string; variant: "default" | "secon
 }
 
 export default function StudentDashboard() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
 
   const { data: exams = [], isLoading: examsLoading } = useQuery<Exam[]>({
@@ -50,20 +50,19 @@ export default function StudentDashboard() {
     queryKey: ["/api/submissions"],
   });
 
-  const myExams = exams.filter((exam) => 
-    exam.assignedStudentIds.includes(user?.id || "") ||
-    (exam.assignedStudentNames || []).some((name) => name.toLowerCase() === user?.username?.toLowerCase())
-  );
-  const mySubmissions = submissions.filter((sub) => sub.studentId === user?.id);
-  const submittedExamIds = new Set(mySubmissions.map((s) => s.examId));
+  const submittedExamIds = new Set(submissions.map((s) => s.examId));
 
-  const activeExams = myExams.filter((e) => getExamStatus(e).canTake && !submittedExamIds.has(e.id));
-  const completedExams = myExams.filter((e) => submittedExamIds.has(e.id));
-  const upcomingExams = myExams.filter((e) => getExamStatus(e).label === "Upcoming");
+  const activeExams = exams.filter((e) => getExamStatus(e).canTake && !submittedExamIds.has(e.id));
+  const completedExams = exams.filter((e) => submittedExamIds.has(e.id));
+  const upcomingExams = exams.filter((e) => getExamStatus(e).label === "Upcoming");
 
-  const averageScore = mySubmissions.length > 0
-    ? mySubmissions.reduce((sum, s) => sum + s.totalScore, 0) / mySubmissions.length
+  const averageScore = submissions.length > 0
+    ? submissions.reduce((sum, s) => sum + s.totalScore, 0) / submissions.length
     : 0;
+
+  const displayName = user?.firstName
+    ? `${user.firstName} ${user.lastName || ""}`.trim()
+    : user?.email || "Student";
 
   return (
     <div className="min-h-screen bg-background">
@@ -74,19 +73,24 @@ export default function StudentDashboard() {
               <GraduationCap className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="font-semibold">Oral Exam System</h1>
+              <h1 className="font-semibold">OralExam</h1>
               <p className="text-xs text-muted-foreground">Student Dashboard</p>
             </div>
           </div>
           
           <div className="flex items-center gap-2">
+            {user?.profileImageUrl && (
+              <img src={user.profileImageUrl} alt="" className="w-7 h-7 rounded-full" />
+            )}
             <span className="text-sm text-muted-foreground hidden sm:inline">
-              Welcome, <span className="font-medium text-foreground">{user?.username}</span>
+              {displayName}
             </span>
             <ThemeToggle />
-            <Button variant="ghost" size="icon" onClick={logout} data-testid="button-logout">
-              <LogOut className="h-4 w-4" />
-            </Button>
+            <a href="/api/logout">
+              <Button variant="ghost" size="icon" data-testid="button-logout">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </a>
           </div>
         </div>
       </header>
@@ -226,7 +230,7 @@ export default function StudentDashboard() {
             </h3>
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {completedExams.map((exam) => {
-                const submission = mySubmissions.find((s) => s.examId === exam.id);
+                const submission = submissions.find((s) => s.examId === exam.id);
                 return (
                   <Card key={exam.id} data-testid={`card-completed-exam-${exam.id}`}>
                     <CardHeader className="pb-3">
@@ -270,7 +274,7 @@ export default function StudentDashboard() {
               </Card>
             ))}
           </div>
-        ) : myExams.length === 0 ? (
+        ) : exams.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
               <div className="w-16 h-16 rounded-full bg-muted mx-auto mb-4 flex items-center justify-center">

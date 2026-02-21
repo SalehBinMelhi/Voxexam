@@ -1,10 +1,16 @@
 import { z } from "zod";
+import { pgTable, varchar, timestamp, jsonb, real } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { relations } from "drizzle-orm";
+import { createInsertSchema } from "drizzle-zod";
+
+export * from "./models/auth";
 
 export const questionTypes = ["mcq", "short", "audio"] as const;
-export type QuestionType = typeof questionTypes[number];
+export type QuestionType = (typeof questionTypes)[number];
 
 export const userRoles = ["professor", "student"] as const;
-export type UserRole = typeof userRoles[number];
+export type UserRole = (typeof userRoles)[number];
 
 export const questionSchema = z.object({
   id: z.string(),
@@ -19,46 +25,6 @@ export type Question = z.infer<typeof questionSchema>;
 export const insertQuestionSchema = questionSchema.omit({ id: true });
 export type InsertQuestion = z.infer<typeof insertQuestionSchema>;
 
-export const examSchema = z.object({
-  id: z.string(),
-  title: z.string().min(1, "Exam title is required"),
-  professorId: z.string(),
-  questions: z.array(questionSchema),
-  startTime: z.string().nullable(),
-  endTime: z.string().nullable(),
-  assignedStudentIds: z.array(z.string()),
-  assignedStudentNames: z.array(z.string()),
-});
-
-export type Exam = z.infer<typeof examSchema>;
-
-export const insertExamSchema = z.object({
-  title: z.string().min(1, "Exam title is required"),
-  questions: z.array(insertQuestionSchema).min(1, "At least one question is required"),
-  startTime: z.string().nullable().optional(),
-  endTime: z.string().nullable().optional(),
-  assignedStudentIds: z.array(z.string()).optional(),
-  assignedStudentNames: z.array(z.string()).optional(),
-  professorId: z.string().optional(),
-});
-
-export type InsertExam = z.infer<typeof insertExamSchema>;
-
-export const userSchema = z.object({
-  id: z.string(),
-  username: z.string().min(1, "Username is required"),
-  role: z.enum(userRoles),
-});
-
-export type User = z.infer<typeof userSchema>;
-
-export const insertUserSchema = z.object({
-  username: z.string().min(1, "Username is required"),
-  role: z.enum(userRoles),
-});
-
-export type InsertUser = z.infer<typeof insertUserSchema>;
-
 export const examResponseSchema = z.object({
   questionId: z.string(),
   response: z.string(),
@@ -69,20 +35,84 @@ export const examResponseSchema = z.object({
 export type ExamResponse = z.infer<typeof examResponseSchema>;
 
 export const gradingMethods = ["ai", "fallback", "exact", "manual"] as const;
-export type GradingMethod = typeof gradingMethods[number];
+export type GradingMethod = (typeof gradingMethods)[number];
 
-export const examSubmissionSchema = z.object({
-  id: z.string(),
-  examId: z.string(),
-  studentId: z.string(),
-  responses: z.array(examResponseSchema),
-  scores: z.record(z.string(), z.number()),
-  gradingMethods: z.record(z.string(), z.enum(gradingMethods)).optional(),
-  totalScore: z.number(),
-  submittedAt: z.string(),
+// Universities table
+export const universities = pgTable("universities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  domain: varchar("domain"),
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
-export type ExamSubmission = z.infer<typeof examSubmissionSchema>;
+export type University = typeof universities.$inferSelect;
+export type InsertUniversity = typeof universities.$inferInsert;
+
+// Classes table
+export const classes = pgTable("classes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name").notNull(),
+  universityId: varchar("university_id").notNull(),
+  professorId: varchar("professor_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Class = typeof classes.$inferSelect;
+export type InsertClass = typeof classes.$inferInsert;
+
+// Enrollments table (students enrolled in classes)
+export const enrollments = pgTable("enrollments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studentId: varchar("student_id").notNull(),
+  classId: varchar("class_id").notNull(),
+  enrolledAt: timestamp("enrolled_at").defaultNow(),
+});
+
+export type Enrollment = typeof enrollments.$inferSelect;
+export type InsertEnrollment = typeof enrollments.$inferInsert;
+
+// Exams table
+export const exams = pgTable("exams", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: varchar("title").notNull(),
+  professorId: varchar("professor_id").notNull(),
+  classId: varchar("class_id"),
+  questions: jsonb("questions").notNull().$type<Question[]>(),
+  startTime: varchar("start_time"),
+  endTime: varchar("end_time"),
+  assignedStudentIds: jsonb("assigned_student_ids").notNull().$type<string[]>().default([]),
+  assignedStudentNames: jsonb("assigned_student_names").notNull().$type<string[]>().default([]),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type Exam = typeof exams.$inferSelect;
+
+export const insertExamSchema = z.object({
+  title: z.string().min(1, "Exam title is required"),
+  questions: z.array(insertQuestionSchema).min(1, "At least one question is required"),
+  classId: z.string().optional().nullable(),
+  startTime: z.string().nullable().optional(),
+  endTime: z.string().nullable().optional(),
+  assignedStudentIds: z.array(z.string()).optional(),
+  assignedStudentNames: z.array(z.string()).optional(),
+  professorId: z.string().optional(),
+});
+
+export type InsertExam = z.infer<typeof insertExamSchema>;
+
+// Submissions table
+export const submissions = pgTable("submissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  examId: varchar("exam_id").notNull(),
+  studentId: varchar("student_id").notNull(),
+  responses: jsonb("responses").notNull().$type<ExamResponse[]>(),
+  scores: jsonb("scores").notNull().$type<Record<string, number>>(),
+  gradingMethods: jsonb("grading_methods").$type<Record<string, GradingMethod>>(),
+  totalScore: real("total_score").notNull(),
+  submittedAt: varchar("submitted_at").notNull(),
+});
+
+export type ExamSubmission = typeof submissions.$inferSelect;
 
 export const insertExamSubmissionSchema = z.object({
   examId: z.string(),
@@ -91,3 +121,26 @@ export const insertExamSubmissionSchema = z.object({
 });
 
 export type InsertExamSubmission = z.infer<typeof insertExamSubmissionSchema>;
+
+// Relations
+export const universitiesRelations = relations(universities, ({ many }) => ({
+  classes: many(classes),
+}));
+
+export const classesRelations = relations(classes, ({ many }) => ({
+  enrollments: many(enrollments),
+  exams: many(exams),
+}));
+
+export const enrollmentsRelations = relations(enrollments, ({ one }) => ({
+  class: one(classes, { fields: [enrollments.classId], references: [classes.id] }),
+}));
+
+export const examsRelations = relations(exams, ({ one, many }) => ({
+  class: one(classes, { fields: [exams.classId], references: [classes.id] }),
+  submissions: many(submissions),
+}));
+
+export const submissionsRelations = relations(submissions, ({ one }) => ({
+  exam: one(exams, { fields: [submissions.examId], references: [exams.id] }),
+}));

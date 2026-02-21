@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth } from "@/hooks/use-auth";
 import {
   Dialog,
   DialogContent,
@@ -24,7 +24,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users } from "lucide-react";
-import type { InsertQuestion, QuestionType, User } from "@shared/schema";
+import type { InsertQuestion, QuestionType, Class } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
 interface CreateExamDialogProps {
@@ -33,13 +33,12 @@ interface CreateExamDialogProps {
 }
 
 export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) {
-  const { user } = useAuth();
   const { toast } = useToast();
   const [title, setTitle] = useState("");
   const [questions, setQuestions] = useState<InsertQuestion[]>([]);
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState("");
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState("");
 
@@ -48,11 +47,9 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [newQuestionOptions, setNewQuestionOptions] = useState<string[]>([""]);
   const [newCorrectAnswer, setNewCorrectAnswer] = useState("");
 
-  const { data: allUsers = [] } = useQuery<User[]>({
-    queryKey: ["/api/users"],
+  const { data: classes = [] } = useQuery<Class[]>({
+    queryKey: ["/api/classes"],
   });
-
-  const students = allUsers.filter((u) => u.role === "student");
 
   const createExamMutation = useMutation({
     mutationFn: async (data: {
@@ -60,9 +57,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       questions: InsertQuestion[];
       startTime: string | null;
       endTime: string | null;
-      assignedStudentIds: string[];
+      classId: string | null;
       assignedStudentNames: string[];
-      professorId: string;
     }) => {
       const response = await apiRequest("POST", "/api/exams", data);
       return response.json();
@@ -90,7 +86,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setQuestions([]);
     setStartTime("");
     setEndTime("");
-    setSelectedStudentIds([]);
+    setSelectedClassId("");
     setManualStudentNames([]);
     setNewStudentName("");
     setNewQuestion("");
@@ -145,14 +141,6 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setNewQuestionOptions(newQuestionOptions.filter((_, i) => i !== index));
   };
 
-  const toggleStudent = (studentId: string) => {
-    if (selectedStudentIds.includes(studentId)) {
-      setSelectedStudentIds(selectedStudentIds.filter((id) => id !== studentId));
-    } else {
-      setSelectedStudentIds([...selectedStudentIds, studentId]);
-    }
-  };
-
   const handleSubmit = () => {
     if (!title.trim() || questions.length === 0) {
       toast({
@@ -168,9 +156,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       questions,
       startTime: startTime || null,
       endTime: endTime || null,
-      assignedStudentIds: selectedStudentIds,
+      classId: selectedClassId && selectedClassId !== "none" ? selectedClassId : null,
       assignedStudentNames: manualStudentNames,
-      professorId: user?.id || "",
     });
   };
 
@@ -208,6 +195,23 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
               />
             </div>
 
+            {classes.length > 0 && (
+              <div className="space-y-2">
+                <Label>Class (optional)</Label>
+                <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                  <SelectTrigger data-testid="select-class">
+                    <SelectValue placeholder="Select a class..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No class</SelectItem>
+                    {classes.map((cls) => (
+                      <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="start-time">Start Time</Label>
@@ -233,15 +237,15 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Assign Students</Label>
+                <Label>Assign Students (by name/email)</Label>
                 <span className="text-sm text-muted-foreground">
-                  {selectedStudentIds.length + manualStudentNames.length} assigned
+                  {manualStudentNames.length} assigned
                 </span>
               </div>
               
               <div className="flex gap-2">
                 <Input
-                  placeholder="Enter student name..."
+                  placeholder="Enter student name or email..."
                   value={newStudentName}
                   onChange={(e) => setNewStudentName(e.target.value)}
                   onKeyDown={(e) => {
@@ -263,7 +267,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                 </Button>
               </div>
 
-              {(manualStudentNames.length > 0 || selectedStudentIds.length > 0) && (
+              {manualStudentNames.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {manualStudentNames.map((name) => (
                     <Badge
@@ -278,39 +282,6 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                       <X className="h-3 w-3 ml-1" />
                     </Badge>
                   ))}
-                  {students.filter((s) => selectedStudentIds.includes(s.id)).map((student) => (
-                    <Badge
-                      key={student.id}
-                      variant="default"
-                      className="cursor-pointer"
-                      onClick={() => toggleStudent(student.id)}
-                      data-testid={`badge-student-${student.id}`}
-                    >
-                      <Users className="h-3 w-3 mr-1" />
-                      {student.username}
-                      <X className="h-3 w-3 ml-1" />
-                    </Badge>
-                  ))}
-                </div>
-              )}
-
-              {students.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Or select from registered students:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {students.filter((s) => !selectedStudentIds.includes(s.id)).map((student) => (
-                      <Badge
-                        key={student.id}
-                        variant="outline"
-                        className="cursor-pointer"
-                        onClick={() => toggleStudent(student.id)}
-                        data-testid={`badge-available-student-${student.id}`}
-                      >
-                        <Users className="h-3 w-3 mr-1" />
-                        {student.username}
-                      </Badge>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>

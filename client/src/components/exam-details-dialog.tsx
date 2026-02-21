@@ -10,10 +10,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
-import { useState, useRef } from "react";
+import { useState } from "react";
 import {
   Calendar,
   Users,
@@ -25,9 +25,6 @@ import {
   Clock,
   Trophy,
   User,
-  Play,
-  Square,
-  Volume2,
   Edit2,
   Check,
   X,
@@ -69,22 +66,19 @@ export function ExamDetailsDialog({
 }: ExamDetailsDialogProps) {
   const { toast } = useToast();
 
-  const { data: allUsers = [] } = useQuery<UserType[]>({
-    queryKey: ["/api/users"],
-    refetchOnMount: true,
-    staleTime: 0,
-  });
-
   const { data: submissions = [] } = useQuery<ExamSubmission[]>({
     queryKey: ["/api/submissions"],
     refetchOnMount: true,
     staleTime: 0,
   });
 
+  const { data: allUsers = [] } = useQuery<UserType[]>({
+    queryKey: ["/api/users"],
+    refetchOnMount: true,
+    staleTime: 0,
+  });
+
   const examSubmissions = submissions.filter((s) => s.examId === exam.id);
-  const assignedStudents = allUsers.filter((u) =>
-    exam.assignedStudentIds.includes(u.id)
-  );
 
   const deleteExamMutation = useMutation({
     mutationFn: async () => {
@@ -107,7 +101,6 @@ export function ExamDetailsDialog({
     },
   });
 
-  // State for manual grading
   const [editingScore, setEditingScore] = useState<{
     submissionId: string;
     questionId: string;
@@ -121,19 +114,12 @@ export function ExamDetailsDialog({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
-      toast({
-        title: "Score updated",
-        description: "The grade has been manually updated.",
-      });
+      toast({ title: "Score updated", description: "The grade has been manually updated." });
       setEditingScore(null);
       setNewScoreValue("");
     },
     onError: () => {
-      toast({
-        title: "Error",
-        description: "Failed to update score.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "Failed to update score.", variant: "destructive" });
     },
   });
 
@@ -151,11 +137,7 @@ export function ExamDetailsDialog({
     if (!editingScore) return;
     const scorePercent = parseInt(newScoreValue, 10);
     if (isNaN(scorePercent) || scorePercent < 0 || scorePercent > 100) {
-      toast({
-        title: "Invalid score",
-        description: "Please enter a number between 0 and 100.",
-        variant: "destructive",
-      });
+      toast({ title: "Invalid score", description: "Please enter a number between 0 and 100.", variant: "destructive" });
       return;
     }
     updateScoreMutation.mutate({
@@ -212,15 +194,12 @@ export function ExamDetailsDialog({
                           {format(parseISO(exam.endTime), "h:mm a")}
                         </p>
                       ) : (
-                        <p className="text-xs text-muted-foreground">
-                          Not scheduled
-                        </p>
+                        <p className="text-xs text-muted-foreground">Not scheduled</p>
                       )}
                     </div>
                   </div>
                 </CardContent>
               </Card>
-
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center gap-3">
@@ -230,8 +209,7 @@ export function ExamDetailsDialog({
                     <div>
                       <p className="text-sm font-medium">Submissions</p>
                       <p className="text-xs text-muted-foreground">
-                        {examSubmissions.length} of{" "}
-                        {exam.assignedStudentIds.length} students
+                        {examSubmissions.length} received
                       </p>
                     </div>
                   </div>
@@ -239,70 +217,22 @@ export function ExamDetailsDialog({
               </Card>
             </div>
 
-            <div className="space-y-3">
-              <h4 className="font-medium flex items-center gap-2">
-                <Users className="h-4 w-4" />
-                Assigned Students ({assignedStudents.length + (exam.assignedStudentNames?.length || 0)})
-              </h4>
-              {assignedStudents.length === 0 && (!exam.assignedStudentNames || exam.assignedStudentNames.length === 0) ? (
-                <p className="text-sm text-muted-foreground">
-                  No students assigned to this exam.
-                </p>
-              ) : (
+            {exam.assignedStudentNames && exam.assignedStudentNames.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Assigned Students ({exam.assignedStudentNames.length})
+                </h4>
                 <div className="flex flex-wrap gap-2">
-                  {assignedStudents.map((student) => {
-                    const hasSubmitted = examSubmissions.some(
-                      (s) => s.studentId === student.id
-                    );
-                    const submission = examSubmissions.find(
-                      (s) => s.studentId === student.id
-                    );
-                    return (
-                      <Badge
-                        key={student.id}
-                        variant={hasSubmitted ? "default" : "outline"}
-                      >
-                        <User className="h-3 w-3 mr-1" />
-                        {student.username}
-                        {hasSubmitted && submission && (
-                          <span className="ml-1">
-                            ({(submission.totalScore * 100).toFixed(0)}%)
-                          </span>
-                        )}
-                      </Badge>
-                    );
-                  })}
-                  {exam.assignedStudentNames?.map((name) => {
-                    const matchedStudent = allUsers.find(
-                      u => u.username.toLowerCase() === name.toLowerCase()
-                    );
-                    const hasSubmitted = matchedStudent && examSubmissions.some(
-                      (s) => s.studentId === matchedStudent.id
-                    );
-                    const submission = matchedStudent && examSubmissions.find(
-                      (s) => s.studentId === matchedStudent.id
-                    );
-                    if (matchedStudent && assignedStudents.some(s => s.id === matchedStudent.id)) {
-                      return null;
-                    }
-                    return (
-                      <Badge
-                        key={name}
-                        variant={hasSubmitted ? "default" : "outline"}
-                      >
-                        <User className="h-3 w-3 mr-1" />
-                        {name}
-                        {hasSubmitted && submission && (
-                          <span className="ml-1">
-                            ({(submission.totalScore * 100).toFixed(0)}%)
-                          </span>
-                        )}
-                      </Badge>
-                    );
-                  })}
+                  {exam.assignedStudentNames.map((name) => (
+                    <Badge key={name} variant="outline">
+                      <User className="h-3 w-3 mr-1" />
+                      {name}
+                    </Badge>
+                  ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             <Separator />
 
@@ -321,14 +251,10 @@ export function ExamDetailsDialog({
                           <div className="flex items-center gap-2 mt-2">
                             <Badge variant="secondary" className="text-xs">
                               {getQuestionIcon(q.type)}
-                              <span className="ml-1">
-                                {q.type.toUpperCase()}
-                              </span>
+                              <span className="ml-1">{q.type.toUpperCase()}</span>
                             </Badge>
                             {q.options && q.options.length > 0 && (
-                              <span className="text-xs text-muted-foreground">
-                                {q.options.length} options
-                              </span>
+                              <span className="text-xs text-muted-foreground">{q.options.length} options</span>
                             )}
                           </div>
                           {q.options && q.options.length > 0 && (
@@ -337,9 +263,7 @@ export function ExamDetailsDialog({
                                 <p
                                   key={j}
                                   className={`text-sm pl-4 ${
-                                    opt === q.correctAnswer
-                                      ? "text-chart-2 font-medium"
-                                      : "text-muted-foreground"
+                                    opt === q.correctAnswer ? "text-chart-2 font-medium" : "text-muted-foreground"
                                   }`}
                                 >
                                   {j + 1}. {opt}
@@ -348,12 +272,9 @@ export function ExamDetailsDialog({
                               ))}
                             </div>
                           )}
-                          {q.correctAnswer &&
-                            q.type !== "mcq" && (
-                              <p className="text-sm text-muted-foreground mt-2">
-                                Expected: {q.correctAnswer}
-                              </p>
-                            )}
+                          {q.correctAnswer && q.type !== "mcq" && (
+                            <p className="text-sm text-muted-foreground mt-2">Expected: {q.correctAnswer}</p>
+                          )}
                         </div>
                       </div>
                     </CardContent>
@@ -369,9 +290,10 @@ export function ExamDetailsDialog({
                   <h4 className="font-medium">Submission Results</h4>
                   <div className="space-y-4">
                     {examSubmissions.map((sub) => {
-                      const student = allUsers.find(
-                        (u) => u.id === sub.studentId
-                      );
+                      const student = allUsers.find((u) => u.id === sub.studentId);
+                      const studentName = student
+                        ? (student.firstName ? `${student.firstName} ${student.lastName || ""}`.trim() : student.email || "Unknown")
+                        : "Unknown Student";
                       return (
                         <Card key={sub.id}>
                           <CardContent className="p-4 space-y-4">
@@ -381,26 +303,15 @@ export function ExamDetailsDialog({
                                   <User className="h-4 w-4 text-primary" />
                                 </div>
                                 <div>
-                                  <p className="font-medium">
-                                    {student?.username || "Unknown Student"}
-                                  </p>
+                                  <p className="font-medium">{studentName}</p>
                                   <p className="text-xs text-muted-foreground flex items-center gap-1">
                                     <Clock className="h-3 w-3" />
-                                    {format(
-                                      parseISO(sub.submittedAt),
-                                      "MMM d, yyyy h:mm a"
-                                    )}
+                                    {format(parseISO(sub.submittedAt), "MMM d, yyyy h:mm a")}
                                   </p>
                                 </div>
                               </div>
                               <Badge
-                                variant={
-                                  sub.totalScore >= 0.7
-                                    ? "default"
-                                    : sub.totalScore >= 0.5
-                                    ? "secondary"
-                                    : "destructive"
-                                }
+                                variant={sub.totalScore >= 0.7 ? "default" : sub.totalScore >= 0.5 ? "secondary" : "destructive"}
                               >
                                 {(sub.totalScore * 100).toFixed(0)}%
                               </Badge>
@@ -433,23 +344,10 @@ export function ExamDetailsDialog({
                                             data-testid={`input-score-${resp.questionId}`}
                                           />
                                           <span className="text-xs text-muted-foreground">%</span>
-                                          <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-6 w-6"
-                                            onClick={saveScore}
-                                            disabled={updateScoreMutation.isPending}
-                                            data-testid={`button-save-score-${resp.questionId}`}
-                                          >
+                                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={saveScore} disabled={updateScoreMutation.isPending} data-testid={`button-save-score-${resp.questionId}`}>
                                             <Check className="h-3 w-3 text-green-600" />
                                           </Button>
-                                          <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-6 w-6"
-                                            onClick={cancelEditing}
-                                            data-testid={`button-cancel-score-${resp.questionId}`}
-                                          >
+                                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={cancelEditing} data-testid={`button-cancel-score-${resp.questionId}`}>
                                             <X className="h-3 w-3 text-red-600" />
                                           </Button>
                                         </div>
@@ -463,14 +361,7 @@ export function ExamDetailsDialog({
                                               {methodLabel}
                                             </span>
                                           )}
-                                          <Button
-                                            size="icon"
-                                            variant="ghost"
-                                            className="h-6 w-6"
-                                            onClick={() => startEditing(sub.id, resp.questionId, score)}
-                                            title="Edit score"
-                                            data-testid={`button-edit-score-${resp.questionId}`}
-                                          >
+                                          <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => startEditing(sub.id, resp.questionId, score)} title="Edit score" data-testid={`button-edit-score-${resp.questionId}`}>
                                             <Edit2 className="h-3 w-3" />
                                           </Button>
                                         </div>
@@ -482,18 +373,11 @@ export function ExamDetailsDialog({
                                       </p>
                                     )}
                                     {resp.response && (
-                                      <p className="text-muted-foreground text-xs">
-                                        Answer: {resp.response}
-                                      </p>
+                                      <p className="text-muted-foreground text-xs">Answer: {resp.response}</p>
                                     )}
                                     {resp.audioData && (
                                       <div className="mt-2">
-                                        <audio 
-                                          controls 
-                                          src={resp.audioData} 
-                                          className="h-8 w-full max-w-xs"
-                                          data-testid={`audio-response-${resp.questionId}`}
-                                        />
+                                        <audio controls src={resp.audioData} className="h-8 w-full max-w-xs" data-testid={`audio-response-${resp.questionId}`} />
                                       </div>
                                     )}
                                     {resp.transcript && (

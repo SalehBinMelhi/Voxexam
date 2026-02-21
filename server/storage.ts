@@ -1,14 +1,26 @@
-import { randomUUID } from "crypto";
 import OpenAI, { toFile } from "openai";
-import type {
-  User,
-  InsertUser,
-  Exam,
-  InsertExam,
-  Question,
-  ExamSubmission,
-  ExamResponse,
-  GradingMethod,
+import { eq, and } from "drizzle-orm";
+import { db } from "./db";
+import {
+  users,
+  universities,
+  classes,
+  enrollments,
+  exams,
+  submissions,
+  type User,
+  type University,
+  type InsertUniversity,
+  type Class,
+  type InsertClass,
+  type Enrollment,
+  type InsertEnrollment,
+  type Exam,
+  type InsertExam,
+  type ExamSubmission,
+  type ExamResponse,
+  type Question,
+  type GradingMethod,
 } from "@shared/schema";
 import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
@@ -26,7 +38,6 @@ export async function transcribeAudio(audioDataUrl: string): Promise<string> {
     
     if (separatorIndex === -1) {
       console.error("[AUDIO] Invalid audio data URL format - no ;base64, separator found");
-      console.error("[AUDIO] Received prefix:", audioDataUrl.substring(0, 100));
       return "";
     }
     
@@ -34,7 +45,6 @@ export async function transcribeAudio(audioDataUrl: string): Promise<string> {
     const base64Data = audioDataUrl.substring(separatorIndex + base64Separator.length);
     
     console.log("[AUDIO] Metadata:", metadataPart);
-    console.log("[AUDIO] Base64 data length:", base64Data.length);
     
     const audioBuffer = Buffer.from(base64Data, "base64");
     console.log("[AUDIO] Audio buffer size:", audioBuffer.length, "bytes");
@@ -45,49 +55,16 @@ export async function transcribeAudio(audioDataUrl: string): Promise<string> {
     }
 
     const { buffer: compatibleBuffer, format: compatibleFormat } = await ensureCompatibleFormat(audioBuffer);
-    console.log("[AUDIO] Converted to compatible format:", compatibleFormat, "buffer size:", compatibleBuffer.length);
+    console.log("[AUDIO] Converted to compatible format:", compatibleFormat);
 
-    console.log("[AUDIO] Sending to gpt-4o-mini-transcribe for speech-to-text...");
     const transcription = await speechToText(compatibleBuffer, compatibleFormat);
 
     console.log("[AUDIO] Transcription result:", transcription);
     return transcription || "";
   } catch (error: any) {
-    console.error("[AUDIO] Transcription failed with error:", error?.message || error);
-    if (error?.response?.data) {
-      console.error("[AUDIO] API response:", JSON.stringify(error.response.data));
-    }
+    console.error("[AUDIO] Transcription failed:", error?.message || error);
     return "";
   }
-}
-
-export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  getUserByUsernameAndRole(username: string, role: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
-  getAllUsers(): Promise<User[]>;
-
-  getExam(id: string): Promise<Exam | undefined>;
-  getAllExams(): Promise<Exam[]>;
-  createExam(professorId: string, exam: InsertExam): Promise<Exam>;
-  updateExam(id: string, exam: Partial<InsertExam>): Promise<Exam | undefined>;
-  deleteExam(id: string): Promise<boolean>;
-
-  getSubmission(id: string): Promise<ExamSubmission | undefined>;
-  getSubmissionsByExam(examId: string): Promise<ExamSubmission[]>;
-  getSubmissionsByStudent(studentId: string): Promise<ExamSubmission[]>;
-  getAllSubmissions(): Promise<ExamSubmission[]>;
-  createSubmission(
-    studentId: string,
-    examId: string,
-    responses: ExamResponse[]
-  ): Promise<ExamSubmission>;
-  updateSubmissionScore(
-    submissionId: string,
-    questionId: string,
-    newScore: number
-  ): Promise<ExamSubmission | undefined>;
 }
 
 interface EvalResult {
@@ -120,7 +97,6 @@ Consider semantic meaning and understanding, not just exact word matching. Be fa
 
 Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
 
-    console.log("[AI-GRADING] Sending to GPT-4o-mini for evaluation...");
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
@@ -132,11 +108,9 @@ Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
     const score = parseFloat(scoreText);
     
     if (isNaN(score) || score < 0 || score > 1) {
-      console.warn(`[AI-GRADING] AI returned invalid score: ${scoreText}, falling back to word matching`);
       return { score: fallbackScore(question, response), method: "fallback" };
     }
     
-    console.log(`[AI-GRADING] AI score: ${score}`);
     return { score, method: "ai" };
   } catch (error) {
     console.error("[AI-GRADING] AI grading failed, using fallback:", error);
@@ -145,14 +119,10 @@ Respond with ONLY a number between 0.0 and 1.0, nothing else.`;
 }
 
 function fallbackScore(question: Question, response: string): number {
-  if (!question.correctAnswer) {
-    return 0.0;
-  }
-
+  if (!question.correctAnswer) return 0.0;
   const correctWords = question.correctAnswer.toLowerCase().split(/\s+/);
   const responseWordsSet = new Set(response.toLowerCase().split(/\s+/));
   const commonWords = correctWords.filter((w) => responseWordsSet.has(w));
-
   return correctWords.length > 0 ? commonWords.length / correctWords.length : 0.0;
 }
 
@@ -161,160 +131,226 @@ async function evaluateResponse(
   response: string,
   audioData?: string
 ): Promise<EvalResult> {
-  console.log(`[AI-GRADING] Evaluating question type: ${question.type}, hasAudio: ${!!audioData}, textResponse: "${response?.substring(0, 50)}..."`);
-  
   if (question.type === "mcq") {
-    const score = response.trim().toLowerCase() ===
-      (question.correctAnswer || "").toLowerCase()
-      ? 1.0
-      : 0.0;
-    console.log(`[AI-GRADING] MCQ exact match score: ${score}`);
+    const score = response.trim().toLowerCase() === (question.correctAnswer || "").toLowerCase() ? 1.0 : 0.0;
     return { score, method: "exact" };
   }
 
   if (question.type === "audio" && audioData && audioData.length > 0) {
-    console.log("[AI-GRADING] Processing audio question with recording data");
     const transcription = await transcribeAudio(audioData);
     if (transcription) {
-      console.log(`[AI-GRADING] Audio transcribed: "${transcription}"`);
       const result = await evaluateWithAI(question, transcription);
       return { ...result, transcript: transcription };
     }
-    console.log("[AI-GRADING] Transcription failed, checking for text fallback");
     if (response && response.trim().length > 0) {
       return evaluateWithAI(question, response);
     }
-    console.log("[AI-GRADING] No text fallback, returning 0");
     return { score: 0.0, method: "fallback" };
   }
 
   if (question.type === "audio" && response && response.trim().length > 0) {
-    console.log("[AI-GRADING] Audio question with text-only response");
     return evaluateWithAI(question, response);
   }
 
   if (!response || response.trim().length === 0) {
-    console.log("[AI-GRADING] Empty response, returning 0");
     return { score: 0.0, method: "fallback" };
   }
 
   return evaluateWithAI(question, response);
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private exams: Map<string, Exam>;
-  private submissions: Map<string, ExamSubmission>;
+export interface IStorage {
+  // Users
+  getUser(id: string): Promise<User | undefined>;
+  getAllUsers(): Promise<User[]>;
+  updateUserRole(userId: string, role: string, universityId?: string): Promise<User | undefined>;
 
-  constructor() {
-    this.users = new Map();
-    this.exams = new Map();
-    this.submissions = new Map();
-  }
+  // Universities
+  getUniversity(id: string): Promise<University | undefined>;
+  getAllUniversities(): Promise<University[]>;
+  createUniversity(data: InsertUniversity): Promise<University>;
 
+  // Classes
+  getClass(id: string): Promise<Class | undefined>;
+  getClassesByUniversity(universityId: string): Promise<Class[]>;
+  getClassesByProfessor(professorId: string): Promise<Class[]>;
+  createClass(data: InsertClass): Promise<Class>;
+  deleteClass(id: string): Promise<boolean>;
+
+  // Enrollments
+  getEnrollmentsByClass(classId: string): Promise<Enrollment[]>;
+  getEnrollmentsByStudent(studentId: string): Promise<Enrollment[]>;
+  createEnrollment(data: InsertEnrollment): Promise<Enrollment>;
+  deleteEnrollment(studentId: string, classId: string): Promise<boolean>;
+
+  // Exams
+  getExam(id: string): Promise<Exam | undefined>;
+  getAllExams(): Promise<Exam[]>;
+  getExamsByClass(classId: string): Promise<Exam[]>;
+  getExamsByProfessor(professorId: string): Promise<Exam[]>;
+  createExam(professorId: string, exam: InsertExam): Promise<Exam>;
+  updateExam(id: string, exam: Partial<InsertExam>): Promise<Exam | undefined>;
+  deleteExam(id: string): Promise<boolean>;
+
+  // Submissions
+  getSubmission(id: string): Promise<ExamSubmission | undefined>;
+  getSubmissionsByExam(examId: string): Promise<ExamSubmission[]>;
+  getSubmissionsByStudent(studentId: string): Promise<ExamSubmission[]>;
+  getAllSubmissions(): Promise<ExamSubmission[]>;
+  createSubmission(studentId: string, examId: string, responses: ExamResponse[]): Promise<ExamSubmission>;
+  updateSubmissionScore(submissionId: string, questionId: string, newScore: number): Promise<ExamSubmission | undefined>;
+}
+
+export class DatabaseStorage implements IStorage {
+  // Users
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
-  }
-
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username.toLowerCase() === username.toLowerCase()
-    );
-  }
-
-  async getUserByUsernameAndRole(username: string, role: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username.toLowerCase() === username.toLowerCase() && user.role === role
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
   }
 
   async getAllUsers(): Promise<User[]> {
-    return Array.from(this.users.values());
+    return db.select().from(users);
   }
 
+  async updateUserRole(userId: string, role: string, universityId?: string): Promise<User | undefined> {
+    const updates: any = { role, updatedAt: new Date() };
+    if (universityId !== undefined) updates.universityId = universityId;
+    const [user] = await db.update(users).set(updates).where(eq(users.id, userId)).returning();
+    return user || undefined;
+  }
+
+  // Universities
+  async getUniversity(id: string): Promise<University | undefined> {
+    const [uni] = await db.select().from(universities).where(eq(universities.id, id));
+    return uni || undefined;
+  }
+
+  async getAllUniversities(): Promise<University[]> {
+    return db.select().from(universities);
+  }
+
+  async createUniversity(data: InsertUniversity): Promise<University> {
+    const [uni] = await db.insert(universities).values(data).returning();
+    return uni;
+  }
+
+  // Classes
+  async getClass(id: string): Promise<Class | undefined> {
+    const [cls] = await db.select().from(classes).where(eq(classes.id, id));
+    return cls || undefined;
+  }
+
+  async getClassesByUniversity(universityId: string): Promise<Class[]> {
+    return db.select().from(classes).where(eq(classes.universityId, universityId));
+  }
+
+  async getClassesByProfessor(professorId: string): Promise<Class[]> {
+    return db.select().from(classes).where(eq(classes.professorId, professorId));
+  }
+
+  async createClass(data: InsertClass): Promise<Class> {
+    const [cls] = await db.insert(classes).values(data).returning();
+    return cls;
+  }
+
+  async deleteClass(id: string): Promise<boolean> {
+    const result = await db.delete(classes).where(eq(classes.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // Enrollments
+  async getEnrollmentsByClass(classId: string): Promise<Enrollment[]> {
+    return db.select().from(enrollments).where(eq(enrollments.classId, classId));
+  }
+
+  async getEnrollmentsByStudent(studentId: string): Promise<Enrollment[]> {
+    return db.select().from(enrollments).where(eq(enrollments.studentId, studentId));
+  }
+
+  async createEnrollment(data: InsertEnrollment): Promise<Enrollment> {
+    const [enrollment] = await db.insert(enrollments).values(data).returning();
+    return enrollment;
+  }
+
+  async deleteEnrollment(studentId: string, classId: string): Promise<boolean> {
+    const result = await db.delete(enrollments).where(
+      and(eq(enrollments.studentId, studentId), eq(enrollments.classId, classId))
+    ).returning();
+    return result.length > 0;
+  }
+
+  // Exams
   async getExam(id: string): Promise<Exam | undefined> {
-    return this.exams.get(id);
+    const [exam] = await db.select().from(exams).where(eq(exams.id, id));
+    return exam || undefined;
   }
 
   async getAllExams(): Promise<Exam[]> {
-    return Array.from(this.exams.values());
+    return db.select().from(exams);
+  }
+
+  async getExamsByClass(classId: string): Promise<Exam[]> {
+    return db.select().from(exams).where(eq(exams.classId, classId));
+  }
+
+  async getExamsByProfessor(professorId: string): Promise<Exam[]> {
+    return db.select().from(exams).where(eq(exams.professorId, professorId));
   }
 
   async createExam(professorId: string, insertExam: InsertExam): Promise<Exam> {
-    const id = randomUUID();
-    const questions: Question[] = insertExam.questions.map((q) => ({
+    const questionsWithIds: Question[] = (insertExam.questions as any[]).map((q) => ({
       ...q,
-      id: randomUUID(),
+      id: crypto.randomUUID(),
     }));
 
-    const exam: Exam = {
-      id,
+    const [exam] = await db.insert(exams).values({
       title: insertExam.title,
       professorId,
-      questions,
+      classId: insertExam.classId || null,
+      questions: questionsWithIds,
       startTime: insertExam.startTime || null,
       endTime: insertExam.endTime || null,
       assignedStudentIds: insertExam.assignedStudentIds || [],
       assignedStudentNames: insertExam.assignedStudentNames || [],
-    };
+    }).returning();
 
-    this.exams.set(id, exam);
     return exam;
   }
 
-  async updateExam(
-    id: string,
-    updates: Partial<InsertExam>
-  ): Promise<Exam | undefined> {
-    const exam = this.exams.get(id);
-    if (!exam) return undefined;
+  async updateExam(id: string, updates: Partial<InsertExam>): Promise<Exam | undefined> {
+    const updateData: any = {};
+    if (updates.title !== undefined) updateData.title = updates.title;
+    if (updates.startTime !== undefined) updateData.startTime = updates.startTime;
+    if (updates.endTime !== undefined) updateData.endTime = updates.endTime;
+    if (updates.assignedStudentIds !== undefined) updateData.assignedStudentIds = updates.assignedStudentIds;
+    if (updates.assignedStudentNames !== undefined) updateData.assignedStudentNames = updates.assignedStudentNames;
+    if (updates.classId !== undefined) updateData.classId = updates.classId;
 
-    const updatedExam: Exam = {
-      ...exam,
-      ...(updates.title !== undefined && { title: updates.title }),
-      ...(updates.startTime !== undefined && { startTime: updates.startTime }),
-      ...(updates.endTime !== undefined && { endTime: updates.endTime }),
-      ...(updates.assignedStudentIds !== undefined && {
-        assignedStudentIds: updates.assignedStudentIds,
-      }),
-      ...(updates.assignedStudentNames !== undefined && {
-        assignedStudentNames: updates.assignedStudentNames,
-      }),
-    };
-
-    this.exams.set(id, updatedExam);
-    return updatedExam;
+    const [exam] = await db.update(exams).set(updateData).where(eq(exams.id, id)).returning();
+    return exam || undefined;
   }
 
   async deleteExam(id: string): Promise<boolean> {
-    return this.exams.delete(id);
+    const result = await db.delete(exams).where(eq(exams.id, id)).returning();
+    return result.length > 0;
   }
 
+  // Submissions
   async getSubmission(id: string): Promise<ExamSubmission | undefined> {
-    return this.submissions.get(id);
+    const [sub] = await db.select().from(submissions).where(eq(submissions.id, id));
+    return sub || undefined;
   }
 
   async getSubmissionsByExam(examId: string): Promise<ExamSubmission[]> {
-    return Array.from(this.submissions.values()).filter(
-      (s) => s.examId === examId
-    );
+    return db.select().from(submissions).where(eq(submissions.examId, examId));
   }
 
   async getSubmissionsByStudent(studentId: string): Promise<ExamSubmission[]> {
-    return Array.from(this.submissions.values()).filter(
-      (s) => s.studentId === studentId
-    );
+    return db.select().from(submissions).where(eq(submissions.studentId, studentId));
   }
 
   async getAllSubmissions(): Promise<ExamSubmission[]> {
-    return Array.from(this.submissions.values());
+    return db.select().from(submissions);
   }
 
   async createSubmission(
@@ -323,22 +359,15 @@ export class MemStorage implements IStorage {
     responses: ExamResponse[]
   ): Promise<ExamSubmission> {
     const exam = await this.getExam(examId);
-    if (!exam) {
-      throw new Error("Exam not found");
-    }
+    if (!exam) throw new Error("Exam not found");
 
-    const id = randomUUID();
     const scores: Record<string, number> = {};
-    const gradingMethodsMap: Record<string, "ai" | "fallback" | "exact" | "manual"> = {};
+    const gradingMethodsMap: Record<string, GradingMethod> = {};
 
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
       if (question) {
-        const result = await evaluateResponse(
-          question,
-          response.response,
-          response.audioData
-        );
+        const result = await evaluateResponse(question, response.response, response.audioData);
         scores[response.questionId] = result.score;
         gradingMethodsMap[response.questionId] = result.method;
         if (result.transcript) {
@@ -349,12 +378,10 @@ export class MemStorage implements IStorage {
 
     const totalScore =
       Object.values(scores).length > 0
-        ? Object.values(scores).reduce((a, b) => a + b, 0) /
-          Object.values(scores).length
+        ? Object.values(scores).reduce((a, b) => a + b, 0) / Object.values(scores).length
         : 0;
 
-    const submission: ExamSubmission = {
-      id,
+    const [submission] = await db.insert(submissions).values({
       examId,
       studentId,
       responses,
@@ -362,9 +389,8 @@ export class MemStorage implements IStorage {
       gradingMethods: gradingMethodsMap,
       totalScore,
       submittedAt: new Date().toISOString(),
-    };
+    }).returning();
 
-    this.submissions.set(id, submission);
     return submission;
   }
 
@@ -373,29 +399,26 @@ export class MemStorage implements IStorage {
     questionId: string,
     newScore: number
   ): Promise<ExamSubmission | undefined> {
-    const submission = this.submissions.get(submissionId);
-    if (!submission) {
-      return undefined;
-    }
+    const [sub] = await db.select().from(submissions).where(eq(submissions.id, submissionId));
+    if (!sub) return undefined;
 
-    // Clamp score between 0 and 1
     const clampedScore = Math.max(0, Math.min(1, newScore));
-    
-    submission.scores[questionId] = clampedScore;
-    if (!submission.gradingMethods) {
-      submission.gradingMethods = {};
-    }
-    submission.gradingMethods[questionId] = "manual";
-    
-    // Recalculate total score
-    const scores = Object.values(submission.scores);
-    submission.totalScore = scores.length > 0
-      ? scores.reduce((a, b) => a + b, 0) / scores.length
+    const updatedScores = { ...sub.scores, [questionId]: clampedScore };
+    const updatedMethods = { ...(sub.gradingMethods || {}), [questionId]: "manual" as GradingMethod };
+
+    const scoreValues = Object.values(updatedScores);
+    const newTotalScore = scoreValues.length > 0
+      ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
       : 0;
 
-    this.submissions.set(submissionId, submission);
-    return submission;
+    const [updated] = await db.update(submissions).set({
+      scores: updatedScores,
+      gradingMethods: updatedMethods,
+      totalScore: newTotalScore,
+    }).where(eq(submissions.id, submissionId)).returning();
+
+    return updated || undefined;
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();
