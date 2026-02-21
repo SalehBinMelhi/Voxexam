@@ -202,26 +202,31 @@ export async function generateQuestionsFromMaterials(
       : openai;
 
     const typesStr = questionTypes.join(", ");
-    const instructionsSection = instructions?.trim()
-      ? `\nProfessor's Instructions (follow these carefully):\n${instructions.trim()}\n`
+    const hasInstructions = !!(instructions && instructions.trim());
+    const instructionsSection = hasInstructions
+      ? `\nProfessor's Instructions (HIGHEST PRIORITY — follow these exactly):\n${instructions!.trim()}\n`
       : "";
 
-    const prompt = `You are an expert exam creator. Based on the following course materials, generate ${numQuestions} exam questions.
+    const numNote = hasInstructions
+      ? `The professor's instructions above take priority. If the professor specifies a number of questions (e.g., "give me 1 question", "3 questions"), generate EXACTLY that many. If no number is mentioned in the instructions, generate ${numQuestions} questions.`
+      : `Generate exactly ${numQuestions} questions.`;
+
+    const prompt = `You are an expert exam creator. Based on the following course materials, generate exam questions.
 ${instructionsSection}
 Course Materials:
 ${materialContent.substring(0, 12000)}
 
-Generate exactly ${numQuestions} questions. For each question, choose the most appropriate type from: ${typesStr}
+${numNote} For each question, choose the most appropriate type from: ${typesStr}
 
 Rules:
 - "short" = short answer question (student writes a text response)
 - "mcq" = multiple choice question (provide 4 options, one correct)
 - "audio" = audio response question (student answers verbally - use for questions that benefit from oral explanation)
-- Mix the question types for variety
+- Mix the question types for variety unless the professor specified otherwise
 - Questions should test both knowledge recall and deeper understanding
 - For MCQ, always provide exactly 4 options
 - Always provide a correctAnswer
-- If the professor provided instructions above, prioritize those guidelines for topic focus, difficulty level, question style, etc.
+- The professor's instructions above override ALL other guidelines including number of questions, topic focus, difficulty level, question style, and question types
 
 Respond with a JSON array of objects, each with:
 - "text": the question text

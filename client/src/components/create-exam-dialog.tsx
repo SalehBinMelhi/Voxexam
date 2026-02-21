@@ -40,7 +40,6 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [selectedClassId, setSelectedClassId] = useState("");
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState("");
-  const [numAiQuestions, setNumAiQuestions] = useState("5");
   const [aiInstructions, setAiInstructions] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
 
@@ -84,10 +83,9 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   });
 
   const generateQuestionsMutation = useMutation({
-    mutationFn: async ({ classId, numQuestions, instructions }: { classId: string; numQuestions: number; instructions?: string }) => {
+    mutationFn: async ({ classId, instructions }: { classId: string; instructions?: string }) => {
       const response = await apiRequest("POST", "/api/generate-questions", {
         classId,
-        numQuestions,
         instructions: instructions || undefined,
       });
       return response.json();
@@ -129,7 +127,6 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setNewQuestionOptions([""]);
     setNewCorrectAnswer("");
     setEditingIndex(null);
-    setNumAiQuestions("5");
     setAiInstructions("");
   };
 
@@ -246,7 +243,6 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     }
     generateQuestionsMutation.mutate({
       classId,
-      numQuestions: parseInt(numAiQuestions) || 5,
       instructions: aiInstructions.trim() || undefined,
     });
   };
@@ -389,27 +385,16 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
               <div className="flex items-center justify-between">
                 <Label>Questions ({questions.length})</Label>
                 {selectedClassId && selectedClassId !== "none" && (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min="1"
-                      max="20"
-                      value={numAiQuestions}
-                      onChange={(e) => setNumAiQuestions(e.target.value)}
-                      className="w-16 h-8 text-sm"
-                      data-testid="input-num-ai-questions"
-                    />
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleGenerateQuestions}
-                      disabled={generateQuestionsMutation.isPending}
-                      data-testid="button-generate-questions"
-                    >
-                      <Sparkles className="h-4 w-4 mr-1" />
-                      {generateQuestionsMutation.isPending ? "Generating..." : "AI Generate"}
-                    </Button>
-                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleGenerateQuestions}
+                    disabled={generateQuestionsMutation.isPending}
+                    data-testid="button-generate-questions"
+                  >
+                    <Sparkles className="h-4 w-4 mr-1" />
+                    {generateQuestionsMutation.isPending ? "Generating..." : "AI Generate"}
+                  </Button>
                 )}
               </div>
 
@@ -418,14 +403,14 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                   <Label htmlFor="ai-instructions">Instructions for AI (optional)</Label>
                   <Textarea
                     id="ai-instructions"
-                    placeholder="Describe how you'd like the exam — e.g., focus on chapter 3, make it hard, include critical thinking questions, avoid definitions..."
+                    placeholder="e.g., Give me 3 questions on chapter 3, make them hard, focus on critical thinking..."
                     value={aiInstructions}
                     onChange={(e) => setAiInstructions(e.target.value)}
                     className="min-h-[60px]"
                     data-testid="textarea-ai-instructions"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Tell the AI what topics to focus on, difficulty level, question style, or any other preferences
+                    Tell the AI how many questions, topics to focus on, difficulty level, question style, etc. Defaults to 5 questions if not specified.
                   </p>
                 </div>
               )}
@@ -433,15 +418,15 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
               {questions.length > 0 && (
                 <div className="space-y-2">
                   {questions.map((q, i) => (
-                    <Card key={i} className={editingIndex === i ? "ring-2 ring-primary" : ""}>
+                    <Card key={i} className={`overflow-hidden ${editingIndex === i ? "ring-2 ring-primary" : ""}`}>
                       <CardContent className="p-3">
                         <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-start gap-2 flex-1">
+                          <div className="flex items-start gap-2 flex-1 min-w-0">
                             <div className="mt-0.5">{getQuestionIcon(q.type)}</div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium">{q.text}</p>
+                            <div className="flex-1 min-w-0 overflow-hidden">
+                              <p className="text-sm font-medium break-words whitespace-pre-wrap">{q.text}</p>
                               {q.correctAnswer && (
-                                <p className="text-xs text-muted-foreground mt-1 truncate">
+                                <p className="text-xs text-muted-foreground mt-1 break-words">
                                   Expected: {q.correctAnswer}
                                 </p>
                               )}
