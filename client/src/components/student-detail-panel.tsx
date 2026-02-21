@@ -29,7 +29,9 @@ import {
   Shield,
   Video,
 } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import type { Exam, ExamSubmission, Question } from "@shared/schema";
+import { TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 import { format, parseISO } from "date-fns";
 
 type GraphMode = "both" | "correctness" | "understanding";
@@ -268,11 +270,12 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
               const isExpanded = expandedSubmission === sub.id;
               const hasProctoring = sub.proctoringFlags && sub.proctoringFlags.length > 0;
               const hasRecordings = sub.screenRecordingUrl || sub.webcamRecordingUrl;
+              const suspicious = sub.isSuspicious === "true" || (sub.tabSwitchCount || 0) >= TAB_SWITCH_SUSPICIOUS_THRESHOLD;
 
               return (
                 <Card
                   key={sub.id}
-                  className={`transition-all ${hasProctoring ? "border-amber-400 dark:border-amber-600" : ""}`}
+                  className={`transition-all ${suspicious ? "border-red-500 dark:border-red-600" : hasProctoring ? "border-amber-400 dark:border-amber-600" : ""}`}
                   data-testid={`card-submission-${sub.id}`}
                 >
                   <CardContent className="p-4">
@@ -303,10 +306,16 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
                             {((sub.totalUnderstandingScore || 0) * 100).toFixed(0)}%
                           </p>
                         </div>
-                        {hasProctoring && (
-                          <Badge variant="destructive" className="text-xs">
+                        {suspicious && (
+                          <Badge variant="destructive" className="text-xs" data-testid={`badge-suspicious-${sub.id}`}>
+                            <ShieldAlert className="h-3 w-3 mr-1" />
+                            Suspicious
+                          </Badge>
+                        )}
+                        {hasProctoring && !suspicious && (
+                          <Badge variant="outline" className="text-xs border-amber-400 text-amber-600 dark:text-amber-400">
                             <AlertTriangle className="h-3 w-3 mr-1" />
-                            {sub.proctoringFlags!.length}
+                            {sub.tabSwitchCount || sub.proctoringFlags!.length} switch{(sub.tabSwitchCount || sub.proctoringFlags!.length) !== 1 ? "es" : ""}
                           </Badge>
                         )}
                         {hasRecordings && (
@@ -451,30 +460,57 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
                           </div>
                         )}
 
-                        {hasProctoring && (
+                        {(hasProctoring || (sub.tabSwitchCount || 0) > 0) && (
                           <div className="space-y-2">
-                            <h5 className="text-sm font-medium flex items-center gap-2 text-amber-600 dark:text-amber-400">
-                              <Shield className="h-4 w-4" />
-                              Proctoring Alerts ({sub.proctoringFlags!.length})
+                            <h5 className={`text-sm font-medium flex items-center gap-2 ${suspicious ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"}`}>
+                              {suspicious ? <ShieldAlert className="h-4 w-4" /> : <Shield className="h-4 w-4" />}
+                              Proctoring Alerts
                             </h5>
-                            <div className="space-y-2">
-                              {sub.proctoringFlags!.map((flag, idx) => (
-                                <div key={idx} className="p-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 space-y-1">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <Badge variant="destructive" className="text-xs">
-                                      <AlertTriangle className="h-3 w-3 mr-1" />
-                                      Tab Switch
-                                    </Badge>
-                                    <span className="text-xs text-muted-foreground">
-                                      {format(parseISO(flag.timestamp), "h:mm:ss a")}
-                                    </span>
-                                  </div>
-                                  {flag.aiVerdict && (
-                                    <p className="text-sm text-amber-800 dark:text-amber-300">{flag.aiVerdict}</p>
-                                  )}
-                                </div>
-                              ))}
+
+                            <div className={`p-3 rounded-md border space-y-1 ${suspicious ? "border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30" : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20"}`}>
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-medium">Tab Switches: {sub.tabSwitchCount || sub.proctoringFlags?.length || 0}</p>
+                                {suspicious && (
+                                  <Badge variant="destructive" className="text-xs">
+                                    <ShieldAlert className="h-3 w-3 mr-1" />
+                                    Flagged
+                                  </Badge>
+                                )}
+                              </div>
+                              {sub.proctoringFlags && sub.proctoringFlags.length > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  Total time away: {Math.round(sub.proctoringFlags.reduce((sum, f) => sum + (f.durationAway || 0), 0))}s across {sub.proctoringFlags.length} event{sub.proctoringFlags.length !== 1 ? "s" : ""}
+                                </p>
+                              )}
                             </div>
+
+                            {hasProctoring && (
+                              <div className="space-y-2">
+                                {sub.proctoringFlags!.map((flag, idx) => (
+                                  <div key={idx} className="p-3 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 space-y-1">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <Badge variant="destructive" className="text-xs">
+                                        <AlertTriangle className="h-3 w-3 mr-1" />
+                                        Tab Switch #{idx + 1}
+                                      </Badge>
+                                      <div className="flex items-center gap-2">
+                                        {flag.durationAway && (
+                                          <span className="text-xs text-muted-foreground">
+                                            Away {flag.durationAway}s
+                                          </span>
+                                        )}
+                                        <span className="text-xs text-muted-foreground">
+                                          {format(parseISO(flag.timestamp), "h:mm:ss a")}
+                                        </span>
+                                      </div>
+                                    </div>
+                                    {flag.aiVerdict && (
+                                      <p className="text-sm text-amber-800 dark:text-amber-300">{flag.aiVerdict}</p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>

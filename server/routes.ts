@@ -12,7 +12,7 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback, analyzeProctoringScreenshot } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
-import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
+import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -891,7 +891,7 @@ export async function registerRoutes(
         return res.status(403).json({ error: "Not authorized" });
       }
 
-      const { flags } = req.body;
+      const { flags, tabSwitchCount } = req.body;
       if (!flags || !Array.isArray(flags)) {
         return res.status(400).json({ error: "Invalid proctoring data" });
       }
@@ -926,6 +926,7 @@ export async function registerRoutes(
         analyzedFlags.push({
           type: "tab_switch",
           timestamp: flag.timestamp,
+          durationAway: flag.durationAway || undefined,
           screenshotBefore: flag.screenshotBefore ? `[screenshot]` : undefined,
           screenshotDuring: flag.screenshotDuring ? `[screenshot]` : undefined,
           screenshotAfter: flag.screenshotAfter ? `[screenshot]` : undefined,
@@ -936,9 +937,16 @@ export async function registerRoutes(
       const existingFlags = (submission.proctoringFlags as any[]) || [];
       const allFlags = [...existingFlags, ...analyzedFlags];
 
-      await db.update(submissionsTable).set({ proctoringFlags: allFlags }).where(drizzleOrm.eq(submissionsTable.id, submissionId));
+      const switchCount = typeof tabSwitchCount === "number" ? tabSwitchCount : allFlags.length;
+      const isSuspicious = switchCount >= TAB_SWITCH_SUSPICIOUS_THRESHOLD ? "true" : "false";
 
-      res.json({ success: true, flags: analyzedFlags });
+      await db.update(submissionsTable).set({
+        proctoringFlags: allFlags,
+        tabSwitchCount: switchCount,
+        isSuspicious,
+      }).where(drizzleOrm.eq(submissionsTable.id, submissionId));
+
+      res.json({ success: true, flags: analyzedFlags, tabSwitchCount: switchCount, isSuspicious });
     } catch (error) {
       console.error("Failed to process proctoring data:", error);
       res.status(500).json({ error: "Failed to process proctoring data" });

@@ -36,7 +36,9 @@ import {
   ChevronUp,
   AlertTriangle,
 } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 import type { Exam, ExamSubmission, QuestionType, User as UserType, ProctoringFlag } from "@shared/schema";
+import { TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -364,9 +366,10 @@ export function ExamDetailsDialog({
                       const feedback = sub.feedback as { strengths: string; weakPoints: string; recommendations: string } | null;
                       const proctoringFlags = (sub.proctoringFlags as ProctoringFlag[] | null) || [];
                       const hasProctoringIssues = proctoringFlags.length > 0;
+                      const suspicious = sub.isSuspicious === "true" || (sub.tabSwitchCount || 0) >= TAB_SWITCH_SUSPICIOUS_THRESHOLD;
 
                       return (
-                        <Card key={sub.id} data-testid={`submission-card-${sub.id}`} className={hasProctoringIssues ? "border-amber-400 dark:border-amber-600" : ""}>
+                        <Card key={sub.id} data-testid={`submission-card-${sub.id}`} className={suspicious ? "border-red-500 dark:border-red-600" : hasProctoringIssues ? "border-amber-400 dark:border-amber-600" : ""}>
                           <CardContent className="p-0">
                             <button
                               className="w-full p-4 flex items-center justify-between hover:bg-muted/50 transition-colors rounded-t-lg"
@@ -380,10 +383,16 @@ export function ExamDetailsDialog({
                                 <div className="text-left">
                                   <div className="flex items-center gap-2">
                                     <p className="text-sm font-medium">{studentName}</p>
-                                    {hasProctoringIssues && (
+                                    {suspicious && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 text-[10px] font-medium" data-testid={`badge-suspicious-${sub.id}`}>
+                                        <ShieldAlert className="h-3 w-3" />
+                                        Suspicious
+                                      </span>
+                                    )}
+                                    {hasProctoringIssues && !suspicious && (
                                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[10px] font-medium" data-testid={`badge-proctoring-${sub.id}`}>
                                         <AlertTriangle className="h-3 w-3" />
-                                        {proctoringFlags.length} flag{proctoringFlags.length !== 1 ? "s" : ""}
+                                        {sub.tabSwitchCount || proctoringFlags.length} switch{(sub.tabSwitchCount || proctoringFlags.length) !== 1 ? "es" : ""}
                                       </span>
                                     )}
                                   </div>

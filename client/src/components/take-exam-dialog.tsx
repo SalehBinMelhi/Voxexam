@@ -35,6 +35,8 @@ import {
   Eye,
   Video,
   Monitor,
+  AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 import type { Exam, ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
 import { format, parseISO, differenceInMinutes } from "date-fns";
@@ -319,6 +321,9 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   const [audioResponses, setAudioResponses] = useState<Map<string, string>>(new Map());
   const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map());
   const [submissionResult, setSubmissionResult] = useState<ExamSubmission | null>(null);
+  const [tabSwitchCount, setTabSwitchCount] = useState(0);
+  const [showTabWarning, setShowTabWarning] = useState(false);
+  const tabSwitchLeftAtRef = useRef<number | null>(null);
 
   const [webcamStream, setWebcamStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
@@ -335,7 +340,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
   const screenshotBufferRef = useRef<string | null>(null);
   const screenshotIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const proctoringEventsRef = useRef<Array<{ timestamp: string; screenshotBefore?: string; screenshotDuring?: string; screenshotAfter?: string }>>([]);
+  const proctoringEventsRef = useRef<Array<{ timestamp: string; durationAway?: number; screenshotBefore?: string; screenshotDuring?: string; screenshotAfter?: string }>>([]);
   const pendingTabSwitchRef = useRef<{ timestamp: string; screenshotBefore?: string; screenshotDuring?: string } | null>(null);
 
   useEffect(() => {
@@ -346,6 +351,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       setScreenReady(false);
       setWebcamError("");
       setScreenError("");
+      setTabSwitchCount(0);
+      setShowTabWarning(false);
     }
     return () => {
       stopAllStreams();
@@ -505,6 +512,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
     const handleVisibilityChange = async () => {
       if (document.hidden) {
+        tabSwitchLeftAtRef.current = Date.now();
         const screenshotDuring = await captureScreenshotAsync();
         pendingTabSwitchRef.current = {
           timestamp: new Date().toISOString(),
@@ -514,11 +522,19 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       } else {
         if (pendingTabSwitchRef.current) {
           const screenshotAfter = await captureScreenshotAsync();
+          let durationAway: number | undefined;
+          if (tabSwitchLeftAtRef.current) {
+            durationAway = Math.round((Date.now() - tabSwitchLeftAtRef.current) / 1000);
+            tabSwitchLeftAtRef.current = null;
+          }
           proctoringEventsRef.current.push({
             ...pendingTabSwitchRef.current,
+            durationAway,
             screenshotAfter: screenshotAfter || undefined,
           });
           pendingTabSwitchRef.current = null;
+          setTabSwitchCount(prev => prev + 1);
+          setShowTabWarning(true);
         }
       }
     };
@@ -528,6 +544,43 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [phase, screenStream]);
+
+  useEffect(() => {
+    if (phase !== "exam") return;
+
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x'].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+        toast({
+          title: "Action blocked",
+          description: "Copy, paste, and cut are disabled during this exam.",
+          variant: "destructive",
+        });
+      }
+    };
+
+    const handleCopyPaste = (e: ClipboardEvent) => {
+      e.preventDefault();
+    };
+
+    document.addEventListener("contextmenu", handleContextMenu);
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("copy", handleCopyPaste);
+    document.addEventListener("paste", handleCopyPaste);
+    document.addEventListener("cut", handleCopyPaste);
+
+    return () => {
+      document.removeEventListener("contextmenu", handleContextMenu);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("copy", handleCopyPaste);
+      document.removeEventListener("paste", handleCopyPaste);
+      document.removeEventListener("cut", handleCopyPaste);
+    };
+  }, [phase, toast]);
 
   const handleStartExam = () => {
     startRecordings();
@@ -565,12 +618,12 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
         }
       }
 
-      if (proctoringEventsRef.current.length > 0 && result.id) {
+      if ((proctoringEventsRef.current.length > 0 || tabSwitchCount > 0) && result.id) {
         try {
           await fetch(`/api/submissions/${result.id}/proctoring`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ flags: proctoringEventsRef.current }),
+            body: JSON.stringify({ flags: proctoringEventsRef.current, tabSwitchCount }),
             credentials: "include",
           });
         } catch (e) {
@@ -673,6 +726,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     setScreenReady(false);
     setWebcamError("");
     setScreenError("");
+    setTabSwitchCount(0);
+    setShowTabWarning(false);
     onOpenChange(false);
   };
 
@@ -900,6 +955,12 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {tabSwitchCount > 0 && (
+                <Badge variant="destructive" className="flex items-center gap-1" data-testid="badge-tab-switch-count">
+                  <ShieldAlert className="h-3 w-3" />
+                  {tabSwitchCount}
+                </Badge>
+              )}
               {webcamStream && (
                 <div className="relative">
                   <video
@@ -929,6 +990,14 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
         <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="py-6">
+            {tabSwitchCount > 0 && (
+              <div className="mb-4 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3 flex items-center gap-2" data-testid="tab-switch-warning">
+                <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
+                <p className="text-sm text-red-700 dark:text-red-300">
+                  <span className="font-medium">Warning:</span> You left the exam tab. This has been recorded. ({tabSwitchCount} tab switch{tabSwitchCount !== 1 ? "es" : ""} detected)
+                </p>
+              </div>
+            )}
             {previewMode && (
               <div className="mb-4 rounded-md bg-primary/5 border border-primary/20 p-3 flex items-center gap-2" data-testid="preview-banner">
                 <Eye className="h-4 w-4 text-primary flex-shrink-0" />

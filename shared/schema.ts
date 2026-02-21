@@ -125,11 +125,15 @@ export interface DualScore {
 export interface ProctoringFlag {
   type: "tab_switch";
   timestamp: string;
+  durationAway?: number;
   screenshotBefore?: string;
   screenshotDuring?: string;
   screenshotAfter?: string;
   aiVerdict?: string;
 }
+
+// Suspicious threshold for tab switches
+export const TAB_SWITCH_SUSPICIOUS_THRESHOLD = 3;
 
 // Submissions table
 export const submissions = pgTable("submissions", {
@@ -147,6 +151,8 @@ export const submissions = pgTable("submissions", {
   screenRecordingUrl: varchar("screen_recording_url"),
   webcamRecordingUrl: varchar("webcam_recording_url"),
   proctoringFlags: jsonb("proctoring_flags").$type<ProctoringFlag[]>(),
+  tabSwitchCount: real("tab_switch_count").default(0),
+  isSuspicious: varchar("is_suspicious").default("false"),
   submittedAt: varchar("submitted_at").notNull(),
 });
 
