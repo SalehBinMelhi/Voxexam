@@ -1,9 +1,31 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { GraduationCap, Mic, Brain, Shield, ArrowRight } from "lucide-react";
+import { GraduationCap, Mic, Brain, Shield, ArrowRight, UserCog, BookOpen } from "lucide-react";
 
 export default function LandingPage() {
+  const [loggingIn, setLoggingIn] = useState<string | null>(null);
+
+  const handleDemoLogin = async (role: "professor" | "student") => {
+    setLoggingIn(role);
+    try {
+      const res = await fetch("/api/demo-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ role }),
+      });
+      if (res.ok) {
+        window.location.href = "/";
+      }
+    } catch (e) {
+      console.error("Demo login failed:", e);
+    } finally {
+      setLoggingIn(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
@@ -17,7 +39,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <a href="/api/login">
-              <Button data-testid="button-login">Sign In</Button>
+              <Button variant="outline" data-testid="button-login">Sign In with Replit</Button>
             </a>
           </div>
         </div>
@@ -36,13 +58,31 @@ export default function LandingPage() {
                   Create, manage, and grade oral examinations with AI-powered transcription and intelligent scoring. Built for modern universities.
                 </p>
               </div>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <a href="/api/login">
-                  <Button size="lg" className="gap-2" data-testid="button-get-started">
-                    Get Started
-                    <ArrowRight className="h-4 w-4" />
+              <div className="space-y-4">
+                <p className="text-sm font-medium text-muted-foreground">Quick Login</p>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Button
+                    size="lg"
+                    className="gap-2"
+                    onClick={() => handleDemoLogin("professor")}
+                    disabled={loggingIn !== null}
+                    data-testid="button-login-professor"
+                  >
+                    <UserCog className="h-4 w-4" />
+                    {loggingIn === "professor" ? "Logging in..." : "Login as Professor"}
                   </Button>
-                </a>
+                  <Button
+                    size="lg"
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={() => handleDemoLogin("student")}
+                    disabled={loggingIn !== null}
+                    data-testid="button-login-student"
+                  >
+                    <BookOpen className="h-4 w-4" />
+                    {loggingIn === "student" ? "Logging in..." : "Login as Student"}
+                  </Button>
+                </div>
               </div>
               <div className="flex items-center gap-6 text-sm text-muted-foreground">
                 <span>Free to use</span>
