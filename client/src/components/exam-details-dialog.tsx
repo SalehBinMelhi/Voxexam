@@ -34,8 +34,9 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
+  AlertTriangle,
 } from "lucide-react";
-import type { Exam, ExamSubmission, QuestionType, User as UserType } from "@shared/schema";
+import type { Exam, ExamSubmission, QuestionType, User as UserType, ProctoringFlag } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -361,9 +362,11 @@ export function ExamDetailsDialog({
                         : "Unknown Student";
                       const isExpanded = expandedSubmission === sub.id;
                       const feedback = sub.feedback as { strengths: string; weakPoints: string; recommendations: string } | null;
+                      const proctoringFlags = (sub.proctoringFlags as ProctoringFlag[] | null) || [];
+                      const hasProctoringIssues = proctoringFlags.length > 0;
 
                       return (
-                        <Card key={sub.id} data-testid={`submission-card-${sub.id}`}>
+                        <Card key={sub.id} data-testid={`submission-card-${sub.id}`} className={hasProctoringIssues ? "border-amber-400 dark:border-amber-600" : ""}>
                           <CardContent className="p-0">
                             <button
                               className="w-full p-4 flex items-center justify-between hover:bg-muted/50 transition-colors rounded-t-lg"
@@ -375,7 +378,15 @@ export function ExamDetailsDialog({
                                   <User className="h-4 w-4 text-primary" />
                                 </div>
                                 <div className="text-left">
-                                  <p className="text-sm font-medium">{studentName}</p>
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-medium">{studentName}</p>
+                                    {hasProctoringIssues && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[10px] font-medium" data-testid={`badge-proctoring-${sub.id}`}>
+                                        <AlertTriangle className="h-3 w-3" />
+                                        {proctoringFlags.length} flag{proctoringFlags.length !== 1 ? "s" : ""}
+                                      </span>
+                                    )}
+                                  </div>
                                   <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                                     <Clock className="h-3 w-3" />
                                     {format(parseISO(sub.submittedAt), "MMM d, yyyy h:mm a")}
@@ -538,6 +549,32 @@ export function ExamDetailsDialog({
                                     );
                                   })}
                                 </div>
+
+                                {hasProctoringIssues && (
+                                  <div className="space-y-2 mt-3" data-testid={`proctoring-section-${sub.id}`}>
+                                    <h5 className="text-xs font-semibold flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                                      <AlertTriangle className="h-3.5 w-3.5" />
+                                      Proctoring Alerts ({proctoringFlags.length})
+                                    </h5>
+                                    <div className="grid gap-2">
+                                      {proctoringFlags.map((flag, flagIdx) => (
+                                        <div key={flagIdx} className="rounded-md bg-amber-50 dark:bg-amber-900/20 p-3 border border-amber-200 dark:border-amber-800">
+                                          <div className="flex items-center justify-between mb-1">
+                                            <p className="text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                                              Tab Switch #{flagIdx + 1}
+                                            </p>
+                                            <p className="text-[10px] text-muted-foreground">
+                                              {format(parseISO(flag.timestamp), "h:mm:ss a")}
+                                            </p>
+                                          </div>
+                                          {flag.aiVerdict && (
+                                            <p className="text-xs text-amber-800 dark:text-amber-300">{flag.aiVerdict}</p>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </CardContent>

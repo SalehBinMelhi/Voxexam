@@ -1,3 +1,4 @@
+import express from "express";
 import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
@@ -9,7 +10,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback, analyzeProctoringScreenshot } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema } from "@shared/schema";
 
@@ -826,6 +827,73 @@ export async function registerRoutes(
     }
     res.setHeader("Content-Type", "video/webm");
     res.sendFile(filePath);
+  });
+
+  app.post("/api/submissions/:id/proctoring", isAuthenticated, express.json({ limit: "50mb" }), async (req: any, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const submissionId = p(req.params.id);
+      const submission = await storage.getSubmission(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      if (submission.studentId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      const { flags } = req.body;
+      if (!flags || !Array.isArray(flags)) {
+        return res.status(400).json({ error: "Invalid proctoring data" });
+      }
+
+      const { submissions: submissionsTable } = await import("@shared/schema");
+      const drizzleOrm = await import("drizzle-orm");
+      const { db } = await import("./db");
+
+      const exam = await storage.getExam(submission.examId);
+      const examTitle = exam?.title || "Unknown Exam";
+
+      let customApiKey: string | null = null;
+      if (exam?.classId) {
+        const cls = await storage.getClass(exam.classId);
+        if (cls?.universityId) {
+          const uni = await storage.getUniversity(cls.universityId);
+          if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+        }
+      }
+
+      const analyzedFlags = [];
+      for (const flag of flags) {
+        const screenshotsToAnalyze = [flag.screenshotBefore, flag.screenshotDuring, flag.screenshotAfter].filter(Boolean) as string[];
+        const labelMap = ["BEFORE leaving", "WHEN leaving", "AFTER returning"];
+        const activeLabels = [flag.screenshotBefore && labelMap[0], flag.screenshotDuring && labelMap[1], flag.screenshotAfter && labelMap[2]].filter(Boolean) as string[];
+
+        let aiVerdict = "Tab switch detected";
+        if (screenshotsToAnalyze.length > 0) {
+          aiVerdict = await analyzeProctoringScreenshot(screenshotsToAnalyze, activeLabels, examTitle, customApiKey);
+        }
+
+        analyzedFlags.push({
+          type: "tab_switch",
+          timestamp: flag.timestamp,
+          screenshotBefore: flag.screenshotBefore ? `[screenshot]` : undefined,
+          screenshotDuring: flag.screenshotDuring ? `[screenshot]` : undefined,
+          screenshotAfter: flag.screenshotAfter ? `[screenshot]` : undefined,
+          aiVerdict,
+        });
+      }
+
+      const existingFlags = (submission.proctoringFlags as any[]) || [];
+      const allFlags = [...existingFlags, ...analyzedFlags];
+
+      await db.update(submissionsTable).set({ proctoringFlags: allFlags }).where(drizzleOrm.eq(submissionsTable.id, submissionId));
+
+      res.json({ success: true, flags: analyzedFlags });
+    } catch (error) {
+      console.error("Failed to process proctoring data:", error);
+      res.status(500).json({ error: "Failed to process proctoring data" });
+    }
   });
 
   return httpServer;

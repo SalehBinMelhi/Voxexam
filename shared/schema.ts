@@ -121,6 +121,16 @@ export interface DualScore {
   understanding: number;
 }
 
+// Proctoring flag for tab switch detection
+export interface ProctoringFlag {
+  type: "tab_switch";
+  timestamp: string;
+  screenshotBefore?: string;
+  screenshotDuring?: string;
+  screenshotAfter?: string;
+  aiVerdict?: string;
+}
+
 // Submissions table
 export const submissions = pgTable("submissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -136,6 +146,7 @@ export const submissions = pgTable("submissions", {
   isPreview: varchar("is_preview").default("false"),
   screenRecordingUrl: varchar("screen_recording_url"),
   webcamRecordingUrl: varchar("webcam_recording_url"),
+  proctoringFlags: jsonb("proctoring_flags").$type<ProctoringFlag[]>(),
   submittedAt: varchar("submitted_at").notNull(),
 });
 

@@ -333,6 +333,11 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   const screenChunksRef = useRef<Blob[]>([]);
   const webcamChunksRef = useRef<Blob[]>([]);
 
+  const screenshotBufferRef = useRef<string | null>(null);
+  const screenshotIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const proctoringEventsRef = useRef<Array<{ timestamp: string; screenshotBefore?: string; screenshotDuring?: string; screenshotAfter?: string }>>([]);
+  const pendingTabSwitchRef = useRef<{ timestamp: string; screenshotBefore?: string; screenshotDuring?: string } | null>(null);
+
   useEffect(() => {
     if (!open) {
       stopAllStreams();
@@ -354,6 +359,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   }, [webcamStream, phase]);
 
   const stopAllStreams = () => {
+    stopScreenshotCapture();
     if (screenRecorderRef.current && screenRecorderRef.current.state !== "inactive") {
       screenRecorderRef.current.stop();
     }
@@ -453,8 +459,79 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     });
   };
 
+  const captureScreenshotAsync = async (): Promise<string | null> => {
+    if (!screenStream) return null;
+    try {
+      const track = screenStream.getVideoTracks()[0];
+      if (!track || track.readyState !== "live") return null;
+
+      const imageCapture = new (window as any).ImageCapture(track);
+      const bitmap = await imageCapture.grabFrame();
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.min(bitmap.width, 640);
+      canvas.height = Math.min(bitmap.height, 480);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL("image/jpeg", 0.5);
+    } catch {
+      return null;
+    }
+  };
+
+  const startScreenshotCapture = () => {
+    if (screenshotIntervalRef.current) clearInterval(screenshotIntervalRef.current);
+    proctoringEventsRef.current = [];
+    pendingTabSwitchRef.current = null;
+
+    const captureLoop = async () => {
+      const ss = await captureScreenshotAsync();
+      if (ss) screenshotBufferRef.current = ss;
+    };
+
+    captureLoop();
+    screenshotIntervalRef.current = setInterval(captureLoop, 10000);
+  };
+
+  const stopScreenshotCapture = () => {
+    if (screenshotIntervalRef.current) {
+      clearInterval(screenshotIntervalRef.current);
+      screenshotIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (phase !== "exam") return;
+
+    const handleVisibilityChange = async () => {
+      if (document.hidden) {
+        const screenshotDuring = await captureScreenshotAsync();
+        pendingTabSwitchRef.current = {
+          timestamp: new Date().toISOString(),
+          screenshotBefore: screenshotBufferRef.current || undefined,
+          screenshotDuring: screenshotDuring || undefined,
+        };
+      } else {
+        if (pendingTabSwitchRef.current) {
+          const screenshotAfter = await captureScreenshotAsync();
+          proctoringEventsRef.current.push({
+            ...pendingTabSwitchRef.current,
+            screenshotAfter: screenshotAfter || undefined,
+          });
+          pendingTabSwitchRef.current = null;
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [phase, screenStream]);
+
   const handleStartExam = () => {
     startRecordings();
+    startScreenshotCapture();
     setPhase("exam");
   };
 
@@ -468,6 +545,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
       setSubmissionResult(result);
       setPhase("results");
+
+      stopScreenshotCapture();
 
       const { screenBlob, webcamBlob } = await stopRecordings();
 
@@ -483,6 +562,19 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
           });
         } catch (e) {
           console.error("Failed to upload recordings:", e);
+        }
+      }
+
+      if (proctoringEventsRef.current.length > 0 && result.id) {
+        try {
+          await fetch(`/api/submissions/${result.id}/proctoring`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ flags: proctoringEventsRef.current }),
+            credentials: "include",
+          });
+        } catch (e) {
+          console.error("Failed to upload proctoring data:", e);
         }
       }
 

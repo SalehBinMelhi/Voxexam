@@ -326,6 +326,39 @@ Respond with ONLY the JSON object, no other text.`;
   }
 }
 
+export async function analyzeProctoringScreenshot(
+  screenshots: string[],
+  labels: string[],
+  examTitle: string,
+  customApiKey?: string | null
+): Promise<string> {
+  try {
+    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+
+    const imageMessages = screenshots.map((ss) => ({
+      type: "image_url" as const,
+      image_url: { url: ss, detail: "low" as const },
+    }));
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: `You are an exam proctoring AI. The student was taking an exam called "${examTitle}" in a web browser. A tab switch was detected. Analyze these ${screenshots.length} screenshot(s) taken ${labels.join(", ")}.\n\nDetermine: Was the student on the exam page or did they navigate to a different page/application? Respond with a SHORT verdict (1-2 sentences max), e.g. "Student switched to Google search" or "Student appeared to remain on the exam page" or "Student opened a notes application".` },
+          ...imageMessages,
+        ],
+      }],
+      max_tokens: 100,
+      temperature: 0.1,
+    });
+    return completion.choices[0]?.message?.content?.trim() || "Tab switch detected";
+  } catch (error) {
+    console.error("[PROCTORING] AI analysis failed:", error);
+    return "Tab switch detected (AI analysis unavailable)";
+  }
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
