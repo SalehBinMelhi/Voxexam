@@ -10,6 +10,7 @@ import type {
   ExamResponse,
   GradingMethod,
 } from "@shared/schema";
+import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -20,7 +21,6 @@ async function transcribeAudio(audioDataUrl: string): Promise<string> {
   try {
     console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
     
-    // Split on ";base64," to separate metadata from base64 data
     const base64Separator = ";base64,";
     const separatorIndex = audioDataUrl.indexOf(base64Separator);
     
@@ -36,12 +36,6 @@ async function transcribeAudio(audioDataUrl: string): Promise<string> {
     console.log("[AUDIO] Metadata:", metadataPart);
     console.log("[AUDIO] Base64 data length:", base64Data.length);
     
-    // Extract format from metadata (e.g., "data:audio/webm;codecs=opus" -> "webm")
-    const formatMatch = metadataPart.match(/^data:audio\/([a-z0-9]+)/i);
-    const format = formatMatch ? formatMatch[1].toLowerCase() : "webm";
-    
-    console.log("[AUDIO] Detected format:", format);
-    
     const audioBuffer = Buffer.from(base64Data, "base64");
     console.log("[AUDIO] Audio buffer size:", audioBuffer.length, "bytes");
 
@@ -50,27 +44,14 @@ async function transcribeAudio(audioDataUrl: string): Promise<string> {
       return "";
     }
 
-    let extension = "webm";
-    if (format.includes("mp4") || format.includes("m4a")) {
-      extension = "mp4";
-    } else if (format.includes("ogg")) {
-      extension = "ogg";
-    } else if (format.includes("wav")) {
-      extension = "wav";
-    }
+    const { buffer: compatibleBuffer, format: compatibleFormat } = await ensureCompatibleFormat(audioBuffer);
+    console.log("[AUDIO] Converted to compatible format:", compatibleFormat, "buffer size:", compatibleBuffer.length);
 
-    const audioFile = await toFile(audioBuffer, `audio.${extension}`, {
-      type: `audio/${extension}`,
-    });
+    console.log("[AUDIO] Sending to gpt-4o-mini-transcribe for speech-to-text...");
+    const transcription = await speechToText(compatibleBuffer, compatibleFormat);
 
-    console.log("[AUDIO] Sending to Whisper API with extension:", extension);
-    const transcription = await openai.audio.transcriptions.create({
-      file: audioFile,
-      model: "whisper-1",
-    });
-
-    console.log("[AUDIO] Transcription result:", transcription.text);
-    return transcription.text || "";
+    console.log("[AUDIO] Transcription result:", transcription);
+    return transcription || "";
   } catch (error: any) {
     console.error("[AUDIO] Transcription failed with error:", error?.message || error);
     if (error?.response?.data) {

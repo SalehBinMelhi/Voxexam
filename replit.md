@@ -115,7 +115,8 @@ This is a full-stack application built with:
   - Considers partial credit for partially correct answers
   - Falls back to word overlap comparison if AI grading fails
 - **Audio Questions**: Speech-to-text transcription + AI grading
-  - Uses OpenAI Whisper API to transcribe recorded audio to text
+  - Uses gpt-4o-mini-transcribe model via Replit AI Integrations for speech-to-text
+  - Audio format auto-conversion via ffmpeg (WebM/OGG -> WAV) before transcription
   - Supports webm, mp4, ogg, and wav audio formats
   - Transcription is then graded using the same AI semantic evaluation
   - Falls back to text input if transcription fails
@@ -141,7 +142,7 @@ npm run dev
 - Audio questions include a required text input for grading (text-based word matching)
 - Submit Exam button is now visible on every question, not just the last one
 - AI-powered grading using OpenAI GPT-4o-mini for short answer and audio questions (semantic evaluation on 0-1 scale)
-- Audio transcription using OpenAI Whisper API (speech-to-text before grading)
+- Audio transcription using gpt-4o-mini-transcribe (speech-to-text before grading, with ffmpeg format conversion)
 - Grading method tracking: each question score shows how it was graded (AI Graded, Auto, Manual, Fallback)
 - Manual grading override: professors can click edit on any score to manually adjust it (0-100%)
 - PATCH /api/submissions/:id/score endpoint for manual score updates
