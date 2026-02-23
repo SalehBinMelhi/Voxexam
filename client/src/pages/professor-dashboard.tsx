@@ -114,7 +114,7 @@ export default function ProfessorDashboard() {
               <GraduationCap className="h-5 w-5 text-amber-400" />
             </div>
             <div>
-              <h1 className="font-semibold">VoxExams</h1>
+              <h1 className="font-semibold"><span className="text-primary dark:text-amber-400">Vox</span>Exams</h1>
               <p className="text-xs text-muted-foreground">Professor Dashboard</p>
             </div>
           </div>

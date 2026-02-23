@@ -128,7 +128,7 @@ export default function LandingPage() {
             <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
               <GraduationCap className="h-5 w-5 text-amber-400" />
             </div>
-            <span className="font-semibold text-lg">VoxExams</span>
+            <span className="font-semibold text-lg"><span className="text-primary dark:text-amber-400">Vox</span>Exams</span>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
@@ -191,7 +191,7 @@ export default function LandingPage() {
                     <GraduationCap className="h-10 w-10 text-primary" />
                   </div>
                   <div className="text-center space-y-2">
-                    <h3 className="font-semibold text-lg">VoxExams Platform</h3>
+                    <h3 className="font-semibold text-lg"><span className="text-primary dark:text-amber-400">Vox</span>Exams Platform</h3>
                     <p className="text-sm text-muted-foreground">MCQ, Short Answer & Audio Responses</p>
                   </div>
                   <div className="flex gap-2">
