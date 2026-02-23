@@ -83,7 +83,9 @@ export function SimpleExamTab() {
   const [questions, setQuestions] = useState<InsertQuestion[]>([]);
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState("");
+  const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [endTime, setEndTime] = useState("");
   const [materialFiles, setMaterialFiles] = useState<File[]>([]);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -166,7 +168,9 @@ export function SimpleExamTab() {
     setQuestions([]);
     setManualStudentNames([]);
     setNewStudentName("");
+    setStartDate("");
     setStartTime("");
+    setEndDate("");
     setEndTime("");
     setMaterialFiles([]);
     setNewQuestion("");
@@ -248,8 +252,8 @@ export function SimpleExamTab() {
     createExamMutation.mutate({
       title: title.trim(),
       questions,
-      startTime: startTime || null,
-      endTime: endTime || null,
+      startTime: startDate ? `${startDate}T${startTime || "00:00"}` : null,
+      endTime: endDate ? `${endDate}T${endTime || "23:59"}` : null,
       assignedStudentNames: manualStudentNames,
       materialFiles,
     });
@@ -624,7 +628,7 @@ export function SimpleExamTab() {
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
-            <Label htmlFor="simple-title">Exam Title</Label>
+            <Label htmlFor="simple-title">Exam Title <span className="text-red-500">*</span></Label>
             <Input
               id="simple-title"
               placeholder="e.g., Pop Quiz - Chapter 3"
@@ -634,14 +638,44 @@ export function SimpleExamTab() {
             />
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="space-y-3">
             <div className="space-y-2">
-              <Label htmlFor="simple-start">Start Time (optional)</Label>
-              <Input id="simple-start" type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} data-testid="input-simple-start-time" />
+              <Label>Start (optional)</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="flex-1"
+                  data-testid="input-simple-start-date"
+                />
+                <Input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  className="w-[120px]"
+                  data-testid="input-simple-start-time"
+                />
+              </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="simple-end">End Time (optional)</Label>
-              <Input id="simple-end" type="datetime-local" value={endTime} onChange={(e) => setEndTime(e.target.value)} data-testid="input-simple-end-time" />
+              <Label>End (optional)</Label>
+              <div className="flex gap-2">
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="flex-1"
+                  data-testid="input-simple-end-date"
+                />
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  className="w-[120px]"
+                  data-testid="input-simple-end-time"
+                />
+              </div>
             </div>
           </div>
 
@@ -709,7 +743,7 @@ export function SimpleExamTab() {
           <Separator />
 
           <div className="space-y-4">
-            <Label>Questions ({questions.length})</Label>
+            <Label>Questions ({questions.length}) <span className="text-red-500">*</span></Label>
 
             {questions.length > 0 && (
               <div className="space-y-2">

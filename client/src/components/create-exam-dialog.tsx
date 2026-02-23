@@ -355,7 +355,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
         <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="space-y-6 py-4">
             <div className="space-y-2">
-              <Label htmlFor="exam-title">Exam Title</Label>
+              <Label htmlFor="exam-title">Exam Title <span className="text-red-500">*</span></Label>
               <Input
                 id="exam-title"
                 placeholder="e.g., Midterm Oral Exam"
@@ -555,7 +555,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <Label>Questions ({questions.length})</Label>
+                <Label>Questions ({questions.length}) <span className="text-red-500">*</span></Label>
                 {selectedClassId && selectedClassId !== "none" && !aiChatOpen && (
                   <Button
                     variant="secondary"
