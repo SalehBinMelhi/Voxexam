@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import {
@@ -22,9 +22,14 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical, ChevronDown, ChevronUp, Send, Bot, User, RotateCcw } from "lucide-react";
 import type { InsertQuestion, QuestionType, Class } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
 
 interface CreateExamDialogProps {
   open: boolean;
@@ -40,9 +45,12 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [selectedClassId, setSelectedClassId] = useState("");
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
   const [newStudentName, setNewStudentName] = useState("");
-  const [aiInstructions, setAiInstructions] = useState("");
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [studentPickerOpen, setStudentPickerOpen] = useState(false);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
   const [newQuestion, setNewQuestion] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<QuestionType>("short");
@@ -104,15 +112,16 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     },
   });
 
-  const generateQuestionsMutation = useMutation({
-    mutationFn: async ({ classId, instructions }: { classId: string; instructions?: string }) => {
-      const response = await apiRequest("POST", "/api/generate-questions", {
+  const aiChatMutation = useMutation({
+    mutationFn: async ({ classId, messages }: { classId: string; messages: ChatMessage[] }) => {
+      const response = await apiRequest("POST", "/api/ai-question-chat", {
         classId,
-        instructions: instructions || undefined,
+        messages,
       });
       return response.json();
     },
     onSuccess: (data) => {
+      setChatMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       if (data.questions && data.questions.length > 0) {
         const newQuestions: InsertQuestion[] = data.questions.map((q: any) => ({
           text: q.text,
@@ -123,18 +132,23 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
         setQuestions((prev) => [...prev, ...newQuestions]);
         toast({
           title: "Questions generated",
-          description: `${data.questions.length} questions were generated from your class materials. Review and edit them below.`,
+          description: `${data.questions.length} questions have been added. Review and edit them below.`,
         });
       }
     },
     onError: (err: Error) => {
+      setChatMessages((prev) => [...prev, { role: "assistant", content: "Sorry, something went wrong. Please try again." }]);
       toast({
-        title: "Generation failed",
-        description: err.message || "Could not generate questions. Make sure you have uploaded materials for the selected class.",
+        title: "AI error",
+        description: err.message || "Could not communicate with the AI assistant.",
         variant: "destructive",
       });
     },
   });
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
 
   const resetForm = () => {
     setTitle("");
@@ -149,8 +163,10 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setNewQuestionOptions([""]);
     setNewCorrectAnswer("");
     setEditingIndex(null);
-    setAiInstructions("");
     setStudentPickerOpen(false);
+    setAiChatOpen(false);
+    setChatMessages([]);
+    setChatInput("");
   };
 
   const addStudentName = () => {
@@ -270,7 +286,20 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     });
   };
 
-  const handleGenerateQuestions = () => {
+  const handleSendChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const classId = selectedClassId && selectedClassId !== "none" ? selectedClassId : null;
+    if (!classId) return;
+
+    const updatedMessages: ChatMessage[] = [...chatMessages, { role: "user", content: text }];
+    setChatMessages(updatedMessages);
+    setChatInput("");
+
+    aiChatMutation.mutate({ classId, messages: updatedMessages });
+  };
+
+  const handleStartAiChat = () => {
     const classId = selectedClassId && selectedClassId !== "none" ? selectedClassId : null;
     if (!classId) {
       toast({
@@ -280,10 +309,14 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       });
       return;
     }
-    generateQuestionsMutation.mutate({
-      classId,
-      instructions: aiInstructions.trim() || undefined,
-    });
+    setAiChatOpen(true);
+    setChatMessages([]);
+    setChatInput("");
+  };
+
+  const handleResetChat = () => {
+    setChatMessages([]);
+    setChatInput("");
   };
 
   const getQuestionIcon = (type: QuestionType) => {
@@ -501,35 +534,134 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label>Questions ({questions.length})</Label>
-                {selectedClassId && selectedClassId !== "none" && (
+                {selectedClassId && selectedClassId !== "none" && !aiChatOpen && (
                   <Button
                     variant="secondary"
                     size="sm"
-                    onClick={handleGenerateQuestions}
-                    disabled={generateQuestionsMutation.isPending}
-                    data-testid="button-generate-questions"
+                    onClick={handleStartAiChat}
+                    data-testid="button-start-ai-chat"
                   >
                     <Sparkles className="h-4 w-4 mr-1" />
-                    {generateQuestionsMutation.isPending ? "Generating..." : "AI Generate"}
+                    AI Generate
                   </Button>
                 )}
               </div>
 
-              {selectedClassId && selectedClassId !== "none" && (
-                <div className="space-y-2">
-                  <Label htmlFor="ai-instructions">Instructions for AI (optional)</Label>
-                  <Textarea
-                    id="ai-instructions"
-                    placeholder="e.g., Give me 3 questions on chapter 3, make them hard, focus on critical thinking..."
-                    value={aiInstructions}
-                    onChange={(e) => setAiInstructions(e.target.value)}
-                    className="min-h-[60px]"
-                    data-testid="textarea-ai-instructions"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Tell the AI how many questions, topics to focus on, difficulty level, question style, etc. Defaults to 5 questions if not specified.
-                  </p>
-                </div>
+              {aiChatOpen && selectedClassId && selectedClassId !== "none" && (
+                <Card className="border-primary/20 bg-primary/[0.02]">
+                  <CardHeader className="pb-2 pt-3 px-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        AI Question Assistant
+                      </CardTitle>
+                      <div className="flex items-center gap-1">
+                        {chatMessages.length > 0 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={handleResetChat}
+                            title="Start over"
+                            data-testid="button-reset-chat"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => setAiChatOpen(false)}
+                          title="Close"
+                          data-testid="button-close-ai-chat"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-3 pb-3 space-y-3">
+                    {chatMessages.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Describe what kind of questions you want. The AI will ask you clarifying questions to make sure it gets it right.
+                      </p>
+                    )}
+
+                    {chatMessages.length > 0 && (
+                      <div className="space-y-2 max-h-[200px] overflow-y-auto rounded-md border bg-background p-2" data-testid="ai-chat-messages">
+                        {chatMessages.map((msg, i) => (
+                          <div
+                            key={i}
+                            className={`flex gap-2 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                          >
+                            {msg.role === "assistant" && (
+                              <div className="flex-shrink-0 mt-0.5">
+                                <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
+                                  <Bot className="h-3.5 w-3.5 text-primary" />
+                                </div>
+                              </div>
+                            )}
+                            <div
+                              className={`text-sm rounded-lg px-3 py-2 max-w-[85%] whitespace-pre-wrap ${
+                                msg.role === "user"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted"
+                              }`}
+                              data-testid={`chat-message-${msg.role}-${i}`}
+                            >
+                              {msg.content}
+                            </div>
+                            {msg.role === "user" && (
+                              <div className="flex-shrink-0 mt-0.5">
+                                <div className="h-6 w-6 rounded-full bg-muted flex items-center justify-center">
+                                  <User className="h-3.5 w-3.5" />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {aiChatMutation.isPending && (
+                          <div className="flex gap-2 justify-start">
+                            <div className="flex-shrink-0 mt-0.5">
+                              <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center">
+                                <Bot className="h-3.5 w-3.5 text-primary" />
+                              </div>
+                            </div>
+                            <div className="text-sm rounded-lg px-3 py-2 bg-muted text-muted-foreground italic">
+                              Thinking...
+                            </div>
+                          </div>
+                        )}
+                        <div ref={chatEndRef} />
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder={chatMessages.length === 0 ? "e.g., I want one oral question about phonemes..." : "Reply to the AI..."}
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handleSendChat();
+                          }
+                        }}
+                        disabled={aiChatMutation.isPending}
+                        data-testid="input-ai-chat"
+                      />
+                      <Button
+                        size="icon"
+                        onClick={handleSendChat}
+                        disabled={!chatInput.trim() || aiChatMutation.isPending}
+                        data-testid="button-send-ai-chat"
+                      >
+                        <Send className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
               )}
 
               {questions.length > 0 && (

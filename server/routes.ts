@@ -10,7 +10,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 
@@ -178,6 +178,59 @@ export async function registerRoutes(
       res.json({ questions });
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to generate questions" });
+    }
+  });
+
+  app.post("/api/ai-question-chat", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can use AI question generation" });
+      }
+
+      const { classId, messages: conversationMessages } = req.body;
+      if (!classId) {
+        return res.status(400).json({ error: "Class ID is required" });
+      }
+      if (!conversationMessages || !Array.isArray(conversationMessages) || conversationMessages.length === 0) {
+        return res.status(400).json({ error: "Conversation messages are required" });
+      }
+      if (conversationMessages.length > 30) {
+        return res.status(400).json({ error: "Conversation too long. Please start a new chat." });
+      }
+      const validatedMessages = conversationMessages
+        .filter((m: any) => m && typeof m.content === "string" && ["user", "assistant"].includes(m.role))
+        .map((m: any) => ({ role: m.role as "user" | "assistant", content: m.content.substring(0, 2000) }));
+      if (validatedMessages.length === 0) {
+        return res.status(400).json({ error: "No valid messages provided" });
+      }
+
+      const cls = await storage.getClass(classId);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      if (cls.professorId !== userId) {
+        return res.status(403).json({ error: "You can only generate questions from your own classes" });
+      }
+
+      const materials = await storage.getMaterialsByClass(classId);
+      if (materials.length === 0) {
+        return res.status(400).json({ error: "No materials uploaded for this class. Upload course materials first." });
+      }
+
+      let customApiKey: string | null = null;
+      if (user.universityId) {
+        const uni = await storage.getUniversity(user.universityId);
+        if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+      }
+
+      const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
+      const result = await aiQuestionChat(validatedMessages, combinedContent, customApiKey);
+
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to process AI chat" });
     }
   });
 

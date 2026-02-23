@@ -190,6 +190,94 @@ async function evaluateResponse(
   return evaluateWithAI(question, response, materialContext, customApiKey);
 }
 
+export async function aiQuestionChat(
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  materialContent: string,
+  customApiKey?: string | null
+): Promise<{ reply: string; questions?: Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }> }> {
+  try {
+    const client = customApiKey
+      ? new OpenAI({ apiKey: customApiKey })
+      : openai;
+
+    const materialSnippet = materialContent.substring(0, 8000);
+
+    const systemPrompt = `You are a helpful exam-creation assistant for university professors. Your job is to help the professor create the perfect set of exam questions from their class materials.
+
+AVAILABLE COURSE MATERIALS:
+${materialSnippet}
+
+YOUR WORKFLOW:
+1. The professor will give you a rough idea of what they want. 
+2. Ask ONE concise clarifying question at a time to understand their needs. Key things to clarify (if the professor hasn't specified them):
+   - How many questions they want
+   - What question type: "short" (written text answer), "mcq" (multiple choice), or "audio" (oral/spoken answer) — or a mix
+   - What topic or chapter to focus on
+   - Difficulty level
+   - Any other style preferences
+3. After each answer, if you still need more info, ask the next question. Keep it conversational and brief.
+4. Once you have enough information (usually 2-4 clarifying questions), generate the questions.
+
+WHEN GENERATING QUESTIONS:
+- When you're ready to generate, output EXACTLY this format — your conversational message first, then a JSON block:
+  
+  Your message here (e.g. "Great! Here are your questions:")
+  
+  ===QUESTIONS_JSON===
+  [
+    {"text": "...", "type": "short|mcq|audio", "options": ["a","b","c","d"], "correctAnswer": "..."},
+    ...
+  ]
+  ===END_QUESTIONS_JSON===
+
+- For "mcq" questions, always include exactly 4 options
+- For "short" and "audio" questions, omit the "options" field
+- Always include a "correctAnswer"
+
+IMPORTANT RULES:
+- Ask only ONE question at a time. Be concise.
+- Don't overwhelm the professor — keep your messages short and friendly.
+- If the professor's very first message already specifies everything clearly (number, type, topic, difficulty), you may skip clarifying and generate immediately.
+- Never generate questions without the ===QUESTIONS_JSON=== markers.`;
+
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: systemPrompt },
+      ...conversationHistory,
+    ];
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages,
+      max_tokens: 3000,
+      temperature: 0.7,
+    });
+
+    const responseText = completion.choices[0]?.message?.content?.trim() || "";
+
+    const jsonMatch = responseText.match(/===QUESTIONS_JSON===\s*([\s\S]*?)\s*===END_QUESTIONS_JSON===/);
+    if (jsonMatch) {
+      const replyText = responseText.replace(/===QUESTIONS_JSON===[\s\S]*===END_QUESTIONS_JSON===/, "").trim();
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        const questions = parsed.map((q: any) => ({
+          text: q.text || "",
+          type: ["short", "mcq", "audio"].includes(q.type) ? q.type : "short",
+          options: q.type === "mcq" && Array.isArray(q.options) ? q.options : undefined,
+          correctAnswer: q.correctAnswer || undefined,
+        }));
+        return { reply: replyText || "Here are your questions!", questions };
+      } catch {
+        return { reply: responseText };
+      }
+    }
+
+    return { reply: responseText };
+  } catch (error) {
+    console.error("[AI-CHAT] Question chat failed:", error);
+    throw new Error("Failed to communicate with AI assistant");
+  }
+}
+
 export async function generateQuestionsFromMaterials(
   materialContent: string,
   numQuestions: number = 5,

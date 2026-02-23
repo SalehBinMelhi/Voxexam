@@ -188,6 +188,8 @@ npm run dev
 
 ## Recent Changes
 
+- **Conversational AI Question Generation**: Replaced single-shot AI generation with an interactive chat assistant. When professors click "AI Generate", a chat interface opens where the AI asks clarifying questions one at a time (how many questions, what type, topic focus, difficulty) before generating. Uses POST `/api/ai-question-chat` endpoint with full conversation history. Backend validates messages and caps at 30 exchanges.
+- **Robust PDF Upload**: Uses `unpdf` (PDF.js-based) as primary parser with `pdf-parse` fallback for maximum compatibility
 - **Student Detail Panel**: Clickable student names in class detail view open a full detail panel with performance graph (Recharts line chart, X=exam names, Y=grades, toggle Correctness/Understanding/Both), expandable submission cards with dual scores, grading methods, AI feedback, proctoring alerts, and video playback (screen recording main + webcam PiP overlay). New component: `client/src/components/student-detail-panel.tsx`.
 - **Post-Creation Class Roster Management**: Professors can add/remove students from classes at any time via PATCH `/api/classes/:id/roster` endpoint. Class detail view has persistent "Add Student" input.
 - **Create Exam Student Picker**: Collapsible dropdown panel in Create Exam dialog shows all class students (roster + enrolled) with checkboxes and Add All/Remove All.
