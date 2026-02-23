@@ -94,11 +94,10 @@ export default function StudentDashboard() {
           </div>
         </div>
       </header>
-
       <main className="container mx-auto px-4 py-8 space-y-8">
         <div>
           <h2 className="text-2xl font-bold">My Exams</h2>
-          <p className="text-muted-foreground">View and take your assigned oral examinations</p>
+          <p className="text-muted-foreground">View and take your assigned exams</p>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -305,7 +304,6 @@ export default function StudentDashboard() {
           </Card>
         ) : null}
       </main>
-
       {selectedExam && (
         <TakeExamDialog
           exam={selectedExam}
