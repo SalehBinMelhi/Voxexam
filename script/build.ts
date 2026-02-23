@@ -30,6 +30,10 @@ const allowlist = [
   "xlsx",
   "zod",
   "zod-validation-error",
+  "pdf-parse",
+  "mammoth",
+  "jszip",
+  "unpdf",
 ];
 
 async function buildAll() {
@@ -52,8 +56,12 @@ async function buildAll() {
     bundle: true,
     format: "cjs",
     outfile: "dist/index.cjs",
+    banner: {
+      js: `const __filename = require("url").fileURLToPath("file://" + __dirname + "/index.cjs"); const __importMetaUrl = require("url").pathToFileURL(__filename).href;`,
+    },
     define: {
       "process.env.NODE_ENV": '"production"',
+      "import.meta.url": "__importMetaUrl",
     },
     minify: true,
     external: externals,
