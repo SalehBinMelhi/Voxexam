@@ -15,7 +15,6 @@ import {
   LogOut, 
   Calendar, 
   Clock,
-  GraduationCap,
   BookOpen,
   FileQuestion,
   Play,
@@ -24,6 +23,7 @@ import {
   Trophy,
   Lightbulb,
 } from "lucide-react";
+import { VoxExamsLogo, VoxExamsWordmark } from "@/components/voxexams-logo";
 import type { Exam, ExamSubmission } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 
@@ -75,11 +75,9 @@ export default function StudentDashboard() {
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-5 w-5 text-amber-400" />
-            </div>
+            <VoxExamsLogo size={36} />
             <div>
-              <h1 className="font-semibold">VoxExams</h1>
+              <VoxExamsWordmark />
               <p className="text-xs text-muted-foreground">Student Dashboard</p>
             </div>
           </div>

@@ -8,7 +8,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GraduationCap, Mic, Brain, Shield, ArrowRight, UserCog, BookOpen, ChevronRight } from "lucide-react";
+import { Mic, Brain, Shield, ArrowRight, UserCog, BookOpen, ChevronRight } from "lucide-react";
+import { VoxExamsLogo, VoxExamsWordmark } from "@/components/voxexams-logo";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -125,10 +126,8 @@ export default function LandingPage() {
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-5 w-5 text-amber-400" />
-            </div>
-            <span className="font-semibold text-lg">VoxExams</span>
+            <VoxExamsLogo size={36} />
+            <VoxExamsWordmark />
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
@@ -187,9 +186,7 @@ export default function LandingPage() {
               <div className="relative w-full max-w-md aspect-square">
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent rounded-3xl" />
                 <div className="absolute inset-8 bg-card border rounded-2xl shadow-lg flex flex-col items-center justify-center gap-6 p-8">
-                  <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center">
-                    <GraduationCap className="h-10 w-10 text-primary" />
-                  </div>
+                  <VoxExamsLogo size={64} />
                   <div className="text-center space-y-2">
                     <h3 className="font-semibold text-lg">VoxExams Platform</h3>
                     <p className="text-sm text-muted-foreground">MCQ, Short Answer & Audio Responses</p>

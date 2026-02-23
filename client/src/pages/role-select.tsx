@@ -2,7 +2,8 @@ import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { GraduationCap, Users, BookOpen } from "lucide-react";
+import { Users, BookOpen } from "lucide-react";
+import { VoxExamsLogo, VoxExamsWordmark } from "@/components/voxexams-logo";
 import { useToast } from "@/hooks/use-toast";
 import type { User } from "@shared/schema";
 
@@ -35,9 +36,7 @@ export default function RoleSelect({ user }: RoleSelectProps) {
       <div className="w-full max-w-md space-y-8">
         <div className="text-center space-y-2">
           <div className="flex justify-center">
-            <div className="w-16 h-16 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-8 w-8 text-amber-400" />
-            </div>
+            <VoxExamsLogo size={64} />
           </div>
           <h1 className="text-3xl font-bold tracking-tight">Welcome!</h1>
           <p className="text-muted-foreground">
