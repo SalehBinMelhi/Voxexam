@@ -1,0 +1,189 @@
+VOXEXAMS – LOGO CREATION SPECIFICATION (Replit Ready)
+Brand Name
+
+VoxExams
+
+Industry
+
+AI-powered oral exam and voice assessment platform
+
+Brand Positioning
+
+VoxExams transforms oral assessments into structured, AI-powered, measurable performance systems.
+
+🎯 Brand Personality
+
+Intelligent
+
+Precise
+
+Modern
+
+Structured
+
+Trustworthy
+
+Calm but authoritative
+
+Technology-driven
+
+Not playful. Not academic. Not tutoring-style.
+
+🧠 Logo Concept Direction
+
+Create a minimalist, geometric logo symbol that represents:
+
+Voice
+
+Intelligence (AI)
+
+Structure
+
+Validation
+
+Precision
+
+The logo must feel like infrastructure-level technology, not a school brand.
+
+🔷 Symbol Design Instructions
+
+Create a geometric icon using:
+
+A rounded square container (clean, modern corners)
+
+Inside the square, construct a stylized letter “V”
+
+The “V” should be formed using subtle sound-wave curves
+
+The two lines forming the V must be symmetrical
+
+At the bottom center of the V, place a small circular node (representing AI intelligence)
+
+The shape should feel:
+
+Balanced
+
+Clean
+
+Mathematical
+
+Grid-based
+
+Minimal
+
+No gradients.
+No shadows.
+No 3D effects.
+Flat modern design only.
+
+🎨 Color System
+
+Primary Color:
+Deep Tech Indigo
+Hex: #4C3AFF
+
+Accent Color:
+Electric Cyan
+Hex: #00C2FF
+
+Neutral:
+Charcoal
+Hex: #1A1A1A
+
+Avoid:
+
+Yellow
+
+Bright playful colors
+
+Academic blues
+
+✍️ Typography Instructions
+
+Use a modern geometric sans-serif font.
+
+Recommended style:
+
+Manrope
+
+Sora
+
+Montserrat
+
+Poppins
+
+Wordmark styling:
+
+VoxExams
+
+“Vox” slightly bolder
+
+“Exams” slightly lighter weight
+
+No space between words
+
+Clean kerning
+
+Modern spacing
+
+Color treatment option:
+
+Vox in indigo
+
+Exams in charcoal
+
+🧩 Logo Variations Required
+
+Primary horizontal logo (icon left, wordmark right)
+
+Stacked version (icon above, text below)
+
+Icon-only version
+
+Monochrome black version
+
+Monochrome white version
+
+The logo must work at:
+
+16px
+
+32px
+
+128px
+
+Large scale
+
+🚫 Do NOT Include
+
+Graduation caps
+
+Books
+
+Microphones
+
+Headsets
+
+Literal sound icons
+
+Cartoon elements
+
+Complex detail
+
+Thin fragile lines
+
+Keep it timeless.
+
+🏗 Design Principle
+
+The logo must follow these rules:
+
+Simple
+Memorable
+Timeless
+Versatile
+Appropriate
+
+The logo should feel like:
+
+“OpenAI meets Grammarly meets institutional assessment infrastructure.”
