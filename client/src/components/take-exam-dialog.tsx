@@ -44,6 +44,7 @@ import { useToast } from "@/hooks/use-toast";
 
 interface AudioRecorderProps {
   questionId: string;
+  questionText: string;
   textValue: string;
   audioData: string;
   onTextChange: (text: string) => void;
@@ -52,7 +53,7 @@ interface AudioRecorderProps {
   onTranscriptChange: (transcript: string) => void;
 }
 
-function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudioChange, transcript, onTranscriptChange }: AudioRecorderProps) {
+function AudioRecorder({ questionId, questionText, textValue, audioData, onTextChange, onAudioChange, transcript, onTranscriptChange }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -140,7 +141,7 @@ function AudioRecorder({ questionId, textValue, audioData, onTextChange, onAudio
           const res = await fetch("/api/transcribe", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ audioData: base64Audio }),
+            body: JSON.stringify({ audioData: base64Audio, questionText }),
           });
           const data = await res.json();
           if (data.transcript) {
@@ -1058,6 +1059,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                 ) : currentQuestion.type === "audio" ? (
                   <AudioRecorder
                     questionId={currentQuestion.id}
+                    questionText={currentQuestion.text}
                     textValue={responses.get(currentQuestion.id) || ""}
                     audioData={audioResponses.get(currentQuestion.id) || ""}
                     onTextChange={handleResponseChange}

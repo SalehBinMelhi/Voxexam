@@ -32,7 +32,7 @@ const openai = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-export async function transcribeAudio(audioDataUrl: string): Promise<string> {
+export async function transcribeAudio(audioDataUrl: string, questionContext?: string): Promise<string> {
   try {
     console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
     
@@ -60,7 +60,8 @@ export async function transcribeAudio(audioDataUrl: string): Promise<string> {
     const { buffer: compatibleBuffer, format: compatibleFormat } = await ensureCompatibleFormat(audioBuffer);
     console.log("[AUDIO] Converted to compatible format:", compatibleFormat);
 
-    const transcription = await speechToText(compatibleBuffer, compatibleFormat);
+    const prompt = questionContext ? `The student is answering: "${questionContext}". Transcribe their spoken response accurately, using numbers and symbols where appropriate.` : undefined;
+    const transcription = await speechToText(compatibleBuffer, compatibleFormat, prompt);
 
     console.log("[AUDIO] Transcription result:", transcription);
     return transcription || "";
@@ -167,7 +168,7 @@ async function evaluateResponse(
   }
 
   if (question.type === "audio" && audioData && audioData.length > 0) {
-    const transcription = await transcribeAudio(audioData);
+    const transcription = await transcribeAudio(audioData, question.text);
     if (transcription) {
       const result = await evaluateWithAI(question, transcription, materialContext, customApiKey);
       return { ...result, transcript: transcription };

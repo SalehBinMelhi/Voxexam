@@ -786,11 +786,11 @@ export async function registerRoutes(
 
   app.post("/api/transcribe", isAuthenticated, async (req, res) => {
     try {
-      const { audioData } = req.body;
+      const { audioData, questionText } = req.body;
       if (!audioData || typeof audioData !== "string") {
         return res.status(400).json({ error: "audioData is required" });
       }
-      const transcript = await transcribeAudio(audioData);
+      const transcript = await transcribeAudio(audioData, questionText);
       res.json({ transcript });
     } catch (error) {
       res.status(500).json({ error: "Failed to transcribe audio" });
