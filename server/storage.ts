@@ -89,7 +89,7 @@ async function evaluateWithAI(
       ? `\nClass Materials Context (use this to assess the answer):\n${materialContext}\n`
       : "";
 
-    const prompt = `You are grading a student's answer to an oral exam question. You must provide TWO separate scores.
+    const prompt = `You are a fair, experienced university professor grading a student's oral exam answer. You must provide TWO independent scores. These scores should often be DIFFERENT from each other.
 ${materialSection}
 Question: ${question.text}
 
@@ -97,25 +97,33 @@ Expected Answer: ${question.correctAnswer || "No specific expected answer provid
 
 Student's Answer: ${response}
 
-Please evaluate with TWO scores, each from 0.0 to 1.0:
+Provide TWO scores from 0.0 to 1.0. These are INDEPENDENT dimensions — a student can score high on one and low on the other:
 
-1. CORRECTNESS SCORE: Is the answer factually correct?
-- 1.0 = Completely correct
-- 0.75-0.99 = Mostly correct with minor inaccuracies
-- 0.5-0.74 = Partially correct
-- 0.25-0.49 = Mostly incorrect
-- 0.0-0.24 = Wrong or no relevant content
+1. CORRECTNESS SCORE — Are the specific facts, terms, and claims accurate?
+Focus ONLY on factual precision. Ask: "Did the student state things that are true?"
+- 1.0 = All facts stated are accurate and complete
+- 0.8-0.9 = Core facts are right, one or two minor inaccuracies or omissions
+- 0.6-0.7 = Main idea is right but contains a factual error or significant omission
+- 0.4-0.5 = Mix of correct and incorrect claims
+- 0.1-0.3 = Mostly incorrect facts
+- 0.0 = Completely wrong or irrelevant
 
-2. UNDERSTANDING SCORE: Does the student demonstrate understanding of the subject?
-- 1.0 = Correct answer that fully addresses the question's complexity
-- 0.75-0.99 = Good understanding with clear reasoning
-- 0.5-0.74 = Partial understanding, missing key concepts
-- 0.25-0.49 = Superficial understanding, major gaps in reasoning
-- 0.0-0.24 = No demonstrated understanding
+2. UNDERSTANDING SCORE — Does the student genuinely grasp the underlying concept?
+Focus on conceptual comprehension, NOT polish or precision of wording. Ask: "Does this person actually understand how this works, even if they expressed it imperfectly?"
+- 0.9-1.0 = Clearly understands the concept — can explain the mechanism, give examples, show how things connect. Imprecise wording is OK if the reasoning is sound.
+- 0.7-0.8 = Good grasp of the concept with minor gaps in depth or nuance
+- 0.5-0.6 = Understands the basics but misses important aspects of why/how
+- 0.3-0.4 = Vague or superficial — seems to have heard of it but can't explain it
+- 0.0-0.2 = No demonstrated understanding
 
-IMPORTANT: For simple, objective, or factual questions (e.g., basic math, definitions, single-fact recall), a correct and concise answer IS sufficient proof of understanding. Do NOT penalize brevity when the question itself is straightforward — a short correct answer to a simple question deserves a high understanding score (0.9-1.0). Only expect detailed explanations for complex, analytical, or open-ended questions.
+KEY RULES:
+- These two scores SHOULD often differ. A student who understands the concept but states one wrong fact should get a HIGHER understanding score than correctness score.
+- A student who memorized the right answer without understanding should get a HIGHER correctness score than understanding score.
+- For oral/spoken answers: do NOT penalize informal language, repetition, filler words, or conversational tone. Students speak differently than they write. Focus on the substance.
+- For simple factual questions: a correct concise answer proves understanding (give 0.9-1.0 for understanding).
+- Be generous with understanding when the student demonstrates they grasp the core mechanism, even if their examples or terminology are slightly off.
 
-Respond with ONLY two numbers separated by a comma, like: 0.8,0.6
+Respond with ONLY two numbers separated by a comma, like: 0.7,0.85
 The first number is correctness, the second is understanding.`;
 
     const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
