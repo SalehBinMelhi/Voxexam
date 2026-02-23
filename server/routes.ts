@@ -431,12 +431,30 @@ export async function registerRoutes(
       const fileName = file.originalname || "unknown";
       const mimeType = file.mimetype || "";
 
-      if (mimeType === "application/pdf") {
+      if (mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")) {
+        // Try unpdf first (modern, handles more PDF types)
         try {
-          const pdfData = await pdf(file.buffer);
-          content = pdfData.text;
-        } catch {
-          return res.status(400).json({ error: "Could not parse PDF file" });
+          const { extractText, getDocumentProxy } = await import("unpdf");
+          const pdfDoc = await getDocumentProxy(new Uint8Array(file.buffer));
+          const { text } = await extractText(pdfDoc, { mergePages: true });
+          content = text || "";
+          console.log("[PDF] unpdf extracted", content.length, "chars");
+        } catch (unpdfError: any) {
+          console.error("[PDF] unpdf failed, trying pdf-parse fallback:", unpdfError?.message);
+          // Fallback to pdf-parse
+          try {
+            const pdfData = await pdf(file.buffer);
+            content = pdfData.text || "";
+            console.log("[PDF] pdf-parse extracted", content.length, "chars");
+          } catch (pdfParseError: any) {
+            console.error("[PDF] pdf-parse also failed:", pdfParseError?.message);
+          }
+        }
+
+        if (!content || content.trim().length === 0) {
+          return res.status(400).json({
+            error: "Could not read this PDF. It may be scanned, image-based, or password-protected. Try re-saving it as a new PDF, or convert it to a .docx or .txt file first."
+          });
         }
       } else if (fileName.endsWith(".docx") || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
         try {
