@@ -42,8 +42,8 @@ export default function LoginPage() {
       <div className="w-full max-w-md space-y-8">
         <div className="text-center space-y-2">
           <div className="flex justify-center">
-            <div className="w-16 h-16 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-8 w-8" style={{ color: "hsl(var(--brand-gold))" }} />
+            <div className="w-16 h-16 rounded-md flex items-center justify-center" style={{ backgroundColor: "hsl(var(--brand-logo-bg))" }}>
+              <GraduationCap className="h-8 w-8" style={{ color: "hsl(var(--brand-logo-fg))" }} />
             </div>
           </div>
           <h1 className="text-3xl font-bold tracking-tight">Oral Exam System</h1>

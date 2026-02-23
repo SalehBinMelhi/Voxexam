@@ -125,10 +125,10 @@ export default function LandingPage() {
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-5 w-5" style={{ color: "hsl(var(--brand-gold))" }} />
+            <div className="w-9 h-9 rounded-md flex items-center justify-center" style={{ backgroundColor: "hsl(var(--brand-logo-bg))" }}>
+              <GraduationCap className="h-5 w-5" style={{ color: "hsl(var(--brand-logo-fg))" }} />
             </div>
-            <span className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-purple))" }}>Vox</span>Exams</span>
+            <span className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-logo-fg))" }}>Vox</span>Exams</span>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
