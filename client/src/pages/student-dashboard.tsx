@@ -6,6 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TakeExamDialog } from "@/components/take-exam-dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { 
   LogOut, 
   Calendar, 
@@ -16,7 +21,8 @@ import {
   Play,
   CheckCircle2,
   AlertCircle,
-  Trophy
+  Trophy,
+  Lightbulb,
 } from "lucide-react";
 import type { Exam, ExamSubmission } from "@shared/schema";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
@@ -70,7 +76,7 @@ export default function StudentDashboard() {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-5 w-5 text-primary-foreground" />
+              <GraduationCap className="h-5 w-5 text-amber-400" />
             </div>
             <div>
               <h1 className="font-semibold">VoxExams</h1>
@@ -85,6 +91,26 @@ export default function StudentDashboard() {
             <span className="text-sm text-muted-foreground hidden sm:inline">
               {displayName}
             </span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="ghost" size="icon" data-testid="button-help">
+                  <Lightbulb className="h-4 w-4 text-amber-500" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm" align="end">
+                <div className="space-y-2">
+                  <p className="font-semibold">How to take an exam</p>
+                  <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                    <li>Find your exam under "Active Exams"</li>
+                    <li>Click "Take Exam" to begin</li>
+                    <li>Allow camera and screen sharing when prompted</li>
+                    <li>Answer each question — type, select, or record audio</li>
+                    <li>Navigate between questions freely</li>
+                    <li>Click "Submit" when done — you'll see your scores right away</li>
+                  </ol>
+                </div>
+              </PopoverContent>
+            </Popover>
             <ThemeToggle />
             <a href="/api/logout">
               <Button variant="ghost" size="icon" data-testid="button-logout">

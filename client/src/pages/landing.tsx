@@ -2,10 +2,102 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { GraduationCap, Mic, Brain, Shield, ArrowRight, UserCog, BookOpen } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { GraduationCap, Mic, Brain, Shield, ArrowRight, UserCog, BookOpen, ChevronRight } from "lucide-react";
+
+type FeatureKey = "audio" | "grading" | "management" | null;
+
+const featureDetails: Record<Exclude<FeatureKey, null>, { title: string; icon: typeof Mic; iconBg: string; iconColor: string; sections: { heading: string; text: string }[] }> = {
+  audio: {
+    title: "Audio Recording",
+    icon: Mic,
+    iconBg: "bg-primary/10",
+    iconColor: "text-primary",
+    sections: [
+      {
+        heading: "How It Works",
+        text: "When a professor creates an exam with audio-type questions, students see a microphone button. They click to record their verbal answer directly in the browser — no extra software needed.",
+      },
+      {
+        heading: "Speech-to-Text Transcription",
+        text: "Once the student finishes recording, the audio is sent to GPT-4o-mini-transcribe for automatic transcription. The question text is included as context so the AI can better understand subject-specific terminology.",
+      },
+      {
+        heading: "Format Handling",
+        text: "Different browsers record audio in different formats (WebM, OGG, etc.). The system automatically converts any format to WAV using ffmpeg before transcription, so it works reliably across all browsers.",
+      },
+      {
+        heading: "Grading",
+        text: "The transcribed text is then sent through the same AI grading pipeline as written answers — receiving both a correctness score and an understanding score. If transcription fails, a word-overlap fallback is used.",
+      },
+    ],
+  },
+  grading: {
+    title: "AI-Powered Grading",
+    icon: Brain,
+    iconBg: "bg-chart-2/10",
+    iconColor: "text-chart-2",
+    sections: [
+      {
+        heading: "Dual Scoring System",
+        text: "Every answer receives two independent scores: a Correctness Score (are the facts accurate?) and an Understanding Score (does the student truly grasp the concept?). These scores often differ — a student might understand the idea well but state a fact slightly wrong.",
+      },
+      {
+        heading: "How the AI Evaluates",
+        text: "GPT-4o-mini acts as a fair professor. It compares the student's answer against the expected answer and any uploaded class materials. For oral/spoken answers, it doesn't penalize informal language, repetition, or filler words.",
+      },
+      {
+        heading: "Class Materials as Context",
+        text: "Professors can upload course materials (PDF, Word, PowerPoint, Excel, TXT, etc.) per class. These materials are extracted and passed to the AI when grading, so answers are evaluated against what was actually taught — not just the textbook definition.",
+      },
+      {
+        heading: "MCQ vs. Open-Ended",
+        text: "Multiple-choice questions are graded by exact match (correct or incorrect). Short answer and audio questions go through the full AI evaluation pipeline. Professors can always manually override any score.",
+      },
+      {
+        heading: "Fallback Scoring",
+        text: "If the AI is unavailable, the system uses word-overlap scoring as a fallback — comparing common words between the student's answer and the expected answer. Scores are clearly labeled with how they were generated (AI, exact match, fallback, or manual).",
+      },
+    ],
+  },
+  management: {
+    title: "University Management",
+    icon: Shield,
+    iconBg: "bg-chart-4/10",
+    iconColor: "text-chart-4",
+    sections: [
+      {
+        heading: "University & Class Hierarchy",
+        text: "Professors create or join a university, then create classes within it. Each class can have its own set of students, uploaded materials, and exams. This keeps everything organized by course.",
+      },
+      {
+        heading: "Student Enrollment",
+        text: "Students can be added to classes by the professor (by name or email) or can self-enroll. When creating an exam, professors can assign individual students or bulk-add all enrolled class students with one click.",
+      },
+      {
+        heading: "Exam Scheduling",
+        text: "Exams can have optional start and end times. If scheduled, students can only take them during the active window. If left unscheduled, the exam is available immediately and stays open indefinitely.",
+      },
+      {
+        heading: "Submissions & Results",
+        text: "Professors see all submissions for their exams with summary statistics (average correctness, average understanding). They can expand each student's submission to see per-question scores, expected vs. actual answers, and AI-generated feedback with strengths, weak points, and study recommendations.",
+      },
+      {
+        heading: "Exam Proctoring",
+        text: "Before starting any exam, students must enable their webcam and share their screen. Both are recorded throughout the exam. The system also monitors for tab switches and flags suspicious activity. Professors can review recordings and proctoring alerts per submission.",
+      },
+    ],
+  },
+};
 
 export default function LandingPage() {
   const [loggingIn, setLoggingIn] = useState<string | null>(null);
+  const [activeFeature, setActiveFeature] = useState<FeatureKey>(null);
 
   const handleDemoLogin = async (role: "professor" | "student") => {
     setLoggingIn(role);
@@ -26,13 +118,15 @@ export default function LandingPage() {
     }
   };
 
+  const detail = activeFeature ? featureDetails[activeFeature] : null;
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-5 w-5 text-primary-foreground" />
+              <GraduationCap className="h-5 w-5 text-amber-400" />
             </div>
             <span className="font-semibold text-lg">VoxExams</span>
           </div>
@@ -116,7 +210,11 @@ export default function LandingPage() {
             <p className="text-muted-foreground">Everything you need for modern oral examinations</p>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
-            <Card className="group hover:shadow-md transition-shadow">
+            <Card
+              className="group hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => setActiveFeature("audio")}
+              data-testid="card-feature-audio"
+            >
               <CardContent className="p-6 space-y-4">
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                   <Mic className="h-6 w-6 text-primary" />
@@ -125,9 +223,16 @@ export default function LandingPage() {
                 <p className="text-sm text-muted-foreground">
                   Students record verbal answers with automatic speech-to-text transcription for accurate grading.
                 </p>
+                <p className="text-xs text-primary font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
+                  Learn more <ChevronRight className="h-3 w-3" />
+                </p>
               </CardContent>
             </Card>
-            <Card className="group hover:shadow-md transition-shadow">
+            <Card
+              className="group hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => setActiveFeature("grading")}
+              data-testid="card-feature-grading"
+            >
               <CardContent className="p-6 space-y-4">
                 <div className="w-12 h-12 bg-chart-2/10 rounded-lg flex items-center justify-center group-hover:bg-chart-2/20 transition-colors">
                   <Brain className="h-6 w-6 text-chart-2" />
@@ -136,9 +241,16 @@ export default function LandingPage() {
                 <p className="text-sm text-muted-foreground">
                   GPT-4o-mini evaluates answers semantically, providing fair scores with manual override options.
                 </p>
+                <p className="text-xs text-primary font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
+                  Learn more <ChevronRight className="h-3 w-3" />
+                </p>
               </CardContent>
             </Card>
-            <Card className="group hover:shadow-md transition-shadow">
+            <Card
+              className="group hover:shadow-md transition-shadow cursor-pointer"
+              onClick={() => setActiveFeature("management")}
+              data-testid="card-feature-management"
+            >
               <CardContent className="p-6 space-y-4">
                 <div className="w-12 h-12 bg-chart-4/10 rounded-lg flex items-center justify-center group-hover:bg-chart-4/20 transition-colors">
                   <Shield className="h-6 w-6 text-chart-4" />
@@ -146,6 +258,9 @@ export default function LandingPage() {
                 <h3 className="font-semibold text-lg">University Management</h3>
                 <p className="text-sm text-muted-foreground">
                   Organize exams by university and class. Manage students, enrollments, and submissions in one place.
+                </p>
+                <p className="text-xs text-primary font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
+                  Learn more <ChevronRight className="h-3 w-3" />
                 </p>
               </CardContent>
             </Card>
@@ -158,6 +273,29 @@ export default function LandingPage() {
           <p>VoxExams - Built for university oral examinations</p>
         </div>
       </footer>
+
+      <Dialog open={activeFeature !== null} onOpenChange={(open) => !open && setActiveFeature(null)}>
+        {detail && (
+          <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 ${detail.iconBg} rounded-lg flex items-center justify-center`}>
+                  <detail.icon className={`h-5 w-5 ${detail.iconColor}`} />
+                </div>
+                <DialogTitle className="text-xl">{detail.title}</DialogTitle>
+              </div>
+            </DialogHeader>
+            <div className="space-y-5 mt-2">
+              {detail.sections.map((section, i) => (
+                <div key={i} className="space-y-1.5">
+                  <h4 className="font-semibold text-sm">{section.heading}</h4>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{section.text}</p>
+                </div>
+              ))}
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 }
