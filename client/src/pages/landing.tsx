@@ -39,7 +39,7 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <a href="/api/login">
-              <Button variant="outline" data-testid="button-login">Sign In with Replit</Button>
+              <Button variant="outline" data-testid="button-login">Sign In</Button>
             </a>
           </div>
         </div>
