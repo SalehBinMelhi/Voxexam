@@ -40,7 +40,9 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const { toast } = useToast();
   const [title, setTitle] = useState("");
   const [questions, setQuestions] = useState<InsertQuestion[]>([]);
+  const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [endTime, setEndTime] = useState("");
   const [selectedClassId, setSelectedClassId] = useState("");
   const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
@@ -153,7 +155,9 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const resetForm = () => {
     setTitle("");
     setQuestions([]);
+    setStartDate("");
     setStartTime("");
+    setEndDate("");
     setEndTime("");
     setSelectedClassId("");
     setManualStudentNames([]);
@@ -279,8 +283,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     createExamMutation.mutate({
       title: title.trim(),
       questions,
-      startTime: startTime || null,
-      endTime: endTime || null,
+      startTime: startDate ? `${startDate}T${startTime || "00:00"}` : null,
+      endTime: endDate ? `${endDate}T${endTime || "23:59"}` : null,
       classId: selectedClassId && selectedClassId !== "none" ? selectedClassId : null,
       assignedStudentNames: manualStudentNames,
     });
@@ -379,26 +383,44 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
               </div>
             )}
 
-            <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-3">
               <div className="space-y-2">
-                <Label htmlFor="start-time">Start Time</Label>
-                <Input
-                  id="start-time"
-                  type="datetime-local"
-                  value={startTime}
-                  onChange={(e) => setStartTime(e.target.value)}
-                  data-testid="input-start-time"
-                />
+                <Label>Start (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="flex-1"
+                    data-testid="input-start-date"
+                  />
+                  <Input
+                    type="time"
+                    value={startTime}
+                    onChange={(e) => setStartTime(e.target.value)}
+                    className="w-[120px]"
+                    data-testid="input-start-time"
+                  />
+                </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="end-time">End Time</Label>
-                <Input
-                  id="end-time"
-                  type="datetime-local"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                  data-testid="input-end-time"
-                />
+                <Label>End (optional)</Label>
+                <div className="flex gap-2">
+                  <Input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="flex-1"
+                    data-testid="input-end-date"
+                  />
+                  <Input
+                    type="time"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                    className="w-[120px]"
+                    data-testid="input-end-time"
+                  />
+                </div>
               </div>
             </div>
 
