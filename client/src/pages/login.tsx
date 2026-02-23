@@ -6,8 +6,7 @@ import { Label } from "@/components/ui/label";
 import { useAuth } from "@/lib/auth-context";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Users, BookOpen } from "lucide-react";
-import { VoxExamsLogo, VoxExamsWordmark } from "@/components/voxexams-logo";
+import { GraduationCap, Users, BookOpen } from "lucide-react";
 import type { User, UserRole } from "@shared/schema";
 
 export default function LoginPage() {
@@ -43,9 +42,11 @@ export default function LoginPage() {
       <div className="w-full max-w-md space-y-8">
         <div className="text-center space-y-2">
           <div className="flex justify-center">
-            <VoxExamsLogo size={64} />
+            <div className="w-16 h-16 bg-primary rounded-md flex items-center justify-center">
+              <GraduationCap className="h-8 w-8 text-amber-400" />
+            </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight"><VoxExamsWordmark className="text-3xl" /></h1>
+          <h1 className="text-3xl font-bold tracking-tight">Oral Exam System</h1>
           <p className="text-muted-foreground">
             Welcome to the university oral examination platform
           </p>

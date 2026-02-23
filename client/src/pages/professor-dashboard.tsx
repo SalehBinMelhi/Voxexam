@@ -32,13 +32,12 @@ import {
 } from "@/components/ui/popover";
 import {
   LogOut,
-  Building2,
+  GraduationCap,
   Settings,
   FileQuestion,
   Layers,
   Lightbulb,
 } from "lucide-react";
-import { VoxExamsLogo, VoxExamsWordmark } from "@/components/voxexams-logo";
 import type { University } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
@@ -111,9 +110,11 @@ export default function ProfessorDashboard() {
       <header className="border-b bg-card sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <VoxExamsLogo size={36} />
+            <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
+              <GraduationCap className="h-5 w-5 text-amber-400" />
+            </div>
             <div>
-              <VoxExamsWordmark />
+              <h1 className="font-semibold">VoxExams</h1>
               <p className="text-xs text-muted-foreground">Professor Dashboard</p>
             </div>
           </div>
@@ -210,7 +211,7 @@ export default function ProfessorDashboard() {
               {user?.universityId && userUniversity ? (
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary" className="text-sm" data-testid="badge-university">
-                    <Building2 className="h-3.5 w-3.5 mr-1" />
+                    <GraduationCap className="h-3.5 w-3.5 mr-1" />
                     {userUniversity.name}
                   </Badge>
                 </div>

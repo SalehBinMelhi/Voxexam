@@ -51,6 +51,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Layers,
+  GraduationCap,
   BarChart3,
 } from "lucide-react";
 import type { InsertQuestion, QuestionType, Exam, ExamSubmission, Class, ClassMaterial, User as UserType } from "@shared/schema";
