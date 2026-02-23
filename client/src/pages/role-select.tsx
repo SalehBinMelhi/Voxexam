@@ -36,7 +36,7 @@ export default function RoleSelect({ user }: RoleSelectProps) {
         <div className="text-center space-y-2">
           <div className="flex justify-center">
             <div className="w-16 h-16 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-8 w-8 text-amber-400" />
+              <GraduationCap className="h-8 w-8" style={{ color: "hsl(var(--brand-gold))" }} />
             </div>
           </div>
           <h1 className="text-3xl font-bold tracking-tight">Welcome!</h1>

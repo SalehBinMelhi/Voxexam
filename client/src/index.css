@@ -58,6 +58,9 @@
   --chart-4: 200 65% 50%;
   --chart-5: 350 75% 55%;
 
+  --brand-purple: 272 70% 32%;
+  --brand-gold: 40 88% 42%;
+
   --font-sans: 'Inter', sans-serif;
   --font-serif: Georgia, serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -149,6 +152,9 @@
   --chart-3: 162 50% 45%;
   --chart-4: 200 60% 55%;
   --chart-5: 350 70% 58%;
+
+  --brand-purple: 270 65% 58%;
+  --brand-gold: 42 90% 55%;
 
   --shadow-2xs: 0 1px 2px 0 rgba(0,0,0,.2);
   --shadow-xs: 0 1px 3px 0 rgba(0,0,0,.25);

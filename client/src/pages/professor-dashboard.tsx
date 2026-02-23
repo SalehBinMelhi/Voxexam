@@ -111,10 +111,10 @@ export default function ProfessorDashboard() {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-primary rounded-md flex items-center justify-center">
-              <GraduationCap className="h-5 w-5 text-amber-400" />
+              <GraduationCap className="h-5 w-5" style={{ color: "hsl(var(--brand-gold))" }} />
             </div>
             <div>
-              <h1 className="font-semibold"><span className="text-primary dark:text-amber-400">Vox</span>Exams</h1>
+              <h1 className="font-semibold"><span style={{ color: "hsl(var(--brand-purple))" }}>Vox</span>Exams</h1>
               <p className="text-xs text-muted-foreground">Professor Dashboard</p>
             </div>
           </div>
