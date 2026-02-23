@@ -1,8 +1,11 @@
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { useToast } from "@/hooks/use-toast";
 import {
   LineChart,
   Line,
@@ -29,7 +32,7 @@ import {
   Shield,
   Video,
 } from "lucide-react";
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, Sparkles } from "lucide-react";
 import type { Exam, ExamSubmission, Question } from "@shared/schema";
 import { TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 import { format, parseISO } from "date-fns";
@@ -76,8 +79,24 @@ function getGradingMethodVariant(method: string): "default" | "secondary" | "out
 }
 
 export function StudentDetailPanel({ studentId, studentName, exams, submissions, onClose }: StudentDetailPanelProps) {
+  const { toast } = useToast();
   const [graphMode, setGraphMode] = useState<GraphMode>("both");
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
+  const [proctoringAnalysis, setProctoringAnalysis] = useState<Record<string, string>>({});
+
+  const analyzeProctoring = useMutation({
+    mutationFn: async (submissionId: string) => {
+      const response = await apiRequest("POST", `/api/submissions/${submissionId}/analyze-proctoring`);
+      const data = await response.json();
+      return { submissionId, analysis: data.analysis as string };
+    },
+    onSuccess: (data) => {
+      setProctoringAnalysis(prev => ({ ...prev, [data.submissionId]: data.analysis }));
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to run proctoring analysis", variant: "destructive" });
+    },
+  });
 
   const studentSubs = submissions
     .filter(s => s.studentId === studentId && s.isPreview !== "true")
@@ -483,6 +502,33 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
                                 </p>
                               )}
                             </div>
+
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => analyzeProctoring.mutate(sub.id)}
+                                disabled={analyzeProctoring.isPending}
+                                data-testid={`button-analyze-proctoring-${sub.id}`}
+                              >
+                                <Sparkles className="h-3 w-3 mr-1" />
+                                {analyzeProctoring.isPending && analyzeProctoring.variables === sub.id ? "Analyzing..." : "AI Analysis"}
+                              </Button>
+                            </div>
+
+                            {proctoringAnalysis[sub.id] && (
+                              <div className={`p-3 rounded-md border space-y-1 ${
+                                proctoringAnalysis[sub.id].includes("[HIGH RISK]") ? "border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-950/30" :
+                                proctoringAnalysis[sub.id].includes("[MODERATE RISK]") ? "border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30" :
+                                "border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950/30"
+                              }`}>
+                                <p className="text-xs font-medium flex items-center gap-1">
+                                  <Sparkles className="h-3 w-3" />
+                                  AI Proctoring Analysis
+                                </p>
+                                <p className="text-sm">{proctoringAnalysis[sub.id]}</p>
+                              </div>
+                            )}
 
                             {hasProctoring && (
                               <div className="space-y-2">

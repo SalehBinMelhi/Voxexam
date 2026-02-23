@@ -359,6 +359,70 @@ export async function analyzeProctoringScreenshot(
   }
 }
 
+export async function analyzeProctoringPatterns(
+  examTitle: string,
+  questions: Array<{ text: string; correctAnswer?: string }>,
+  responses: Array<{ questionId: string; response: string }>,
+  scores: Record<string, number>,
+  proctoringFlags: Array<{ type: string; timestamp: string; durationAway?: number; aiVerdict?: string }>,
+  tabSwitchCount: number,
+  customApiKey?: string | null
+): Promise<string> {
+  try {
+    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+
+    const flagSummary = proctoringFlags.map((f, i) => {
+      const parts = [`Switch #${i + 1} at ${f.timestamp}`];
+      if (f.durationAway) parts.push(`(away ${f.durationAway}s)`);
+      if (f.aiVerdict) parts.push(`- ${f.aiVerdict}`);
+      return parts.join(" ");
+    }).join("\n");
+
+    const qaSummary = questions.map((q, i) => {
+      const resp = responses.find(r => r.questionId === (q as any).id);
+      const score = scores[(q as any).id] ?? "N/A";
+      const scoreStr = typeof score === "number" ? (score * 100).toFixed(0) + "%" : String(score);
+      return "Q" + (i + 1) + ': "' + q.text + '"\nAnswer: "' + (resp?.response || "(no answer)") + '"\nScore: ' + scoreStr;
+    }).join("\n\n");
+
+    const totalAway = proctoringFlags.reduce((sum, f) => sum + (f.durationAway || 0), 0);
+
+    const prompt = `You are an exam integrity analyst. Review this student's exam submission for signs of cheating.
+
+EXAM: "${examTitle}"
+TAB SWITCHES: ${tabSwitchCount} total (${Math.round(totalAway)}s total time away from exam)
+
+TAB SWITCH DETAILS:
+${flagSummary || "No detailed events recorded"}
+
+QUESTIONS AND ANSWERS:
+${qaSummary}
+
+Analyze the patterns:
+1. Do tab switches correlate with difficult questions or sudden answer improvements?
+2. Is the time away consistent with looking up answers?
+3. Are answers suspiciously detailed or accurate given the student left the exam?
+
+Provide a SHORT assessment (3-4 sentences max) with one of these verdicts:
+- "LOW RISK" - Tab switches appear incidental (e.g., brief, during easy questions)
+- "MODERATE RISK" - Some suspicious patterns but inconclusive
+- "HIGH RISK" - Strong indicators of potential cheating (e.g., long absences before correct answers to hard questions)
+
+Format: Start with the verdict in brackets like [HIGH RISK], then explain briefly.`;
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 200,
+      temperature: 0.1,
+    });
+    return completion.choices[0]?.message?.content?.trim() || "Analysis unavailable";
+  } catch (error) {
+    console.error("[PROCTORING] AI pattern analysis failed:", error);
+    return "AI analysis unavailable - could not connect to the AI service.";
+  }
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;

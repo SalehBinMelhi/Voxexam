@@ -10,7 +10,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback, analyzeProctoringScreenshot } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 
@@ -950,6 +950,57 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Failed to process proctoring data:", error);
       res.status(500).json({ error: "Failed to process proctoring data" });
+    }
+  });
+
+  app.post("/api/submissions/:id/analyze-proctoring", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const submissionId = p(req.params.id);
+      const submission = await storage.getSubmission(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const exam = await storage.getExam(submission.examId);
+      if (!exam) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+
+      if (exam.professorId !== userId) {
+        return res.status(403).json({ error: "Only the exam professor can run proctoring analysis" });
+      }
+
+      const proctoringFlags = (submission.proctoringFlags as any[]) || [];
+      const tabSwitchCount = submission.tabSwitchCount || proctoringFlags.length || 0;
+
+      if (tabSwitchCount === 0 && proctoringFlags.length === 0) {
+        return res.json({ analysis: "No tab switches detected — no proctoring concerns." });
+      }
+
+      let customApiKey: string | null = null;
+      if (exam.classId) {
+        const cls = await storage.getClass(exam.classId);
+        if (cls?.universityId) {
+          const uni = await storage.getUniversity(cls.universityId);
+          if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+        }
+      }
+
+      const analysis = await analyzeProctoringPatterns(
+        exam.title,
+        exam.questions,
+        submission.responses,
+        submission.scores,
+        proctoringFlags,
+        tabSwitchCount,
+        customApiKey
+      );
+
+      res.json({ analysis });
+    } catch (error) {
+      console.error("Failed to analyze proctoring:", error);
+      res.status(500).json({ error: "Failed to analyze proctoring patterns" });
     }
   });
 
