@@ -1,6 +1,7 @@
 import OpenAI, { toFile } from "openai";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "./db";
+import { pool } from "./db";
 import {
   users,
   universities,
@@ -24,6 +25,11 @@ import {
   type GradingMethod,
   type ClassMaterial,
   type InsertClassMaterial,
+  type StudentPerformanceRadar,
+  type QuestionTypeBreakdown,
+  type PerformanceTrend,
+  type GradingMethodDistribution,
+  type SubmissionTimelineEntry,
 } from "@shared/schema";
 import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
@@ -868,6 +874,201 @@ export class DatabaseStorage implements IStorage {
 
     return updated || undefined;
   }
+}
+
+export async function computeStudentRadar(studentId: string, filterExamIds?: string[]): Promise<StudentPerformanceRadar> {
+  const examFilter = filterExamIds && filterExamIds.length > 0
+    ? `AND s.exam_id = ANY($2)`
+    : "";
+  const params: any[] = [studentId];
+  if (filterExamIds && filterExamIds.length > 0) {
+    params.push(filterExamIds);
+  }
+
+  const summaryQuery = `
+    SELECT
+      COUNT(*)::int AS total_submissions,
+      COALESCE(AVG(s.total_score), 0) AS avg_correctness,
+      COALESCE(AVG(s.total_understanding_score), 0) AS avg_understanding,
+      COALESCE(AVG(s.tab_switch_count), 0) AS avg_tab_switches,
+      COUNT(*) FILTER (WHERE s.is_suspicious = 'true')::int AS suspicious_count
+    FROM submissions s
+    WHERE s.student_id = $1
+      AND s.is_preview = 'false'
+      ${examFilter}
+  `;
+
+  const timelineQuery = `
+    SELECT
+      s.id AS submission_id,
+      s.exam_id,
+      e.title AS exam_title,
+      s.total_score AS correctness_score,
+      COALESCE(s.total_understanding_score, s.total_score) AS understanding_score,
+      s.submitted_at,
+      s.scores,
+      s.understanding_scores,
+      s.grading_methods,
+      e.questions
+    FROM submissions s
+    JOIN exams e ON e.id = s.exam_id
+    WHERE s.student_id = $1
+      AND s.is_preview = 'false'
+      ${examFilter}
+    ORDER BY s.submitted_at ASC
+  `;
+
+  const [summaryResult, timelineResult] = await Promise.all([
+    pool.query(summaryQuery, params),
+    pool.query(timelineQuery, params),
+  ]);
+
+  const summary = summaryResult.rows[0] || {
+    total_submissions: 0,
+    avg_correctness: 0,
+    avg_understanding: 0,
+    avg_tab_switches: 0,
+    suspicious_count: 0,
+  };
+
+  const totalSubmissions: number = summary.total_submissions;
+
+  if (totalSubmissions === 0) {
+    return {
+      studentId,
+      totalSubmissions: 0,
+      avgCorrectness: 0,
+      avgUnderstanding: 0,
+      questionTypeBreakdown: [],
+      strongestArea: null,
+      weakestArea: null,
+      trend: null,
+      gradingMethodDistribution: { ai: 0, exact: 0, fallback: 0, manual: 0, total: 0, fallbackRatio: 0 },
+      integrityRiskLevel: "low",
+      suspiciousSubmissionCount: 0,
+      avgTabSwitchCount: 0,
+      submissionTimeline: [],
+    };
+  }
+
+  const timeline: SubmissionTimelineEntry[] = timelineResult.rows.map((row: any) => ({
+    submissionId: row.submission_id,
+    examId: row.exam_id,
+    examTitle: row.exam_title,
+    correctnessScore: parseFloat(row.correctness_score) || 0,
+    understandingScore: parseFloat(row.understanding_score) || 0,
+    submittedAt: row.submitted_at,
+  }));
+
+  const typeAccum: Record<string, { totalC: number; totalU: number; count: number }> = {};
+  const methodAccum: Record<string, number> = { ai: 0, exact: 0, fallback: 0, manual: 0 };
+  let totalGradedQuestions = 0;
+
+  for (const row of timelineResult.rows) {
+    const questions: any[] = row.questions || [];
+    const scores: Record<string, number> = row.scores || {};
+    const uScores: Record<string, number> = row.understanding_scores || {};
+    const methods: Record<string, string> = row.grading_methods || {};
+
+    for (const q of questions) {
+      const qId = q.id;
+      const qType = q.type || "short";
+      const cScore = scores[qId];
+      const uScore = uScores[qId];
+
+      if (cScore === undefined) continue;
+
+      if (!typeAccum[qType]) {
+        typeAccum[qType] = { totalC: 0, totalU: 0, count: 0 };
+      }
+      typeAccum[qType].totalC += cScore;
+      typeAccum[qType].totalU += (uScore ?? cScore);
+      typeAccum[qType].count += 1;
+
+      const method = methods[qId] || "ai";
+      if (method in methodAccum) {
+        methodAccum[method] += 1;
+      }
+      totalGradedQuestions += 1;
+    }
+  }
+
+  const questionTypeBreakdown: QuestionTypeBreakdown[] = Object.entries(typeAccum).map(
+    ([type, acc]) => ({
+      type: type as any,
+      avgCorrectness: acc.count > 0 ? acc.totalC / acc.count : 0,
+      avgUnderstanding: acc.count > 0 ? acc.totalU / acc.count : 0,
+      count: acc.count,
+    })
+  );
+
+  let strongestArea: QuestionTypeBreakdown | null = null;
+  let weakestArea: QuestionTypeBreakdown | null = null;
+  if (questionTypeBreakdown.length > 0) {
+    const sorted = [...questionTypeBreakdown].sort(
+      (a, b) => (a.avgCorrectness + a.avgUnderstanding) - (b.avgCorrectness + b.avgUnderstanding)
+    );
+    weakestArea = sorted[0];
+    strongestArea = sorted[sorted.length - 1];
+    if (sorted.length === 1) {
+      strongestArea = sorted[0];
+      weakestArea = sorted[0];
+    }
+  }
+
+  let trend: PerformanceTrend | null = null;
+  if (timeline.length >= 3) {
+    const first3 = timeline.slice(0, 3);
+    const last3 = timeline.slice(-3);
+    const f3c = first3.reduce((s, e) => s + e.correctnessScore, 0) / 3;
+    const f3u = first3.reduce((s, e) => s + e.understandingScore, 0) / 3;
+    const l3c = last3.reduce((s, e) => s + e.correctnessScore, 0) / 3;
+    const l3u = last3.reduce((s, e) => s + e.understandingScore, 0) / 3;
+    const cChange = l3c - f3c;
+    const uChange = l3u - f3u;
+    const avgChange = (cChange + uChange) / 2;
+    const direction: PerformanceTrend["direction"] =
+      avgChange > 0.05 ? "improving" : avgChange < -0.05 ? "declining" : "stable";
+    trend = {
+      firstThreeAvgCorrectness: f3c,
+      firstThreeAvgUnderstanding: f3u,
+      lastThreeAvgCorrectness: l3c,
+      lastThreeAvgUnderstanding: l3u,
+      correctnessChange: cChange,
+      understandingChange: uChange,
+      direction,
+    };
+  }
+
+  const gradingMethodDistribution: GradingMethodDistribution = {
+    ai: methodAccum.ai,
+    exact: methodAccum.exact,
+    fallback: methodAccum.fallback,
+    manual: methodAccum.manual,
+    total: totalGradedQuestions,
+    fallbackRatio: totalGradedQuestions > 0 ? methodAccum.fallback / totalGradedQuestions : 0,
+  };
+
+  const suspiciousCount: number = summary.suspicious_count;
+  const suspiciousRatio = totalSubmissions > 0 ? suspiciousCount / totalSubmissions : 0;
+  const integrityRiskLevel: StudentPerformanceRadar["integrityRiskLevel"] =
+    suspiciousRatio >= 0.5 ? "high" : suspiciousRatio >= 0.2 ? "moderate" : "low";
+
+  return {
+    studentId,
+    totalSubmissions,
+    avgCorrectness: parseFloat(summary.avg_correctness) || 0,
+    avgUnderstanding: parseFloat(summary.avg_understanding) || 0,
+    questionTypeBreakdown,
+    strongestArea,
+    weakestArea,
+    trend,
+    gradingMethodDistribution,
+    integrityRiskLevel,
+    suspiciousSubmissionCount: suspiciousCount,
+    avgTabSwitchCount: parseFloat(summary.avg_tab_switches) || 0,
+    submissionTimeline: timeline,
+  };
 }
 
 export const storage = new DatabaseStorage();

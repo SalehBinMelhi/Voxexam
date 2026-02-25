@@ -10,7 +10,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 
@@ -1072,6 +1072,86 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Failed to analyze proctoring:", error);
       res.status(500).json({ error: "Failed to analyze proctoring patterns" });
+    }
+  });
+
+  app.get("/api/students/:id/performance-radar", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can access performance radar" });
+      }
+
+      const studentId = p(req.params.id);
+      const student = await storage.getUser(studentId);
+      if (!student) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+
+      const radar = await computeStudentRadar(studentId);
+      res.json(radar);
+    } catch (error) {
+      console.error("Failed to compute student performance radar:", error);
+      res.status(500).json({ error: "Failed to compute performance radar" });
+    }
+  });
+
+  app.get("/api/classes/:id/performance-radar", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can access class performance radar" });
+      }
+
+      const classId = p(req.params.id);
+      const cls = await storage.getClass(classId);
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      if (cls.professorId !== userId) {
+        return res.status(403).json({ error: "You can only view performance data for your own classes" });
+      }
+
+      const classExams = await storage.getExamsByClass(classId);
+      const classExamIds = classExams.map(e => e.id);
+
+      if (classExamIds.length === 0) {
+        return res.json([]);
+      }
+
+      const enrollmentsList = await storage.getEnrollmentsByClass(classId);
+      const roster = cls.roster || [];
+      const allUsers = await storage.getAllUsers();
+
+      const studentIds = new Set<string>();
+      for (const enrollment of enrollmentsList) {
+        studentIds.add(enrollment.studentId);
+      }
+      for (const exam of classExams) {
+        for (const sid of (exam.assignedStudentIds || [])) {
+          studentIds.add(sid);
+        }
+      }
+      for (const rosterName of roster) {
+        const matched = allUsers.find(
+          u => u.role === "student" &&
+            ((u.firstName + " " + u.lastName).toLowerCase() === rosterName.toLowerCase() ||
+             u.email?.toLowerCase() === rosterName.toLowerCase())
+        );
+        if (matched) studentIds.add(matched.id);
+      }
+
+      const radars = await Promise.all(
+        Array.from(studentIds).map(sid => computeStudentRadar(sid, classExamIds))
+      );
+
+      const nonEmpty = radars.filter(r => r.totalSubmissions > 0);
+      res.json(nonEmpty);
+    } catch (error) {
+      console.error("Failed to compute class performance radar:", error);
+      res.status(500).json({ error: "Failed to compute class performance radar" });
     }
   });
 

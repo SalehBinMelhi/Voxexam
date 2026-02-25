@@ -194,3 +194,54 @@ export const examsRelations = relations(exams, ({ one, many }) => ({
 export const submissionsRelations = relations(submissions, ({ one }) => ({
   exam: one(exams, { fields: [submissions.examId], references: [exams.id] }),
 }));
+
+export interface QuestionTypeBreakdown {
+  type: QuestionType;
+  avgCorrectness: number;
+  avgUnderstanding: number;
+  count: number;
+}
+
+export interface SubmissionTimelineEntry {
+  submissionId: string;
+  examId: string;
+  examTitle: string;
+  correctnessScore: number;
+  understandingScore: number;
+  submittedAt: string;
+}
+
+export interface PerformanceTrend {
+  firstThreeAvgCorrectness: number;
+  firstThreeAvgUnderstanding: number;
+  lastThreeAvgCorrectness: number;
+  lastThreeAvgUnderstanding: number;
+  correctnessChange: number;
+  understandingChange: number;
+  direction: "improving" | "declining" | "stable";
+}
+
+export interface GradingMethodDistribution {
+  ai: number;
+  exact: number;
+  fallback: number;
+  manual: number;
+  total: number;
+  fallbackRatio: number;
+}
+
+export interface StudentPerformanceRadar {
+  studentId: string;
+  totalSubmissions: number;
+  avgCorrectness: number;
+  avgUnderstanding: number;
+  questionTypeBreakdown: QuestionTypeBreakdown[];
+  strongestArea: QuestionTypeBreakdown | null;
+  weakestArea: QuestionTypeBreakdown | null;
+  trend: PerformanceTrend | null;
+  gradingMethodDistribution: GradingMethodDistribution;
+  integrityRiskLevel: "low" | "moderate" | "high";
+  suspiciousSubmissionCount: number;
+  avgTabSwitchCount: number;
+  submissionTimeline: SubmissionTimelineEntry[];
+}
