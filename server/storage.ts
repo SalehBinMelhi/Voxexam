@@ -622,6 +622,15 @@ export interface IStorage {
   // Class join code
   getClassByJoinCode(code: string): Promise<Class | undefined>;
   regenerateClassJoinCode(classId: string): Promise<Class | undefined>;
+
+  // Analytics
+  getExamAnalytics(examId: string): Promise<{
+    examId: string;
+    totalStudents: number;
+    avgCorrectness: number;
+    avgUnderstanding: number;
+    students: { studentId: string; name: string | null; avgCorrectness: number; avgUnderstanding: number }[];
+  }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1000,6 +1009,57 @@ export class DatabaseStorage implements IStorage {
     const newCode = await generateClassJoinCode();
     const [updated] = await db.update(classes).set({ joinCode: newCode }).where(eq(classes.id, classId)).returning();
     return updated || undefined;
+  }
+
+  async getExamAnalytics(examId: string) {
+    const allSubs = await db.select().from(submissions).where(eq(submissions.examId, examId));
+    const realSubs = allSubs.filter(s => s.isPreview !== "true" && !s.studentId.startsWith("demo-"));
+
+    if (realSubs.length === 0) {
+      return { examId, totalStudents: 0, avgCorrectness: 0, avgUnderstanding: 0, students: [] };
+    }
+
+    const studentMap = new Map<string, { scores: number[]; understandingScores: number[] }>();
+    for (const sub of realSubs) {
+      if (!studentMap.has(sub.studentId)) {
+        studentMap.set(sub.studentId, { scores: [], understandingScores: [] });
+      }
+      const entry = studentMap.get(sub.studentId)!;
+      entry.scores.push(sub.totalScore ?? 0);
+      entry.understandingScores.push(sub.totalUnderstandingScore ?? 0);
+    }
+
+    const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+
+    const allCorrectness = realSubs.map(s => s.totalScore ?? 0);
+    const allUnderstanding = realSubs.map(s => s.totalUnderstandingScore ?? 0);
+
+    const studentIds = Array.from(studentMap.keys());
+    const userLookups = await Promise.all(studentIds.map(id => this.getUser(id)));
+    const userNameMap = new Map<string, string | null>();
+    for (let i = 0; i < studentIds.length; i++) {
+      const u = userLookups[i];
+      const name = u ? `${u.firstName || ""} ${u.lastName || ""}`.trim() || null : null;
+      userNameMap.set(studentIds[i], name);
+    }
+
+    const students = studentIds.map(sid => {
+      const data = studentMap.get(sid)!;
+      return {
+        studentId: sid,
+        name: userNameMap.get(sid) || null,
+        avgCorrectness: Math.round(avg(data.scores) * 100) / 100,
+        avgUnderstanding: Math.round(avg(data.understandingScores) * 100) / 100,
+      };
+    });
+
+    return {
+      examId,
+      totalStudents: studentIds.length,
+      avgCorrectness: Math.round(avg(allCorrectness) * 100) / 100,
+      avgUnderstanding: Math.round(avg(allUnderstanding) * 100) / 100,
+      students,
+    };
   }
 }
 

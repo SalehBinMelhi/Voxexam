@@ -44,7 +44,7 @@ The application is a full-stack web platform built with a React, TypeScript, Vit
 - **Student Exam Workflow:** Students can view assigned exams, take them, record audio responses, and receive immediate dual scores (correctness and understanding) with AI feedback.
 - **Grading:** Dual AI grading provides both correctness and understanding scores. Manual override for professor adjustments.
 - **Class Materials:** Upload and processing of various document types (PDF, TXT, MD, CSV, DOCX, PPTX, XLSX) to provide AI with contextual information for grading.
-- **Performance Analytics:** Professors have access to student performance radar charts, score trends, and detailed submission breakdowns, including proctoring alerts.
+- **Performance Analytics:** Professors have access to student performance radar charts, score trends, and detailed submission breakdowns, including proctoring alerts. Exam-level analytics available via `GET /api/exams/:id/analytics` with per-student correctness/understanding breakdowns and CSV export.
 - **Session Management:** Demo sessions are isolated using `demo_session_id` cookies.
 
 ## External Dependencies

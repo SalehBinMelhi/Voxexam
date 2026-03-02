@@ -634,6 +634,28 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/exams/:id/analytics", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || (user.role !== "professor" && user.role !== "admin")) {
+        return res.status(403).json({ error: "Professor or admin access required" });
+      }
+      const exam = await storage.getExam(p(req.params.id));
+      if (!exam) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+      if (user.role === "professor" && exam.professorId !== userId) {
+        return res.status(403).json({ error: "Not authorized to view this exam's analytics" });
+      }
+      const analytics = await storage.getExamAnalytics(exam.id);
+      res.json(analytics);
+    } catch (error) {
+      console.error("Failed to fetch exam analytics:", error);
+      res.status(500).json({ error: "Failed to fetch exam analytics" });
+    }
+  });
+
   app.post("/api/exams", isAuthenticated, async (req, res) => {
     try {
       const parseResult = insertExamSchema.safeParse(req.body);

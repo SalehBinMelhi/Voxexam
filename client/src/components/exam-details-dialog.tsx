@@ -38,6 +38,8 @@ import {
   Copy,
   RefreshCw,
   Key,
+  Download,
+  BarChart3,
 } from "lucide-react";
 import { ShieldAlert } from "lucide-react";
 import type { Exam, ExamSubmission, QuestionType, User as UserType, ProctoringFlag } from "@shared/schema";
@@ -75,6 +77,143 @@ function getScoreColor(score: number) {
   if (score >= 0.8) return "text-green-600 dark:text-green-400";
   if (score >= 0.6) return "text-yellow-600 dark:text-yellow-400";
   return "text-red-600 dark:text-red-400";
+}
+
+interface ExamAnalytics {
+  examId: string;
+  totalStudents: number;
+  avgCorrectness: number;
+  avgUnderstanding: number;
+  students: { studentId: string; name: string | null; avgCorrectness: number; avgUnderstanding: number }[];
+}
+
+function AnalyticsSection({ examId, examTitle }: { examId: string; examTitle: string }) {
+  const { data: analytics, isLoading, isError } = useQuery<ExamAnalytics>({
+    queryKey: ["/api/exams", examId, "analytics"],
+    retry: false,
+  });
+
+  const handleExportCsv = () => {
+    if (!analytics || analytics.students.length === 0) return;
+    const header = "studentId,name,avgCorrectness,avgUnderstanding";
+    const rows = analytics.students.map(s =>
+      `${s.studentId},"${(s.name || "").replace(/"/g, '""')}",${s.avgCorrectness},${s.avgUnderstanding}`
+    );
+    const csv = [header, ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${examTitle.replace(/[^a-zA-Z0-9]/g, "_")}-analytics.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3" data-testid="section-analytics">
+        <h4 className="text-sm font-medium flex items-center gap-2">
+          <BarChart3 className="h-4 w-4" />
+          Analytics
+        </h4>
+        <div className="space-y-2">
+          <div className="h-4 w-48 bg-muted animate-pulse rounded" />
+          <div className="h-32 w-full bg-muted animate-pulse rounded" />
+        </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-3" data-testid="section-analytics">
+        <h4 className="text-sm font-medium flex items-center gap-2">
+          <BarChart3 className="h-4 w-4" />
+          Analytics
+        </h4>
+        <p className="text-xs text-muted-foreground">Unable to load analytics.</p>
+      </div>
+    );
+  }
+
+  if (!analytics || analytics.totalStudents === 0) {
+    return (
+      <div className="space-y-3" data-testid="section-analytics">
+        <h4 className="text-sm font-medium flex items-center gap-2">
+          <BarChart3 className="h-4 w-4" />
+          Analytics
+        </h4>
+        <p className="text-xs text-muted-foreground">No student submissions yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3" data-testid="section-analytics">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-medium flex items-center gap-2">
+          <BarChart3 className="h-4 w-4" />
+          Analytics
+        </h4>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleExportCsv}
+          className="h-7 text-xs"
+          data-testid="button-export-csv"
+        >
+          <Download className="h-3 w-3 mr-1" />
+          Export CSV
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-muted/50 rounded-md p-2 text-center">
+          <p className="text-lg font-semibold" data-testid="text-analytics-total-students">{analytics.totalStudents}</p>
+          <p className="text-xs text-muted-foreground">Students</p>
+        </div>
+        <div className="bg-muted/50 rounded-md p-2 text-center">
+          <p className={`text-lg font-semibold ${getScoreColor(analytics.avgCorrectness)}`} data-testid="text-analytics-avg-correctness">
+            {(analytics.avgCorrectness * 100).toFixed(0)}%
+          </p>
+          <p className="text-xs text-muted-foreground">Avg Correctness</p>
+        </div>
+        <div className="bg-muted/50 rounded-md p-2 text-center">
+          <p className={`text-lg font-semibold ${getScoreColor(analytics.avgUnderstanding)}`} data-testid="text-analytics-avg-understanding">
+            {(analytics.avgUnderstanding * 100).toFixed(0)}%
+          </p>
+          <p className="text-xs text-muted-foreground">Avg Understanding</p>
+        </div>
+      </div>
+
+      <div className="border rounded-md overflow-hidden">
+        <table className="w-full text-xs" data-testid="table-analytics">
+          <thead>
+            <tr className="border-b bg-muted/30">
+              <th className="text-left px-3 py-2 font-medium">Student</th>
+              <th className="text-right px-3 py-2 font-medium">Correctness</th>
+              <th className="text-right px-3 py-2 font-medium">Understanding</th>
+            </tr>
+          </thead>
+          <tbody>
+            {analytics.students.map((student) => (
+              <tr key={student.studentId} className="border-b last:border-b-0" data-testid={`row-analytics-${student.studentId}`}>
+                <td className="px-3 py-2" data-testid={`text-student-name-${student.studentId}`}>
+                  <span className="font-medium">{student.name || student.studentId}</span>
+                </td>
+                <td className={`text-right px-3 py-2 ${getScoreColor(student.avgCorrectness)}`} data-testid={`text-student-correctness-${student.studentId}`}>
+                  {(student.avgCorrectness * 100).toFixed(0)}%
+                </td>
+                <td className={`text-right px-3 py-2 ${getScoreColor(student.avgUnderstanding)}`} data-testid={`text-student-understanding-${student.studentId}`}>
+                  {(student.avgUnderstanding * 100).toFixed(0)}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function getScoreBg(score: number) {
@@ -386,6 +525,10 @@ export function ExamDetailsDialog({
                 </div>
               </div>
             )}
+
+            <Separator />
+
+            <AnalyticsSection examId={exam.id} examTitle={exam.title} />
 
             <Separator />
 
