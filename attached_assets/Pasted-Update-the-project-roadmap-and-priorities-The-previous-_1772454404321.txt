@@ -1,0 +1,116 @@
+Update the project roadmap and priorities.
+
+The previous objective was:
+
+“Implement Phase 1 (Concept Tagging System) and Phase 2 (Student Concept Performance Engine) — T001 through T004 only.”
+
+We are changing the execution order.
+
+New Objective:
+
+Implement Phase 0: Authentication Refactor before continuing with T001–T004. The goal is to remove the requirement that students create Replit accounts, while keeping Replit OIDC for admin/developer access only.
+
+Revised Roadmap:
+
+Phase 0 — Authentication Refactor (New Priority)
+
+Goal:
+Decouple student and professor login from Replit OIDC. Keep Replit Auth only for admin access. Students must be able to log in using a custom login flow (studentId + examCode) without seeing the Replit login screen.
+
+A001 — Database Adjustments
+
+Add authProvider column to users table (values: "replit", "local").
+
+Add studentId column (nullable).
+
+Keep existing users functional.
+
+Do NOT break foreign key references.
+
+Do NOT change primary key structure yet unless necessary.
+
+Ensure existing Replit OIDC users remain valid.
+
+Acceptance:
+Schema compiles, DB synced, existing Replit users still work.
+
+A002 — Custom Student Login Flow
+
+Backend:
+
+Create POST /api/student-login.
+
+Accept { studentId, examCode }.
+
+Validate examCode against existing exams.
+
+Create or fetch a user with:
+
+role = "student"
+
+authProvider = "local"
+
+studentId = provided value
+
+Create session using existing express-session setup.
+
+Do NOT redirect to Replit OIDC.
+
+Frontend:
+
+Add “Student Login” option on landing page.
+
+Create student login form.
+
+Students must not see Replit login unless explicitly using admin login.
+
+Acceptance:
+Students can log in and access dashboard without Replit account.
+
+A003 — Restrict Replit OIDC to Admin Only
+
+Keep existing Replit OIDC integration.
+
+Restrict OIDC login route to admin role only.
+
+Students must not trigger Replit OIDC flow.
+
+Ensure admin can still log in via Replit.
+
+Acceptance:
+Admin login works via Replit.
+Students never see Replit login page.
+
+A004 — Basic User Event Logging
+
+Add user_events table:
+
+id
+
+userId
+
+eventType (e.g., "login", "exam_started", "exam_submitted")
+
+metadata (json)
+
+createdAt
+
+Insert events for:
+
+Student login
+
+Exam start
+
+Exam submission
+
+Acceptance:
+Events are recorded and queryable from DB.
+
+After Phase 0 is completed and verified manually with a small student test, resume implementation of:
+
+Phase 1 — Concept Tagging System (T001–T003)
+Phase 2 — Student Concept Performance Engine (T004)
+
+Do not begin T001–T004 until Phase 0 is fully implemented and stable.
+
+End of instruction.

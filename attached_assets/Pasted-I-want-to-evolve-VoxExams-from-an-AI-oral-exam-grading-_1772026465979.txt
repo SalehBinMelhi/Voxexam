@@ -1,0 +1,139 @@
+I want to evolve VoxExams from an AI oral exam grading system into a concept-level learning intelligence system.
+
+We are not adding random features. We are redesigning the product so it tracks true understanding and reduces shallow learning and cheating.
+
+Implement the following in structured phases.
+
+PHASE 1 — Concept Tagging System
+
+Every question must support 1–3 “concept tags”.
+
+Concepts represent learning outcomes or core knowledge areas.
+
+Examples: “force”, “acceleration”, “thermodynamics”, “critical thinking”, etc.
+
+These must be stored structurally in the database (not free text).
+
+When a professor creates or edits a question:
+
+They must assign concept tags to that question.
+
+The UI must allow selecting or creating concept tags per course.
+
+When a student submission is graded:
+
+The AI scores (correctness + understanding) must also be mapped to each concept attached to that question.
+
+This creates per-concept performance data.
+
+Do not duplicate raw data. Use derived aggregation from existing submission and score structures.
+
+PHASE 2 — Student Concept Performance Engine
+
+Create a system that computes, per student:
+
+Average correctness across all submissions.
+
+Average understanding across all submissions.
+
+Performance aggregated per concept.
+
+Top 3 strongest concepts.
+
+Top 3 weakest concepts.
+
+Concept-level improvement trend over time.
+
+Overall improvement trend (first 3 vs last 3 submissions).
+
+This must be computed on demand via optimized queries.
+Do not create new persistent tables unless necessary.
+Avoid materialized views at this stage.
+
+The system must support longitudinal tracking (performance across time).
+
+PHASE 3 — Student Dashboard (Understanding-Based, Not Grade-Based)
+
+Design a student-facing dashboard that shows:
+
+Overall Understanding Level (not just exam score).
+
+Concept Strength Map:
+
+Strong areas
+
+Weak areas
+
+Improvement Direction:
+
+Improving
+
+Declining
+
+Stable
+
+Suggested Focus Areas:
+
+Automatically generated based on weakest concepts.
+
+Simple Integrity Indicator:
+
+Neutral phrasing (not accusatory)
+
+Based on suspicious behavior patterns.
+
+The tone must be developmental, not punitive.
+The goal is to guide learning, not punish.
+
+PHASE 4 — Follow-Up Oral Micro-Check Trigger
+
+Add logic that automatically flags students for follow-up oral verification when:
+
+Understanding is low but correctness is high.
+
+Suspicious behavior frequency exceeds a threshold.
+
+Improvement trend is sharply negative.
+
+When triggered:
+
+The system should allow the professor to assign a short follow-up oral micro-check (2–3 new concept-aligned questions).
+
+This reinforces authentic understanding and reduces cheating incentives.
+
+Do not implement live video infrastructure changes yet.
+Focus on logic and trigger mechanism.
+
+PHASE 5 — Professor Concept Insight View
+
+Create a professor-facing view that shows:
+
+Class-wide concept mastery heatmap.
+
+Most misunderstood concepts.
+
+Distribution of understanding vs correctness.
+
+Students flagged for follow-up.
+
+Improvement trends per student.
+
+The goal is to shift the professor view from “who passed?” to “who actually understands?”
+
+SYSTEM PRINCIPLES
+
+Do not refactor core grading pipeline.
+
+Do not change authentication or RBAC.
+
+Do not introduce unnecessary architectural complexity.
+
+Build this as a layered intelligence system on top of existing submission data.
+
+Keep everything explainable and auditable.
+
+Prioritize clarity over visual complexity.
+
+The objective is to transform VoxExams into a structured oral learning intelligence platform that exposes real understanding, reduces shallow memorization, and discourages cheating by design.
+
+Start with Phase 1 and Phase 2.
