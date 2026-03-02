@@ -1158,5 +1158,194 @@ export async function registerRoutes(
     }
   });
 
+  // Exam access code regeneration
+  app.post("/api/exams/:id/regenerate-code", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can regenerate exam codes" });
+      }
+      const exam = await storage.getExam(p(req.params.id));
+      if (!exam) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+      if (exam.professorId !== user.id) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const updated = await storage.regenerateExamAccessCode(exam.id);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to regenerate exam code" });
+    }
+  });
+
+  // Class join code regeneration
+  app.post("/api/classes/:id/regenerate-code", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || user.role !== "professor") {
+        return res.status(403).json({ error: "Only professors can regenerate class codes" });
+      }
+      const cls = await storage.getClass(p(req.params.id));
+      if (!cls) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      if (cls.professorId !== user.id) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const updated = await storage.regenerateClassJoinCode(cls.id);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to regenerate class code" });
+    }
+  });
+
+  // Support request routes
+  app.post("/api/support-requests", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      const request = await storage.createSupportRequest({
+        userId,
+        userName: user ? `${user.firstName || ""} ${user.lastName || ""}`.trim() : "Unknown",
+        userRole: user?.role || "unknown",
+        message: req.body.message || null,
+        pageUrl: req.body.pageUrl || null,
+      });
+      const { getWebSocketServer } = await import("./websocket");
+      const wss = getWebSocketServer();
+      if (wss) {
+        wss.sendToAdmins({ type: "support_request", supportRequestId: request.id, request });
+      }
+      res.status(201).json(request);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create support request" });
+    }
+  });
+
+  app.get("/api/admin/support-requests", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      const requests = await storage.getSupportRequests();
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch support requests" });
+    }
+  });
+
+  app.patch("/api/admin/support-requests/:id", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      const updated = await storage.updateSupportRequestStatus(p(req.params.id), req.body.status);
+      if (!updated) {
+        return res.status(404).json({ error: "Support request not found" });
+      }
+      const { getWebSocketServer } = await import("./websocket");
+      const wss = getWebSocketServer();
+      if (wss) {
+        wss.sendToUser(updated.userId, { type: "support_status_update", supportRequestId: updated.id, status: updated.status });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update support request" });
+    }
+  });
+
+  app.get("/api/support-requests/:id/messages", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      const request = await storage.getSupportRequest(p(req.params.id));
+      if (!request) {
+        return res.status(404).json({ error: "Support request not found" });
+      }
+      if (request.userId !== userId && user?.role !== "admin") {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const messages = await storage.getChatMessages(request.id);
+      res.json(messages);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/support-requests/:id/messages", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      const request = await storage.getSupportRequest(p(req.params.id));
+      if (!request) {
+        return res.status(404).json({ error: "Support request not found" });
+      }
+      if (request.userId !== userId && user?.role !== "admin") {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      const senderRole = user?.role === "admin" ? "admin" : "user";
+      const message = await storage.createChatMessage({
+        supportRequestId: request.id,
+        senderId: userId,
+        senderRole,
+        message: req.body.message,
+      });
+      if (request.status === "pending" && senderRole === "admin") {
+        await storage.updateSupportRequestStatus(request.id, "in-progress");
+      }
+      const { getWebSocketServer } = await import("./websocket");
+      const wss = getWebSocketServer();
+      if (wss) {
+        const chatPayload = { type: "chat_message", supportRequestId: request.id, message };
+        const targetUserId = senderRole === "admin" ? request.userId : null;
+        if (targetUserId) {
+          wss.sendToUser(targetUserId, chatPayload);
+        }
+        if (senderRole === "user") {
+          wss.sendToAdmins(chatPayload);
+        }
+      }
+      res.status(201).json(message);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to send message" });
+    }
+  });
+
+  // Admin user list
+  app.get("/api/admin/users", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      const allUsers = await storage.getAllUsers();
+      const { getWebSocketServer } = await import("./websocket");
+      const wss = getWebSocketServer();
+      const onlineUserIds = wss ? wss.getOnlineUserIds() : [];
+      const safeUsers = allUsers.map(u => {
+        const { openaiApiKey, ...safe } = u;
+        return { ...safe, isOnline: onlineUserIds.includes(u.id) };
+      });
+      res.json(safeUsers);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // Get user's own active support request
+  app.get("/api/my-support-request", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const requests = await storage.getSupportRequests();
+      const active = requests.find(r => r.userId === userId && r.status !== "resolved");
+      res.json(active || null);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch support request" });
+    }
+  });
+
   return httpServer;
 }

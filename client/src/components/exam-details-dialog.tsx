@@ -35,6 +35,9 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  Copy,
+  RefreshCw,
+  Key,
 } from "lucide-react";
 import { ShieldAlert } from "lucide-react";
 import type { Exam, ExamSubmission, QuestionType, User as UserType, ProctoringFlag } from "@shared/schema";
@@ -159,6 +162,50 @@ export function ExamDetailsDialog({
     },
   });
 
+  const regenerateCodeMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/exams/${exam.id}/regenerate-code`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
+      toast({
+        title: "Code regenerated",
+        description: "A new exam access code has been generated.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to regenerate code.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const copyAccessCode = () => {
+    if (exam.accessCode) {
+      navigator.clipboard.writeText(exam.accessCode);
+      toast({ title: "Copied", description: "Exam code copied to clipboard." });
+    }
+  };
+
+  const getAccessCodeStatus = () => {
+    if (!exam.accessCode) return null;
+    if (!exam.accessCodeExpiresAt) return { active: true, label: "Active" };
+    const expiresAt = new Date(exam.accessCodeExpiresAt);
+    const now = new Date();
+    if (isAfter(expiresAt, now)) {
+      const diffMs = expiresAt.getTime() - now.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const remainingMins = diffMins % 60;
+      const timeRemaining = diffHours > 0 ? `${diffHours}h ${remainingMins}m remaining` : `${diffMins}m remaining`;
+      return { active: true, label: "Active", timeRemaining };
+    }
+    return { active: false, label: "Expired" };
+  };
+
   const startEditing = (submissionId: string, questionId: string, currentScore: number) => {
     setEditingScore({ submissionId, questionId, currentScore });
     setNewScoreValue(Math.round(currentScore * 100).toString());
@@ -282,6 +329,47 @@ export function ExamDetailsDialog({
                 </>
               )}
             </div>
+
+            {exam.accessCode && (
+              <div className="space-y-2" data-testid="section-exam-code">
+                <h4 className="text-sm font-medium flex items-center gap-2">
+                  <Key className="h-4 w-4" />
+                  Exam Code
+                </h4>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <code className="text-lg font-mono font-bold bg-muted px-3 py-1.5 rounded-md tracking-widest" data-testid="text-access-code">
+                    {exam.accessCode}
+                  </code>
+                  <Button variant="outline" size="icon" onClick={copyAccessCode} data-testid="button-copy-access-code">
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                  {(() => {
+                    const codeStatus = getAccessCodeStatus();
+                    if (!codeStatus) return null;
+                    return codeStatus.active ? (
+                      <Badge variant="default" className="bg-green-600 text-white no-default-hover-elevate no-default-active-elevate" data-testid="badge-code-status">
+                        Active
+                        {codeStatus.timeRemaining && <span className="ml-1 opacity-80">({codeStatus.timeRemaining})</span>}
+                      </Badge>
+                    ) : (
+                      <Badge variant="destructive" className="no-default-hover-elevate no-default-active-elevate" data-testid="badge-code-status">
+                        Expired
+                      </Badge>
+                    );
+                  })()}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => regenerateCodeMutation.mutate()}
+                    disabled={regenerateCodeMutation.isPending}
+                    data-testid="button-regenerate-code"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 mr-1 ${regenerateCodeMutation.isPending ? "animate-spin" : ""}`} />
+                    {regenerateCodeMutation.isPending ? "Regenerating..." : "Regenerate Code"}
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {exam.assignedStudentNames && exam.assignedStudentNames.length > 0 && (
               <div className="space-y-2">

@@ -60,9 +60,16 @@ async function upsertUser(claims: any) {
   });
 }
 
+let sessionMiddleware: RequestHandler | null = null;
+
+export function getSessionMiddleware(): RequestHandler | null {
+  return sessionMiddleware;
+}
+
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
-  app.use(getSession());
+  sessionMiddleware = getSession();
+  app.use(sessionMiddleware);
   app.use(passport.initialize());
   app.use(passport.session());
 

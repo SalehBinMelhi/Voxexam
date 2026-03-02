@@ -3,7 +3,8 @@ import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, getSessionMiddleware } from "./replit_integrations/auth";
+import { setupWebSocket } from "./websocket";
 
 const app = express();
 const httpServer = createServer(app);
@@ -67,6 +68,11 @@ app.use((req, res, next) => {
 (async () => {
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  const sessionParser = getSessionMiddleware();
+  if (sessionParser) {
+    setupWebSocket(httpServer, sessionParser);
+  }
 
   await registerRoutes(httpServer, app);
 

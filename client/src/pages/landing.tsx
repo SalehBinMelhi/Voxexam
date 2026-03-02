@@ -4,13 +4,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle } from "lucide-react";
+import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users } from "lucide-react";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -104,6 +105,10 @@ export default function LandingPage() {
   const [examCodeInput, setExamCodeInput] = useState("");
   const [studentLoginError, setStudentLoginError] = useState("");
   const [studentLoginLoading, setStudentLoginLoading] = useState(false);
+  const [classStudentName, setClassStudentName] = useState("");
+  const [classCodeInput, setClassCodeInput] = useState("");
+  const [classLoginError, setClassLoginError] = useState("");
+  const [classLoginLoading, setClassLoginLoading] = useState(false);
 
   const handleDemoLogin = async (role: "professor" | "student") => {
     setLoggingIn(role);
@@ -152,6 +157,34 @@ export default function LandingPage() {
     }
   };
 
+  const handleClassLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setClassLoginError("");
+    if (!classStudentName.trim() || !classCodeInput.trim()) {
+      setClassLoginError("Both fields are required.");
+      return;
+    }
+    setClassLoginLoading(true);
+    try {
+      const res = await fetch("/api/class-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ studentName: classStudentName.trim(), classCode: classCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        setClassLoginError(data.message || "Login failed. Please try again.");
+      }
+    } catch (e) {
+      setClassLoginError("Connection error. Please try again.");
+    } finally {
+      setClassLoginLoading(false);
+    }
+  };
+
   const detail = activeFeature ? featureDetails[activeFeature] : null;
 
   return (
@@ -191,51 +224,104 @@ export default function LandingPage() {
                 <CardContent className="p-6">
                   <div className="flex items-center gap-2 mb-4">
                     <BookOpen className="h-5 w-5 text-primary" />
-                    <h3 className="font-semibold text-lg">Student Exam Login</h3>
+                    <h3 className="font-semibold text-lg">Student Login</h3>
                   </div>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Enter your name and exam code provided by your professor.
-                  </p>
-                  <form onSubmit={handleStudentLogin} className="space-y-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="student-id">Your Name</Label>
-                      <Input
-                        id="student-id"
-                        placeholder="e.g. John Smith"
-                        value={studentIdInput}
-                        onChange={(e) => setStudentIdInput(e.target.value)}
-                        disabled={studentLoginLoading}
-                        data-testid="input-student-id"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="exam-code">Exam Code</Label>
-                      <Input
-                        id="exam-code"
-                        placeholder="Paste the exam code from your professor"
-                        value={examCodeInput}
-                        onChange={(e) => setExamCodeInput(e.target.value)}
-                        disabled={studentLoginLoading}
-                        data-testid="input-exam-code"
-                      />
-                    </div>
-                    {studentLoginError && (
-                      <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-student-login-error">
-                        <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                        <span>{studentLoginError}</span>
-                      </div>
-                    )}
-                    <Button
-                      type="submit"
-                      className="w-full gap-2"
-                      size="lg"
-                      disabled={studentLoginLoading}
-                      data-testid="button-student-login"
-                    >
-                      <LogIn className="h-4 w-4" />
-                      {studentLoginLoading ? "Logging in..." : "Enter Exam"}
-                    </Button>
-                  </form>
+                  <Tabs defaultValue="join-exam" className="w-full">
+                    <TabsList className="w-full" data-testid="tabs-student-login">
+                      <TabsTrigger value="join-exam" className="flex-1" data-testid="tab-join-exam">Join Exam</TabsTrigger>
+                      <TabsTrigger value="join-class" className="flex-1" data-testid="tab-join-class">Join Class</TabsTrigger>
+                    </TabsList>
+                    <TabsContent value="join-exam">
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Enter your name and exam code provided by your professor.
+                      </p>
+                      <form onSubmit={handleStudentLogin} className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="student-id">Your Name</Label>
+                          <Input
+                            id="student-id"
+                            placeholder="e.g. John Smith"
+                            value={studentIdInput}
+                            onChange={(e) => setStudentIdInput(e.target.value)}
+                            disabled={studentLoginLoading}
+                            data-testid="input-student-id"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="exam-code">Exam Code</Label>
+                          <Input
+                            id="exam-code"
+                            placeholder="Enter 5-digit code or exam ID"
+                            value={examCodeInput}
+                            onChange={(e) => setExamCodeInput(e.target.value)}
+                            disabled={studentLoginLoading}
+                            data-testid="input-exam-code"
+                          />
+                        </div>
+                        {studentLoginError && (
+                          <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-student-login-error">
+                            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                            <span>{studentLoginError}</span>
+                          </div>
+                        )}
+                        <Button
+                          type="submit"
+                          className="w-full gap-2"
+                          size="lg"
+                          disabled={studentLoginLoading}
+                          data-testid="button-student-login"
+                        >
+                          <LogIn className="h-4 w-4" />
+                          {studentLoginLoading ? "Logging in..." : "Enter Exam"}
+                        </Button>
+                      </form>
+                    </TabsContent>
+                    <TabsContent value="join-class">
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Enter your name and the class code to join a class.
+                      </p>
+                      <form onSubmit={handleClassLogin} className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="class-student-name">Your Name</Label>
+                          <Input
+                            id="class-student-name"
+                            placeholder="e.g. John Smith"
+                            value={classStudentName}
+                            onChange={(e) => setClassStudentName(e.target.value)}
+                            disabled={classLoginLoading}
+                            data-testid="input-class-student-name"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="class-code">Class Code</Label>
+                          <Input
+                            id="class-code"
+                            placeholder="Enter class join code"
+                            value={classCodeInput}
+                            onChange={(e) => setClassCodeInput(e.target.value)}
+                            disabled={classLoginLoading}
+                            data-testid="input-class-code"
+                          />
+                        </div>
+                        {classLoginError && (
+                          <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-class-login-error">
+                            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                            <span>{classLoginError}</span>
+                          </div>
+                        )}
+                        <Button
+                          type="submit"
+                          className="w-full gap-2"
+                          size="lg"
+                          disabled={classLoginLoading}
+                          data-testid="button-class-login"
+                        >
+                          <Users className="h-4 w-4" />
+                          {classLoginLoading ? "Joining..." : "Join Class"}
+                        </Button>
+                      </form>
+                    </TabsContent>
+                  </Tabs>
                 </CardContent>
               </Card>
 

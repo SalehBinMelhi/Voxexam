@@ -11,6 +11,8 @@ import {
   submissions,
   classMaterials,
   userEvents,
+  supportRequests,
+  chatMessages,
   type User,
   type University,
   type InsertUniversity,
@@ -32,6 +34,8 @@ import {
   type GradingMethodDistribution,
   type SubmissionTimelineEntry,
   type UserEvent,
+  type SupportRequest,
+  type ChatMessage,
 } from "@shared/schema";
 import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
@@ -528,6 +532,32 @@ Format: Start with the verdict in brackets like [HIGH RISK], then explain briefl
   }
 }
 
+export async function generateExamAccessCode(): Promise<string> {
+  for (let i = 0; i < 10; i++) {
+    const code = String(Math.floor(10000 + Math.random() * 90000));
+    const [existing] = await db.select().from(exams).where(eq(exams.accessCode, code));
+    if (!existing) return code;
+  }
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
+export async function generateClassJoinCode(): Promise<string> {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let i = 0; i < 10; i++) {
+    let code = "";
+    for (let j = 0; j < 6; j++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    const [existing] = await db.select().from(classes).where(eq(classes.joinCode, code));
+    if (!existing) return code;
+  }
+  let code = "";
+  for (let j = 0; j < 6; j++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -576,6 +606,22 @@ export interface IStorage {
   getAllSubmissions(): Promise<ExamSubmission[]>;
   createSubmission(studentId: string, examId: string, responses: ExamResponse[], isPreview?: boolean): Promise<ExamSubmission>;
   updateSubmissionScore(submissionId: string, questionId: string, newScore: number): Promise<ExamSubmission | undefined>;
+
+  // Support
+  createSupportRequest(data: { userId: string; userName?: string; userRole?: string; message?: string; pageUrl?: string }): Promise<SupportRequest>;
+  getSupportRequests(): Promise<SupportRequest[]>;
+  updateSupportRequestStatus(id: string, status: string): Promise<SupportRequest | undefined>;
+  getSupportRequest(id: string): Promise<SupportRequest | undefined>;
+  getChatMessages(supportRequestId: string): Promise<ChatMessage[]>;
+  createChatMessage(data: { supportRequestId: string; senderId: string; senderRole: string; message: string }): Promise<ChatMessage>;
+
+  // Exam access code
+  getExamByAccessCode(code: string): Promise<Exam | undefined>;
+  regenerateExamAccessCode(examId: string): Promise<Exam | undefined>;
+
+  // Class join code
+  getClassByJoinCode(code: string): Promise<Class | undefined>;
+  regenerateClassJoinCode(classId: string): Promise<Class | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -636,7 +682,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createClass(data: InsertClass): Promise<Class> {
-    const [cls] = await db.insert(classes).values(data).returning();
+    const joinCode = await generateClassJoinCode();
+    const [cls] = await db.insert(classes).values({ ...data, joinCode }).returning();
     return cls;
   }
 
@@ -710,6 +757,21 @@ export class DatabaseStorage implements IStorage {
       id: crypto.randomUUID(),
     }));
 
+    let accessCode: string | null = null;
+    let accessCodeExpiresAt: Date | null = null;
+
+    if (insertExam.customAccessCode) {
+      const [existing] = await db.select().from(exams).where(eq(exams.accessCode, insertExam.customAccessCode));
+      if (existing) {
+        throw new Error("Access code already in use");
+      }
+      accessCode = insertExam.customAccessCode;
+      accessCodeExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    } else if (insertExam.autoGenerateCode !== false) {
+      accessCode = await generateExamAccessCode();
+      accessCodeExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+    }
+
     const [exam] = await db.insert(exams).values({
       title: insertExam.title,
       professorId,
@@ -719,6 +781,8 @@ export class DatabaseStorage implements IStorage {
       endTime: insertExam.endTime || null,
       assignedStudentIds: insertExam.assignedStudentIds || [],
       assignedStudentNames: insertExam.assignedStudentNames || [],
+      accessCode,
+      accessCodeExpiresAt,
     }).returning();
 
     return exam;
@@ -874,6 +938,67 @@ export class DatabaseStorage implements IStorage {
       totalUnderstandingScore: newTotalUnderstanding,
     }).where(eq(submissions.id, submissionId)).returning();
 
+    return updated || undefined;
+  }
+
+  // Support request methods
+  async createSupportRequest(data: { userId: string; userName?: string; userRole?: string; message?: string; pageUrl?: string }): Promise<SupportRequest> {
+    const [req] = await db.insert(supportRequests).values(data).returning();
+    return req;
+  }
+
+  async getSupportRequests(): Promise<SupportRequest[]> {
+    return db.select().from(supportRequests).orderBy(sql`${supportRequests.createdAt} DESC`);
+  }
+
+  async updateSupportRequestStatus(id: string, status: string): Promise<SupportRequest | undefined> {
+    const updateData: any = { status };
+    if (status === "resolved") {
+      updateData.resolvedAt = new Date();
+    }
+    const [updated] = await db.update(supportRequests).set(updateData).where(eq(supportRequests.id, id)).returning();
+    return updated || undefined;
+  }
+
+  async getSupportRequest(id: string): Promise<SupportRequest | undefined> {
+    const [req] = await db.select().from(supportRequests).where(eq(supportRequests.id, id));
+    return req || undefined;
+  }
+
+  async getChatMessages(supportRequestId: string): Promise<ChatMessage[]> {
+    return db.select().from(chatMessages).where(eq(chatMessages.supportRequestId, supportRequestId)).orderBy(chatMessages.createdAt);
+  }
+
+  async createChatMessage(data: { supportRequestId: string; senderId: string; senderRole: string; message: string }): Promise<ChatMessage> {
+    const [msg] = await db.insert(chatMessages).values(data).returning();
+    return msg;
+  }
+
+  // Exam access code methods
+  async getExamByAccessCode(code: string): Promise<Exam | undefined> {
+    const [exam] = await db.select().from(exams).where(eq(exams.accessCode, code));
+    return exam || undefined;
+  }
+
+  async regenerateExamAccessCode(examId: string): Promise<Exam | undefined> {
+    const newCode = await generateExamAccessCode();
+    const newExpiry = new Date(Date.now() + 30 * 60 * 1000);
+    const [updated] = await db.update(exams).set({
+      accessCode: newCode,
+      accessCodeExpiresAt: newExpiry,
+    }).where(eq(exams.id, examId)).returning();
+    return updated || undefined;
+  }
+
+  // Class join code methods
+  async getClassByJoinCode(code: string): Promise<Class | undefined> {
+    const [cls] = await db.select().from(classes).where(eq(classes.joinCode, code));
+    return cls || undefined;
+  }
+
+  async regenerateClassJoinCode(classId: string): Promise<Class | undefined> {
+    const newCode = await generateClassJoinCode();
+    const [updated] = await db.update(classes).set({ joinCode: newCode }).where(eq(classes.id, classId)).returning();
     return updated || undefined;
   }
 }

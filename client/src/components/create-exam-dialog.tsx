@@ -22,7 +22,8 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical, ChevronDown, ChevronUp, Send, Bot, User, RotateCcw } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Plus, Trash2, X, FileQuestion, Mic, MessageSquare, ListChecks, Users, Sparkles, Pencil, GripVertical, ChevronDown, ChevronUp, Send, Bot, User, RotateCcw, Key, Copy } from "lucide-react";
 import type { InsertQuestion, QuestionType, Class } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
@@ -53,6 +54,9 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const [autoGenerateCode, setAutoGenerateCode] = useState(true);
+  const [customAccessCode, setCustomAccessCode] = useState("");
 
   const [newQuestion, setNewQuestion] = useState("");
   const [newQuestionType, setNewQuestionType] = useState<QuestionType>("short");
@@ -92,16 +96,28 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       endTime: string | null;
       classId: string | null;
       assignedStudentNames: string[];
+      autoGenerateCode?: boolean;
+      customAccessCode?: string;
     }) => {
       const response = await apiRequest("POST", "/api/exams", data);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
-      toast({
-        title: "Exam created",
-        description: "Your exam has been created successfully.",
-      });
+      const generatedCode = data?.accessCode;
+      if (generatedCode) {
+        toast({
+          title: "Exam created",
+          description: `Exam code: ${generatedCode} (copied to clipboard)`,
+          duration: 8000,
+        });
+        navigator.clipboard.writeText(generatedCode).catch(() => {});
+      } else {
+        toast({
+          title: "Exam created",
+          description: "Your exam has been created successfully.",
+        });
+      }
       resetForm();
       onOpenChange(false);
     },
@@ -171,6 +187,8 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
     setAiChatOpen(false);
     setChatMessages([]);
     setChatInput("");
+    setAutoGenerateCode(true);
+    setCustomAccessCode("");
   };
 
   const addStudentName = () => {
@@ -287,6 +305,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
       endTime: endDate ? `${endDate}T${endTime || "23:59"}` : null,
       classId: selectedClassId && selectedClassId !== "none" ? selectedClassId : null,
       assignedStudentNames: manualStudentNames,
+      ...(autoGenerateCode ? { autoGenerateCode: true } : customAccessCode.trim() ? { customAccessCode: customAccessCode.trim() } : {}),
     });
   };
 
@@ -422,6 +441,41 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                   />
                 </div>
               </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Key className="h-4 w-4 text-muted-foreground" />
+                <Label className="text-sm font-medium">Exam Code</Label>
+              </div>
+              <div className="flex items-center gap-3">
+                <Checkbox
+                  id="auto-generate-code"
+                  checked={autoGenerateCode}
+                  onCheckedChange={(checked) => {
+                    setAutoGenerateCode(checked === true);
+                    if (checked) setCustomAccessCode("");
+                  }}
+                  data-testid="checkbox-auto-generate-code"
+                />
+                <Label htmlFor="auto-generate-code" className="text-sm cursor-pointer">
+                  Auto-generate 5-digit code
+                </Label>
+              </div>
+              {!autoGenerateCode && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="custom-access-code">Custom Code</Label>
+                  <Input
+                    id="custom-access-code"
+                    placeholder="Enter custom code (max 10 chars)"
+                    value={customAccessCode}
+                    onChange={(e) => setCustomAccessCode(e.target.value.slice(0, 10))}
+                    maxLength={10}
+                    data-testid="input-custom-access-code"
+                  />
+                  <p className="text-xs text-muted-foreground">{customAccessCode.length}/10 characters</p>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">

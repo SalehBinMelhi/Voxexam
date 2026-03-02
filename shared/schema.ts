@@ -9,7 +9,7 @@ export * from "./models/auth";
 export const questionTypes = ["mcq", "short", "audio"] as const;
 export type QuestionType = (typeof questionTypes)[number];
 
-export const userRoles = ["professor", "student"] as const;
+export const userRoles = ["professor", "student", "admin"] as const;
 export type UserRole = (typeof userRoles)[number];
 
 export const questionSchema = z.object({
@@ -56,6 +56,7 @@ export const classes = pgTable("classes", {
   universityId: varchar("university_id"),
   professorId: varchar("professor_id").notNull(),
   roster: jsonb("roster").$type<string[]>().default([]),
+  joinCode: varchar("join_code").unique(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -97,6 +98,8 @@ export const exams = pgTable("exams", {
   endTime: varchar("end_time"),
   assignedStudentIds: jsonb("assigned_student_ids").notNull().$type<string[]>().default([]),
   assignedStudentNames: jsonb("assigned_student_names").notNull().$type<string[]>().default([]),
+  accessCode: varchar("access_code").unique(),
+  accessCodeExpiresAt: timestamp("access_code_expires_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -111,6 +114,8 @@ export const insertExamSchema = z.object({
   assignedStudentIds: z.array(z.string()).optional(),
   assignedStudentNames: z.array(z.string()).optional(),
   professorId: z.string().optional(),
+  customAccessCode: z.string().max(10).optional(),
+  autoGenerateCode: z.boolean().optional(),
 });
 
 export type InsertExam = z.infer<typeof insertExamSchema>;
@@ -207,6 +212,34 @@ export const userEvents = pgTable("user_events", {
 export type UserEvent = typeof userEvents.$inferSelect;
 export type InsertUserEvent = typeof userEvents.$inferInsert;
 
+// Support requests table
+export const supportRequests = pgTable("support_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  userName: varchar("user_name"),
+  userRole: varchar("user_role"),
+  status: varchar("status").notNull().default("pending"),
+  message: varchar("message"),
+  pageUrl: varchar("page_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
+export type SupportRequest = typeof supportRequests.$inferSelect;
+export type InsertSupportRequest = typeof supportRequests.$inferInsert;
+
+// Chat messages table (for support chat)
+export const chatMessages = pgTable("chat_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  supportRequestId: varchar("support_request_id").notNull(),
+  senderId: varchar("sender_id").notNull(),
+  senderRole: varchar("sender_role").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type InsertChatMessage = typeof chatMessages.$inferInsert;
 
 export interface QuestionTypeBreakdown {
   type: QuestionType;

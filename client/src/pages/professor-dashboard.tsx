@@ -25,18 +25,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { HelpSupportPopover } from "@/components/help-support-popover";
 import {
   LogOut,
   GraduationCap,
   Settings,
   FileQuestion,
   Layers,
-  Lightbulb,
 } from "lucide-react";
 import type { University } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -126,38 +121,7 @@ export default function ProfessorDashboard() {
             <span className="text-sm text-muted-foreground hidden sm:inline">
               {displayName}
             </span>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" data-testid="button-help">
-                  <Lightbulb className="h-4 w-4 text-amber-500" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 text-sm" align="end">
-                {activeTab === "simple" ? (
-                  <div className="space-y-2">
-                    <p className="font-semibold">Quick Exam</p>
-                    <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                      <li>Type an exam title</li>
-                      <li>Add questions (short answer, MCQ, or audio)</li>
-                      <li>Optionally set start/end dates</li>
-                      <li>Type student names to assign them</li>
-                      <li>Click "Create Exam" — students can take it right away</li>
-                    </ol>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="font-semibold">Classes</p>
-                    <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
-                      <li>Create a class under your university</li>
-                      <li>Upload course materials (PDF, Word, etc.) for AI context</li>
-                      <li>Add students to the class roster</li>
-                      <li>Create exams — AI can generate questions from your materials</li>
-                      <li>View student submissions and scores</li>
-                    </ol>
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
+            <HelpSupportPopover role="professor" activeTab={activeTab as "simple" | "classes"} />
             <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} data-testid="button-settings">
               <Settings className="h-4 w-4" />
             </Button>

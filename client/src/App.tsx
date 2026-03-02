@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import LandingPage from "@/pages/landing";
 import RoleSelect from "@/pages/role-select";
+import AdminDashboard from "@/pages/admin-dashboard";
 import ProfessorDashboard from "@/pages/professor-dashboard";
 import StudentDashboard from "@/pages/student-dashboard";
 
@@ -29,6 +30,10 @@ function AppContent() {
 
   if (!user.role) {
     return <RoleSelect user={user} />;
+  }
+
+  if (user.role === "admin") {
+    return <AdminDashboard />;
   }
 
   if (user.role === "professor") {
