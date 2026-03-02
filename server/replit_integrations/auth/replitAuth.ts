@@ -142,6 +142,12 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return next();
   }
 
+  const isLocalOrDemo = user.access_token?.startsWith("local-token-") || user.access_token?.startsWith("demo-token-");
+  if (isLocalOrDemo) {
+    user.expires_at = Math.floor(Date.now() / 1000) + 86400 * 7;
+    return next();
+  }
+
   const refreshToken = user.refresh_token;
   if (!refreshToken) {
     res.status(401).json({ message: "Unauthorized" });

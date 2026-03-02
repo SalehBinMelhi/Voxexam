@@ -195,6 +195,19 @@ export const submissionsRelations = relations(submissions, ({ one }) => ({
   exam: one(exams, { fields: [submissions.examId], references: [exams.id] }),
 }));
 
+// User events table (audit logging)
+export const userEvents = pgTable("user_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  eventType: varchar("event_type").notNull(),
+  metadata: jsonb("metadata").$type<Record<string, any>>(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type UserEvent = typeof userEvents.$inferSelect;
+export type InsertUserEvent = typeof userEvents.$inferInsert;
+
+
 export interface QuestionTypeBreakdown {
   type: QuestionType;
   avgCorrectness: number;

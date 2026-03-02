@@ -10,7 +10,7 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 
@@ -759,6 +759,9 @@ export async function registerRoutes(
       }
 
       const submission = await storage.createSubmission(studentId, examId, responses, !!isPreview);
+      if (!isPreview) {
+        logUserEvent(studentId, "exam_submitted", { examId, submissionId: submission.id });
+      }
       res.status(201).json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to create submission" });

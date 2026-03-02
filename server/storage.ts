@@ -10,6 +10,7 @@ import {
   exams,
   submissions,
   classMaterials,
+  userEvents,
   type User,
   type University,
   type InsertUniversity,
@@ -30,6 +31,7 @@ import {
   type PerformanceTrend,
   type GradingMethodDistribution,
   type SubmissionTimelineEntry,
+  type UserEvent,
 } from "@shared/schema";
 import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
@@ -873,6 +875,18 @@ export class DatabaseStorage implements IStorage {
     }).where(eq(submissions.id, submissionId)).returning();
 
     return updated || undefined;
+  }
+}
+
+export async function logUserEvent(userId: string, eventType: string, metadata?: Record<string, any>): Promise<void> {
+  try {
+    await db.insert(userEvents).values({
+      userId,
+      eventType,
+      metadata: metadata || {},
+    });
+  } catch (error) {
+    console.error("[EVENT-LOG] Failed to log event:", eventType, error);
   }
 }
 

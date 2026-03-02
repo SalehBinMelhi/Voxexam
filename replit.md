@@ -1,218 +1,69 @@
 # VoxExams - Oral Exam Management System
 
-A comprehensive web application for conducting and managing university oral examinations. Professors can create and schedule exams with various question types, upload class materials for AI context, while students can take assigned exams and receive dual AI grading (correctness + understanding).
-
 ## Overview
 
-This is a full-stack application built with:
-- **Frontend**: React with TypeScript, Vite, TailwindCSS, and shadcn/ui components
-- **Backend**: Express.js with PostgreSQL database (Drizzle ORM)
-- **Authentication**: Replit Auth (Google, GitHub, Apple, email+password)
-- **State Management**: TanStack Query for server state
-- **AI Grading**: OpenAI GPT-4o-mini via Replit AI Integrations
+VoxExams is a comprehensive web application designed for universities to manage and conduct oral examinations efficiently. It enables professors to create and schedule exams, utilize AI for contextual grading based on uploaded class materials, and provides students with a streamlined platform to take exams and receive immediate, dual AI-powered feedback on correctness and understanding. The project aims to modernize oral exam processes, reduce administrative overhead, and provide richer, more consistent student feedback through intelligent automation.
 
-## Features
+## User Preferences
 
-### For Professors
-- Create oral exams with multiple question types (MCQ, short answer, audio response)
-- Schedule exams with start and end times (or leave unscheduled for immediate availability)
-- Manage universities and classes
-- Assign students to exams by typing names/emails directly
-- View exam submissions and scores with grading method indicators
-- Manually override AI scores
-- Delete exams and classes
+*   I want iterative development.
+*   I want all changes to be clearly communicated.
+*   I prefer detailed explanations for complex technical decisions.
+*   I like functional programming paradigms where they improve code clarity and maintainability.
+*   I prefer the communication style to be professional yet approachable.
+*   I expect the agent to ask for confirmation before implementing significant architectural changes or adding new external dependencies.
+*   I want the agent to prioritize security and data privacy in all development aspects.
+*   I prefer the agent to suggest improvements or alternative approaches, but always confirm with me before proceeding.
+*   I prefer concise and clear language, avoiding jargon where simpler terms suffice.
+*   I expect the agent to document all major changes and additions within the relevant codebase sections.
 
-### For Students
-- View assigned exams (active, upcoming, completed)
-- Take active exams with a clean question-by-question interface
-- Record audio responses with microphone
-- Navigate between questions freely during the exam
-- Receive immediate scoring upon submission
-- View past exam scores
+## System Architecture
 
-## Authentication
+The application is a full-stack web platform built with a React, TypeScript, Vite, TailwindCSS, and shadcn/ui frontend, and an Express.js backend utilizing a PostgreSQL database with Drizzle ORM. Authentication is handled via Replit Auth for professors and a custom local login system for students. Server state management leverages TanStack Query. AI grading and transcription capabilities are powered by OpenAI's GPT-4o-mini model, integrated through Replit AI Integrations.
 
-Users authenticate via Replit Auth (supports Google, GitHub, Apple, email+password). On first login, users select their role (professor or student) via a role selection page. The role is stored in the users table.
+**UI/UX Decisions:**
+- Uses TailwindCSS and shadcn/ui for a modern, responsive, and accessible user interface.
+- Features a clean, question-by-question interface for students taking exams.
+- Dashboards are role-specific (professor/student) providing tailored functionalities and views.
+- Student performance is visualized using Recharts for graphical representations (e.g., radar charts, line graphs).
+- Interactive chat interface for AI question generation.
 
-- `/api/login` - Redirects to Replit Auth login
-- `/api/logout` - Logs out and redirects to home
-- `/api/auth/user` - Returns current authenticated user
+**Technical Implementations:**
+- **Authentication:** Dual system: Replit OIDC for professors/admins, custom `studentId` + `examCode` login for students.
+- **Database:** PostgreSQL with Drizzle ORM for type-safe schema definition and querying.
+- **State Management:** TanStack Query for efficient server-side data fetching, caching, and synchronization.
+- **AI Integration:** OpenAI GPT-4o-mini for dual scoring (correctness and understanding) and audio transcription.
+- **File Processing:** `unpdf` and `pdf-parse` for PDF text extraction, direct parsing for TXT, MD, CSV, DOCX, PPTX, XLSX.
+- **Audio Processing:** `ffmpeg` for converting audio formats (WebM/OGG to WAV) before transcription.
+- **Proctoring:** Webcam and screen recording for exam integrity, recordings saved per submission.
+- **Scalability:** Designed with a clear separation of frontend and backend concerns, and leveraging PostgreSQL for data storage.
 
-## Project Structure
+**Feature Specifications:**
+- **Exam Creation:** Professors can create exams with MCQ, short answer, and audio response questions, manually or via AI generation (with conversational AI assistance).
+- **Class Management:** Professors can create and manage universities and classes, assign students, and upload class materials for AI context.
+- **Student Exam Workflow:** Students can view assigned exams, take them, record audio responses, and receive immediate dual scores (correctness and understanding) with AI feedback.
+- **Grading:** Dual AI grading provides both correctness and understanding scores. Manual override for professor adjustments.
+- **Class Materials:** Upload and processing of various document types (PDF, TXT, MD, CSV, DOCX, PPTX, XLSX) to provide AI with contextual information for grading.
+- **Performance Analytics:** Professors have access to student performance radar charts, score trends, and detailed submission breakdowns, including proctoring alerts.
+- **Session Management:** Demo sessions are isolated using `demo_session_id` cookies.
 
-```
-├── client/                 # Frontend React application
-│   ├── src/
-│   │   ├── components/    # Reusable UI components
-│   │   │   ├── ui/       # shadcn/ui components
-│   │   │   ├── create-exam-dialog.tsx
-│   │   │   ├── exam-details-dialog.tsx
-│   │   │   ├── take-exam-dialog.tsx
-│   │   │   └── theme-toggle.tsx
-│   │   ├── hooks/        # Custom hooks
-│   │   │   ├── use-auth.ts    # Auth hook (useAuth)
-│   │   │   └── use-toast.ts
-│   │   ├── lib/          # Utilities
-│   │   │   ├── auth-utils.ts  # Auth utility functions
-│   │   │   └── queryClient.ts # TanStack Query setup
-│   │   ├── pages/        # Page components
-│   │   │   ├── landing.tsx            # Landing page (logged out)
-│   │   │   ├── role-select.tsx        # Role selection (first login)
-│   │   │   ├── professor-dashboard.tsx
-│   │   │   └── student-dashboard.tsx
-│   │   ├── App.tsx       # Main app with auth-based routing
-│   │   └── index.css     # Global styles and theme
-├── server/                # Backend Express application
-│   ├── db.ts             # Database connection (Drizzle + Neon)
-│   ├── routes.ts         # API route handlers
-│   ├── storage.ts        # DatabaseStorage with AI grading logic
-│   ├── index.ts          # Server entry point with auth setup
-│   └── replit_integrations/  # Replit auth integration
-│       └── auth.ts
-├── shared/               # Shared code between frontend and backend
-│   ├── schema.ts         # Drizzle schema + Zod schemas
-│   └── models/
-│       └── auth.ts       # Users and sessions tables
-```
+## External Dependencies
 
-## API Endpoints
-
-### Authentication
-- `GET /api/auth/user` - Get current authenticated user
-- `GET /api/login` - Redirect to Replit Auth
-- `GET /api/logout` - Logout
-- `PATCH /api/users/:id/role` - Set user role (professor/student)
-
-### Users
-- `GET /api/users` - Get all users
-- `GET /api/users/:id` - Get user by ID
-
-### Universities
-- `GET /api/universities` - Get all universities
-- `GET /api/universities/:id` - Get university by ID
-- `POST /api/universities` - Create university
-
-### Classes
-- `GET /api/classes` - Get classes (filtered by role: professor sees own, student sees enrolled)
-- `GET /api/classes/:id` - Get class by ID
-- `POST /api/classes` - Create class (professor)
-- `DELETE /api/classes/:id` - Delete class
-
-### Enrollments
-- `GET /api/classes/:classId/enrollments` - Get class enrollments
-- `POST /api/classes/:classId/enroll` - Self-enroll student
-- `POST /api/classes/:classId/enrollments` - Add student enrollment
-- `DELETE /api/classes/:classId/enrollments/:studentId` - Remove enrollment
-
-### Exams
-- `GET /api/exams` - Get exams (filtered by role)
-- `GET /api/exams/:id` - Get exam by ID
-- `POST /api/exams` - Create a new exam
-- `PATCH /api/exams/:id` - Update an exam
-- `DELETE /api/exams/:id` - Delete an exam
-
-### Submissions
-- `GET /api/submissions` - Get submissions (filtered by role)
-- `GET /api/submissions/:id` - Get submission by ID
-- `POST /api/submissions` - Submit exam responses
-- `PATCH /api/submissions/:id/score` - Manual score update
-
-### Transcription
-- `POST /api/transcribe` - Transcribe audio to text (live preview)
-
-## Data Models
-
-### User (shared/models/auth.ts)
-- `id`: UUID primary key
-- `email`: Unique email
-- `firstName`, `lastName`: Name fields
-- `profileImageUrl`: Avatar URL
-- `role`: "professor" | "student" | null (set on first login)
-- `universityId`: Optional university association
-
-### University
-- `id`: UUID, `name`: string, `domain`: optional string
-
-### Class
-- `id`: UUID, `name`: string, `universityId`: FK, `professorId`: FK
-
-### Enrollment
-- `id`: UUID, `studentId`: FK, `classId`: FK
-
-### Exam
-- `id`: UUID, `title`: string, `professorId`: FK, `classId`: optional FK
-- `questions`: JSONB array of Question objects
-- `startTime`, `endTime`: Optional ISO strings
-- `assignedStudentIds`: JSONB string array
-- `assignedStudentNames`: JSONB string array
-
-### ExamSubmission
-- `id`: UUID, `examId`: FK, `studentId`: FK
-- `responses`: JSONB array of ExamResponse
-- `scores`: JSONB object (questionId -> 0-1 score)
-- `gradingMethods`: JSONB object (questionId -> "ai"|"exact"|"fallback"|"manual")
-- `totalScore`: float, `submittedAt`: ISO string
-
-## Class Materials
-
-Professors can upload course materials (PDF, TXT, MD, CSV) per class. These materials are:
-- Stored as extracted text in the `class_materials` table
-- Passed as context to the AI grading prompt when evaluating student answers
-- Truncated to 8000 chars if too long for the AI context window
-- PDF text extraction via `pdf-parse`, text files read directly
-
-## Grading Logic (Dual Scoring)
-
-Each question receives TWO scores from the AI:
-1. **Correctness Score** (0-100%): Is the answer factually correct?
-2. **Understanding Score** (0-100%): Does the student demonstrate deep subject understanding?
-
-This means a student might score high on correctness but low on understanding (e.g., memorized answer without explanation).
-
-- **MCQ Questions**: Exact match (both scores are 1.0 or 0.0)
-- **Short Answer**: AI dual evaluation using GPT-4o-mini with class materials context
-- **Audio Questions**: Speech-to-text transcription + AI dual grading
-  - Uses gpt-4o-mini-transcribe model via Replit AI Integrations for speech-to-text
-  - Audio format auto-conversion via ffmpeg (WebM/OGG -> WAV) before transcription
-  - Falls back to word overlap if AI fails
-
-Scores stored in `submissions.scores` (correctness) and `submissions.understandingScores` (understanding).
-
-## Development
-
-The application runs on port 5000 with both frontend and backend served together via Vite's proxy setup.
-
-```bash
-npm run dev
-```
-
-## Recent Changes
-
-- **Student Performance Radar**: Longitudinal student analytics feature for professors. Computes per-student metrics: avg correctness/understanding scores, per-question-type breakdowns (MCQ/short/audio), improvement trend (first 3 vs last 3 submissions), grading method distribution with fallback ratio, and integrity risk level based on proctoring flags. Two professor-only API endpoints: `GET /api/students/:id/performance-radar` (single student, all exams) and `GET /api/classes/:id/performance-radar` (all students in a class, filtered to class exams). On-demand SQL computation using optimized covering index `idx_submissions_student_radar`. Types defined in `shared/schema.ts` (StudentPerformanceRadar, QuestionTypeBreakdown, PerformanceTrend, etc.). Computation logic in `computeStudentRadar()` in `server/storage.ts`.
-- **Conversational AI Question Generation**: Replaced single-shot AI generation with an interactive chat assistant. When professors click "AI Generate", a chat interface opens where the AI asks clarifying questions one at a time (how many questions, what type, topic focus, difficulty) before generating. Uses POST `/api/ai-question-chat` endpoint with full conversation history. Backend validates messages and caps at 30 exchanges.
-- **Robust PDF Upload**: Uses `unpdf` (PDF.js-based) as primary parser with `pdf-parse` fallback for maximum compatibility
-- **Student Detail Panel**: Clickable student names in class detail view open a full detail panel with performance graph (Recharts line chart, X=exam names, Y=grades, toggle Correctness/Understanding/Both), expandable submission cards with dual scores, grading methods, AI feedback, proctoring alerts, and video playback (screen recording main + webcam PiP overlay). New component: `client/src/components/student-detail-panel.tsx`.
-- **Post-Creation Class Roster Management**: Professors can add/remove students from classes at any time via PATCH `/api/classes/:id/roster` endpoint. Class detail view has persistent "Add Student" input.
-- **Create Exam Student Picker**: Collapsible dropdown panel in Create Exam dialog shows all class students (roster + enrolled) with checkboxes and Add All/Remove All.
-- **Demo Login Session Isolation**: Each browser session gets unique demo professor/student pair via `demo_session_id` cookie; user list filtered by session.
-- **Exam Proctoring**: Webcam and screen recording required before starting any exam (student or preview). Recordings saved per submission and accessible by professors.
-- **Full Preview Pipeline**: Preview mode now runs the complete AI grading pipeline (submission, AI scoring, dual grading, feedback) — submissions flagged as preview and filtered from student results by default.
-- **Exam Setup Gate**: New setup phase before exam starts requiring camera + screen share; exam starts only after both are active.
-- **Dual Score Results View**: Results screen shows both correctness and understanding scores per question with AI feedback (strengths, weak points, recommendations).
-- **Bulk Student Assignment**: Professors can add all enrolled class students to an exam with one click ("Add all class students" button)
-- **Enhanced Results View**: Exam details show summary stats (avg correctness/understanding), expandable student submission cards with per-question scores, expected vs actual answers, and color-coded performance indicators
-- **AI Feedback Per Submission**: Each submission gets AI-generated feedback with strengths, weak points, and study recommendations; auto-generated on submission and on-demand via "Generate Feedback" button
-- **Branding**: Renamed to VoxExams throughout the app
-- **AI Question Generation**: Professors can generate exam questions from uploaded class materials using GPT-4o-mini
-- **University-level OpenAI API Key**: API key is now managed at the university level in Settings; all professors linked to the same university share the key for AI question generation and grading
-- **AI Exam Instructions**: Professors can provide custom instructions (topic focus, difficulty, style) when generating AI questions
-- **Enhanced Exam Creation**: Questions can be added manually or AI-generated; each question type (MCQ, short answer, audio) is selectable and editable inline
-- **Expanded File Uploads**: Now supports .docx (Word), .pptx (PowerPoint), .xlsx/.xls (Excel) in addition to PDF/TXT/MD/CSV
-- **Class Materials Upload**: Professors can upload course materials per class for AI grading context
-- **Dual AI Grading**: Each answer receives both a correctness score and an understanding score
-- **Major refactor**: Migrated from in-memory storage to PostgreSQL with Drizzle ORM
-- **Authentication**: Replaced simple username/role login with Replit Auth (Google, GitHub, Apple, email+password)
-- **University/Class hierarchy**: Added universities, classes, and enrollments tables
-- AI-powered grading using OpenAI GPT-4o-mini for short answer and audio questions
-- Audio transcription using gpt-4o-mini-transcribe with ffmpeg format conversion
-- Manual grading override with grading method indicators
+-   **Frontend Framework:** React
+-   **TypeScript:** Language for both frontend and backend
+-   **Vite:** Frontend build tool
+-   **TailwindCSS:** CSS framework for styling
+-   **shadcn/ui:** UI component library
+-   **Backend Framework:** Express.js
+-   **Database:** PostgreSQL (e.g., Neon for hosting)
+-   **ORM:** Drizzle ORM
+-   **Authentication:** Replit Auth (for OIDC integration with Google, GitHub, Apple, email+password)
+-   **AI Services:** OpenAI GPT-4o-mini (via Replit AI Integrations) for:
+    -   AI Question Generation
+    -   Dual AI Grading (correctness and understanding)
+    -   Audio Transcription (gpt-4o-mini-transcribe)
+-   **State Management Library:** TanStack Query
+-   **PDF Parsing:** `unpdf`, `pdf-parse`
+-   **Audio Processing:** `ffmpeg` (for client-side audio format conversion)
+-   **Charting Library:** Recharts
+-   **Validation:** Zod (for schema validation)

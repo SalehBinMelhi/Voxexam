@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Dialog,
@@ -8,7 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GraduationCap, Mic, Brain, Shield, ArrowRight, UserCog, BookOpen, ChevronRight } from "lucide-react";
+import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle } from "lucide-react";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -98,6 +100,10 @@ const featureDetails: Record<Exclude<FeatureKey, null>, { title: string; icon: t
 export default function LandingPage() {
   const [loggingIn, setLoggingIn] = useState<string | null>(null);
   const [activeFeature, setActiveFeature] = useState<FeatureKey>(null);
+  const [studentIdInput, setStudentIdInput] = useState("");
+  const [examCodeInput, setExamCodeInput] = useState("");
+  const [studentLoginError, setStudentLoginError] = useState("");
+  const [studentLoginLoading, setStudentLoginLoading] = useState(false);
 
   const handleDemoLogin = async (role: "professor" | "student") => {
     setLoggingIn(role);
@@ -118,6 +124,34 @@ export default function LandingPage() {
     }
   };
 
+  const handleStudentLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStudentLoginError("");
+    if (!studentIdInput.trim() || !examCodeInput.trim()) {
+      setStudentLoginError("Both fields are required.");
+      return;
+    }
+    setStudentLoginLoading(true);
+    try {
+      const res = await fetch("/api/student-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ studentId: studentIdInput.trim(), examCode: examCodeInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        setStudentLoginError(data.message || "Login failed. Please try again.");
+      }
+    } catch (e) {
+      setStudentLoginError("Connection error. Please try again.");
+    } finally {
+      setStudentLoginLoading(false);
+    }
+  };
+
   const detail = activeFeature ? featureDetails[activeFeature] : null;
 
   return (
@@ -133,15 +167,15 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <a href="/api/login">
-              <Button variant="outline" data-testid="button-login">Sign In</Button>
+              <Button variant="outline" size="sm" data-testid="button-admin-login">Professor / Admin Login</Button>
             </a>
           </div>
         </div>
       </header>
 
       <main>
-        <section className="container mx-auto px-4 py-20 lg:py-32">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
+        <section className="container mx-auto px-4 py-16 lg:py-24">
+          <div className="grid lg:grid-cols-2 gap-12 items-start">
             <div className="space-y-8">
               <div className="space-y-4">
                 <h1 className="text-4xl lg:text-5xl font-serif font-bold tracking-tight leading-tight">
@@ -152,37 +186,88 @@ export default function LandingPage() {
                   Create, manage, and grade oral examinations with AI-powered transcription and intelligent scoring. Built for modern universities.
                 </p>
               </div>
-              <div className="space-y-4">
-                <p className="text-sm font-medium text-muted-foreground">Quick Login</p>
-                <div className="flex flex-col sm:flex-row gap-3">
+
+              <Card className="border-2 border-primary/20">
+                <CardContent className="p-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <BookOpen className="h-5 w-5 text-primary" />
+                    <h3 className="font-semibold text-lg">Student Exam Login</h3>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Enter your name and exam code provided by your professor.
+                  </p>
+                  <form onSubmit={handleStudentLogin} className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="student-id">Your Name</Label>
+                      <Input
+                        id="student-id"
+                        placeholder="e.g. John Smith"
+                        value={studentIdInput}
+                        onChange={(e) => setStudentIdInput(e.target.value)}
+                        disabled={studentLoginLoading}
+                        data-testid="input-student-id"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="exam-code">Exam Code</Label>
+                      <Input
+                        id="exam-code"
+                        placeholder="Paste the exam code from your professor"
+                        value={examCodeInput}
+                        onChange={(e) => setExamCodeInput(e.target.value)}
+                        disabled={studentLoginLoading}
+                        data-testid="input-exam-code"
+                      />
+                    </div>
+                    {studentLoginError && (
+                      <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-student-login-error">
+                        <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>{studentLoginError}</span>
+                      </div>
+                    )}
+                    <Button
+                      type="submit"
+                      className="w-full gap-2"
+                      size="lg"
+                      disabled={studentLoginLoading}
+                      data-testid="button-student-login"
+                    >
+                      <LogIn className="h-4 w-4" />
+                      {studentLoginLoading ? "Logging in..." : "Enter Exam"}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Demo Access</p>
+                <div className="flex flex-col sm:flex-row gap-2">
                   <Button
-                    size="lg"
+                    variant="outline"
+                    size="sm"
                     className="gap-2"
                     onClick={() => handleDemoLogin("professor")}
                     disabled={loggingIn !== null}
                     data-testid="button-login-professor"
                   >
-                    <UserCog className="h-4 w-4" />
-                    {loggingIn === "professor" ? "Logging in..." : "Login as Professor"}
+                    <UserCog className="h-3.5 w-3.5" />
+                    {loggingIn === "professor" ? "Logging in..." : "Demo Professor"}
                   </Button>
                   <Button
-                    size="lg"
-                    variant="secondary"
+                    variant="outline"
+                    size="sm"
                     className="gap-2"
                     onClick={() => handleDemoLogin("student")}
                     disabled={loggingIn !== null}
                     data-testid="button-login-student"
                   >
-                    <BookOpen className="h-4 w-4" />
-                    {loggingIn === "student" ? "Logging in..." : "Login as Student"}
+                    <BookOpen className="h-3.5 w-3.5" />
+                    {loggingIn === "student" ? "Logging in..." : "Demo Student"}
                   </Button>
                 </div>
               </div>
-              <div className="flex items-center gap-6 text-sm text-muted-foreground">
-                <span>Free to use</span>
-                <span>No credit card required</span>
-              </div>
             </div>
+
             <div className="hidden lg:flex items-center justify-center">
               <div className="relative w-full max-w-md aspect-square">
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-primary/5 to-transparent rounded-3xl" />
