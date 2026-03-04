@@ -195,7 +195,7 @@ export default function LandingPage() {
             <div className="w-9 h-9 rounded-md flex items-center justify-center" style={{ backgroundColor: "hsl(var(--brand-logo-bg))" }}>
               <GraduationCap className="h-5 w-5" style={{ color: "hsl(var(--brand-logo-fg))" }} />
             </div>
-            <span className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-logo-fg))" }}>Vox</span>Exams</span>
+            <span className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-text))" }}>Vox</span>Exams</span>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />

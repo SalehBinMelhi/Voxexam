@@ -60,6 +60,7 @@
 
   --brand-blue: 220 55% 28%;
   --brand-teal: 172 70% 88%;
+  --brand-text: 192 65% 25%;
   --brand-logo-bg: var(--brand-blue);
   --brand-logo-fg: var(--brand-teal);
 
@@ -157,6 +158,7 @@
 
   --brand-blue: 218 50% 22%;
   --brand-teal: 172 65% 82%;
+  --brand-text: 172 50% 60%;
   --brand-logo-bg: var(--brand-blue);
   --brand-logo-fg: var(--brand-teal);
 

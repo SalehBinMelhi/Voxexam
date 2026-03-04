@@ -74,7 +74,7 @@ export default function StudentDashboard() {
               <GraduationCap className="h-5 w-5" style={{ color: "hsl(var(--brand-logo-fg))" }} />
             </div>
             <div>
-              <h1 className="font-semibold"><span style={{ color: "hsl(var(--brand-logo-fg))" }}>Vox</span>Exams</h1>
+              <h1 className="font-semibold"><span style={{ color: "hsl(var(--brand-text))" }}>Vox</span>Exams</h1>
               <p className="text-xs text-muted-foreground">Student Dashboard</p>
             </div>
           </div>
