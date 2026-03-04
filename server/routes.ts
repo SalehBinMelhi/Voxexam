@@ -676,9 +676,25 @@ export async function registerRoutes(
 
   app.patch("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || (user.role !== "professor" && user.role !== "admin")) {
+        return res.status(403).json({ error: "Only professors can update exams" });
+      }
+      const existing = await storage.getExam(p(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+      if (user.role === "professor" && existing.professorId !== user.id) {
+        return res.status(403).json({ error: "Not authorized to update this exam" });
+      }
+      const isPublishing = req.body.startTime && !existing.startTime;
       const exam = await storage.updateExam(p(req.params.id), req.body);
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
+      }
+      if (isPublishing) {
+        const refreshed = await storage.regenerateExamAccessCode(exam.id);
+        return res.json(refreshed);
       }
       res.json(exam);
     } catch (error) {
@@ -688,6 +704,17 @@ export async function registerRoutes(
 
   app.delete("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
+      const user = await storage.getUser(req.user!.claims.sub);
+      if (!user || (user.role !== "professor" && user.role !== "admin")) {
+        return res.status(403).json({ error: "Only professors can delete exams" });
+      }
+      const existing = await storage.getExam(p(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+      if (user.role === "professor" && existing.professorId !== user.id) {
+        return res.status(403).json({ error: "Not authorized to delete this exam" });
+      }
       const deleted = await storage.deleteExam(p(req.params.id));
       if (!deleted) {
         return res.status(404).json({ error: "Exam not found" });

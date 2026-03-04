@@ -42,6 +42,11 @@ import {
   CheckCircle2,
   AlertCircle,
   AlertTriangle,
+  Key,
+  Copy,
+  RefreshCw,
+  Play,
+  Square,
 } from "lucide-react";
 import type { InsertQuestion, QuestionType, Exam, ExamSubmission, User as UserType, ProctoringFlag } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -313,6 +318,85 @@ export function SimpleExamTab() {
     updateScoreMutation.mutate({ submissionId: editingScore.submissionId, questionId: editingScore.questionId, score: scorePercent / 100 });
   };
 
+  const publishExamMutation = useMutation({
+    mutationFn: async (examId: string) => {
+      const now = new Date();
+      const end = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const response = await apiRequest("PATCH", `/api/exams/${examId}`, {
+        startTime: now.toISOString(),
+        endTime: end.toISOString(),
+      });
+      return response.json();
+    },
+    onSuccess: (updatedExam: Exam) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
+      setSelectedExam(updatedExam);
+      toast({
+        title: "Exam published",
+        description: updatedExam.accessCode
+          ? `Students can join with code: ${updatedExam.accessCode}`
+          : "Exam is now active for 24 hours.",
+      });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to publish exam.", variant: "destructive" });
+    },
+  });
+
+  const deactivateExamMutation = useMutation({
+    mutationFn: async (examId: string) => {
+      const response = await apiRequest("PATCH", `/api/exams/${examId}`, {
+        startTime: null,
+        endTime: null,
+      });
+      return response.json();
+    },
+    onSuccess: (updatedExam: Exam) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
+      setSelectedExam(updatedExam);
+      toast({ title: "Exam deactivated", description: "Exam returned to draft status." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to deactivate exam.", variant: "destructive" });
+    },
+  });
+
+  const regenerateCodeMutation = useMutation({
+    mutationFn: async (examId: string) => {
+      const response = await apiRequest("POST", `/api/exams/${examId}/regenerate-code`);
+      return response.json();
+    },
+    onSuccess: (updatedExam: Exam) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
+      setSelectedExam(updatedExam);
+      toast({ title: "Code regenerated", description: "A new exam access code has been generated." });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to regenerate code.", variant: "destructive" });
+    },
+  });
+
+  const copyAccessCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    toast({ title: "Copied", description: "Exam code copied to clipboard." });
+  };
+
+  const getAccessCodeStatus = (exam: Exam) => {
+    if (!exam.accessCode) return null;
+    if (!exam.accessCodeExpiresAt) return { active: true, label: "Active", timeRemaining: "" };
+    const expiresAt = new Date(exam.accessCodeExpiresAt);
+    const now = new Date();
+    if (isAfter(expiresAt, now)) {
+      const diffMs = expiresAt.getTime() - now.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMins / 60);
+      const remainingMins = diffMins % 60;
+      const timeRemaining = diffHours > 0 ? `${diffHours}h ${remainingMins}m remaining` : `${diffMins}m remaining`;
+      return { active: true, label: "Active", timeRemaining };
+    }
+    return { active: false, label: "Expired", timeRemaining: "" };
+  };
+
   if (selectedExam) {
     const examSubmissions = submissions.filter(s => s.examId === selectedExam.id);
     const status = getExamStatus(selectedExam);
@@ -332,9 +416,74 @@ export function SimpleExamTab() {
               <Eye className="h-4 w-4 mr-1" />
               Preview as Student
             </Button>
+            {status.label === "Draft" && (
+              <Button
+                size="sm"
+                onClick={() => publishExamMutation.mutate(selectedExam.id)}
+                disabled={publishExamMutation.isPending || selectedExam.questions.length === 0}
+                data-testid="button-publish-exam"
+              >
+                <Play className="h-4 w-4 mr-1" />
+                {publishExamMutation.isPending ? "Publishing..." : "Publish Exam"}
+              </Button>
+            )}
+            {(status.label === "Active" || status.label === "Scheduled") && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => deactivateExamMutation.mutate(selectedExam.id)}
+                disabled={deactivateExamMutation.isPending}
+                data-testid="button-deactivate-exam"
+              >
+                <Square className="h-4 w-4 mr-1" />
+                {deactivateExamMutation.isPending ? "Deactivating..." : "Deactivate"}
+              </Button>
+            )}
             <Badge variant={status.variant}>{status.label}</Badge>
           </div>
         </div>
+
+        {selectedExam.accessCode && (
+          <Card data-testid="section-exam-code">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-3">
+                  <Key className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Student Access Code:</span>
+                  <code className="text-lg font-mono font-bold bg-muted px-3 py-1.5 rounded-md tracking-widest" data-testid="text-access-code">
+                    {selectedExam.accessCode}
+                  </code>
+                  <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => copyAccessCode(selectedExam.accessCode!)} data-testid="button-copy-access-code">
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const codeStatus = getAccessCodeStatus(selectedExam);
+                    if (!codeStatus) return null;
+                    return codeStatus.active ? (
+                      <Badge variant="default" className="bg-green-600 text-white no-default-hover-elevate no-default-active-elevate" data-testid="badge-code-active">
+                        {codeStatus.timeRemaining || "Active"}
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" data-testid="badge-code-expired">Expired</Badge>
+                    );
+                  })()}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => regenerateCodeMutation.mutate(selectedExam.id)}
+                    disabled={regenerateCodeMutation.isPending}
+                    data-testid="button-regenerate-code"
+                  >
+                    <RefreshCw className={`h-4 w-4 mr-1 ${regenerateCodeMutation.isPending ? "animate-spin" : ""}`} />
+                    {regenerateCodeMutation.isPending ? "Regenerating..." : "New Code"}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {examSubmissions.length > 0 && (
           <div className="grid sm:grid-cols-2 gap-3">
