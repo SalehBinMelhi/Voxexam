@@ -23,6 +23,7 @@ The application is a full-stack web platform built with a React, TypeScript, Vit
 
 **UI/UX Decisions:**
 - Uses TailwindCSS and shadcn/ui for a modern, responsive, and accessible user interface.
+- **Color Theme:** Academic slate blue (primary) + muted teal (accent) palette. Deep navy-charcoal dark mode. Colors defined as HSL CSS variables in `client/src/index.css`. Brand logo uses `--brand-blue` and `--brand-teal` variables.
 - Features a clean, question-by-question interface for students taking exams.
 - Dashboards are role-specific (professor/student) providing tailored functionalities and views.
 - Student performance is visualized using Recharts for graphical representations (e.g., radar charts, line graphs).

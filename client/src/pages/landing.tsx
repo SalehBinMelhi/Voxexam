@@ -362,7 +362,7 @@ export default function LandingPage() {
                     <GraduationCap className="h-10 w-10 text-primary" />
                   </div>
                   <div className="text-center space-y-2">
-                    <h3 className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-purple))" }}>Vox</span>Exams Platform</h3>
+                    <h3 className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-blue))" }}>Vox</span>Exams Platform</h3>
                     <p className="text-sm text-muted-foreground">MCQ, Short Answer & Audio Responses</p>
                   </div>
                   <div className="flex gap-2">
