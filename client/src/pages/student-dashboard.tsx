@@ -40,7 +40,7 @@ function getExamStatus(exam: Exam): { label: string; variant: "default" | "secon
 }
 
 export default function StudentDashboard() {
-  const { user } = useAuth();
+  const { user, logoutUrl } = useAuth();
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
 
   const { data: exams = [], isLoading: examsLoading } = useQuery<Exam[]>({
@@ -88,7 +88,7 @@ export default function StudentDashboard() {
             </span>
             <HelpSupportPopover role="student" />
             <ThemeToggle />
-            <a href="/api/logout">
+            <a href={logoutUrl}>
               <Button variant="ghost" size="icon" data-testid="button-logout">
                 <LogOut className="h-4 w-4" />
               </Button>

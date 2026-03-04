@@ -170,6 +170,16 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/demo-logout", (req: any, res) => {
+    req.logout(() => {
+      if (req.session) {
+        req.session.destroy(() => {});
+      }
+      res.clearCookie("demo_session_id");
+      res.redirect("/");
+    });
+  });
+
   app.post("/api/class-login", async (req: any, res) => {
     try {
       const { studentName, classCode } = req.body;
