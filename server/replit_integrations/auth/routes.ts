@@ -49,8 +49,9 @@ export function registerAuthRoutes(app: Express): void {
         (n: string) => n.toLowerCase() === trimmedStudentId.toLowerCase()
       );
       const assignedById = (exam.assignedStudentIds || []).includes(localUserId);
+      const hasAssignedStudents = (exam.assignedStudentNames || []).length > 0 || (exam.assignedStudentIds || []).length > 0;
 
-      if (!assignedByName && !assignedById) {
+      if (hasAssignedStudents && !assignedByName && !assignedById) {
         return res.status(403).json({ message: "You are not assigned to this exam. Please contact your professor." });
       }
 
@@ -71,7 +72,7 @@ export function registerAuthRoutes(app: Express): void {
         studentId: trimmedStudentId,
       }).where(eq(users.id, localUserId));
 
-      if (assignedByName && !assignedById) {
+      if (!assignedById) {
         const updatedIds = [...(exam.assignedStudentIds || []), localUserId];
         await db.update(exams).set({ assignedStudentIds: updatedIds }).where(eq(exams.id, exam.id));
       }
