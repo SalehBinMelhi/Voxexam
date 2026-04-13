@@ -20,7 +20,7 @@ function SignInPage() {
         routing="path"
         path="/sign-in"
         signUpUrl="/sign-up"
-        afterSignInUrl="/"
+        fallbackRedirectUrl="/"
         appearance={{
           elements: {
             rootBox: "mx-auto",
@@ -39,7 +39,7 @@ function SignUpPage() {
         routing="path"
         path="/sign-up"
         signInUrl="/sign-in"
-        afterSignUpUrl="/"
+        fallbackRedirectUrl="/"
         appearance={{
           elements: {
             rootBox: "mx-auto",
@@ -87,7 +87,9 @@ function AppContent() {
 function Router() {
   return (
     <Switch>
+      <Route path="/sign-in/:rest*" component={SignInPage} />
       <Route path="/sign-in" component={SignInPage} />
+      <Route path="/sign-up/:rest*" component={SignUpPage} />
       <Route path="/sign-up" component={SignUpPage} />
       <Route path="/" component={AppContent} />
       <Route component={AppContent} />
