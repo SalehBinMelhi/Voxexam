@@ -45,6 +45,9 @@ integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_log_in_wi
 
 [userenv.shared]
 ADMIN_USER_IDS = ""
+VITE_CLERK_PUBLISHABLE_KEY = "pk_test_Y2xvc2luZy13aWxkY2F0LTU3LmNsZXJrLmFjY291bnRzLmRldiQ"
+CLERK_PUBLISHABLE_KEY = "pk_test_Y2xvc2luZy13aWxkY2F0LTU3LmNsZXJrLmFjY291bnRzLmRldiQ"
+CLERK_SECRET_KEY = "sk_test_AZrlQi2zis3vDThKKq1VWQYK7xtOoStgpV4YZFmH14"
 
 [postMerge]
 path = "scripts/post-merge.sh"

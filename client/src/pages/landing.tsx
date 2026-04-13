@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users } from "lucide-react";
-import { SiGoogle } from "react-icons/si";
+import { useLocation } from "wouter";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -200,13 +200,13 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <a href="/api/login">
+            <a href="/sign-in">
               <Button variant="outline" size="sm" data-testid="button-admin-login">Professor / Admin Login</Button>
             </a>
-            <a href="/api/login">
-              <Button size="sm" className="gap-2" data-testid="button-google-login">
-                <SiGoogle className="h-4 w-4" />
-                Sign in with Google
+            <a href="/sign-up">
+              <Button size="sm" className="gap-2" data-testid="button-signup">
+                <LogIn className="h-4 w-4" />
+                Sign Up
               </Button>
             </a>
           </div>

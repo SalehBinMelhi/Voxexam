@@ -19,7 +19,7 @@ VoxExams is a comprehensive web application designed for universities to manage 
 
 ## System Architecture
 
-The application is a full-stack web platform built with a React, TypeScript, Vite, TailwindCSS, and shadcn/ui frontend, and an Express.js backend utilizing a PostgreSQL database with Drizzle ORM. Authentication is handled via Replit Auth for professors and a custom local login system for students. Server state management leverages TanStack Query. AI grading and transcription capabilities are powered by OpenAI's GPT-4o-mini model, integrated through Replit AI Integrations.
+The application is a full-stack web platform built with a React, TypeScript, Vite, TailwindCSS, and shadcn/ui frontend, and an Express.js backend utilizing a PostgreSQL database with Drizzle ORM. Authentication uses a hybrid system: Clerk for professors/admins (with Google sign-in) and Passport.js sessions for students (exam/class code login) and demo users. Server state management leverages TanStack Query. AI grading and transcription capabilities are powered by OpenAI's GPT-4o-mini model, integrated through Replit AI Integrations.
 
 **UI/UX Decisions:**
 - Uses TailwindCSS and shadcn/ui for a modern, responsive, and accessible user interface.
@@ -30,19 +30,25 @@ The application is a full-stack web platform built with a React, TypeScript, Vit
 - Interactive chat interface for AI question generation.
 
 **Technical Implementations:**
-- **Authentication:** Dual system: Replit OIDC for professors/admins, custom `studentId` + `examCode` login for students.
+- **Authentication:** Hybrid system:
+  - **Clerk** (`@clerk/express` + `@clerk/clerk-react`) for professors/admins with Google sign-in, email/password. Clerk handles sign-in/sign-up UI at `/sign-in` and `/sign-up` routes.
+  - **Passport.js + express-session** (stored in PostgreSQL via `connect-pg-simple`) for student exam/class code login and demo sessions.
+  - `isAuthenticated` middleware checks Clerk JWT first, then falls back to passport session.
+  - `req.userId` is set by the middleware for all authenticated routes.
+  - Environment variables: `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY`, `SESSION_SECRET`.
 - **Database:** PostgreSQL with Drizzle ORM for type-safe schema definition and querying.
 - **State Management:** TanStack Query for efficient server-side data fetching, caching, and synchronization.
 - **AI Integration:** OpenAI GPT-4o-mini for dual scoring (correctness and understanding) and audio transcription.
 - **File Processing:** `unpdf` and `pdf-parse` for PDF text extraction, direct parsing for TXT, MD, CSV, DOCX, PPTX, XLSX.
 - **Audio Processing:** `ffmpeg` for converting audio formats (WebM/OGG to WAV) before transcription.
 - **Proctoring:** Webcam and screen recording for exam integrity, recordings saved per submission.
+- **WebSocket:** Origin validation added for CSWSH protection. Auth supports both Clerk JWT and passport sessions.
 - **Scalability:** Designed with a clear separation of frontend and backend concerns, and leveraging PostgreSQL for data storage.
 
 **Feature Specifications:**
 - **Exam Creation:** Professors can create exams with MCQ, short answer, and audio response questions, manually or via AI generation (with conversational AI assistance).
 - **Class Management:** Professors can create and manage universities and classes, assign students, and upload class materials for AI context.
-- **Student Exam Workflow:** Students can view assigned exams, take them, record audio responses, and receive immediate dual scores (correctness and understanding) with AI feedback.
+- **Student Exam Workflow:** Students can view assigned exams, take them, record audio responses, and receive immediate dual scores (correctness and understanding) with AI feedback. Student assignment is optional — open exams (no assigned students) allow anyone with the access code to join.
 - **Grading:** Dual AI grading provides both correctness and understanding scores. Manual override for professor adjustments.
 - **Class Materials:** Upload and processing of various document types (PDF, TXT, MD, CSV, DOCX, PPTX, XLSX) to provide AI with contextual information for grading.
 - **Performance Analytics:** Professors have access to student performance radar charts, score trends, and detailed submission breakdowns, including proctoring alerts. Exam-level analytics available via `GET /api/exams/:id/analytics` with per-student correctness/understanding breakdowns and CSV export.
@@ -58,7 +64,7 @@ The application is a full-stack web platform built with a React, TypeScript, Vit
 -   **Backend Framework:** Express.js
 -   **Database:** PostgreSQL (e.g., Neon for hosting)
 -   **ORM:** Drizzle ORM
--   **Authentication:** Replit Auth (for OIDC integration with Google, GitHub, Apple, email+password)
+-   **Authentication:** Clerk (`@clerk/express`, `@clerk/clerk-react`) for professor/admin login with Google sign-in; Passport.js + express-session for student/demo login
 -   **AI Services:** OpenAI GPT-4o-mini (via Replit AI Integrations) for:
     -   AI Question Generation
     -   Dual AI Grading (correctness and understanding)

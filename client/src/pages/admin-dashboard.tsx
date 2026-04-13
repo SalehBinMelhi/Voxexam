@@ -51,7 +51,7 @@ function getRoleBadge(role: string | null) {
 }
 
 export default function AdminDashboard() {
-  const { user, logoutUrl } = useAuth();
+  const { user, logout } = useAuth();
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
@@ -242,11 +242,9 @@ export default function AdminDashboard() {
             </div>
             <span className="text-sm text-muted-foreground hidden sm:inline">{displayName}</span>
             <ThemeToggle />
-            <a href={logoutUrl}>
-              <Button variant="ghost" size="icon" data-testid="button-logout">
-                <LogOut className="h-4 w-4" />
-              </Button>
-            </a>
+            <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
+              <LogOut className="h-4 w-4" />
+            </Button>
           </div>
         </div>
       </header>

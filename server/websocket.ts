@@ -2,11 +2,22 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import type { IncomingMessage } from "http";
 import { storage } from "./storage";
+import { verifyToken } from "@clerk/express";
 
 interface ConnectedClient {
   ws: WebSocket;
   userId: string;
   userRole: string;
+}
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  cookieHeader.split(";").forEach(pair => {
+    const [key, ...vals] = pair.trim().split("=");
+    if (key) cookies[key.trim()] = vals.join("=").trim();
+  });
+  return cookies;
 }
 
 class VoxWebSocketServer {
@@ -21,25 +32,60 @@ class VoxWebSocketServer {
         return;
       }
 
-      sessionParser(request, {} as any, () => {
+      const origin = request.headers.origin;
+      const host = request.headers.host;
+      if (origin && host) {
+        try {
+          const originHost = new URL(origin).host;
+          if (originHost !== host) {
+            socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+        } catch {
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      }
+
+      sessionParser(request, {} as any, async () => {
         const session = (request as any).session;
         const passport = session?.passport;
         const user = passport?.user;
 
-        if (!user?.claims?.sub) {
-          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-          socket.destroy();
+        if (user?.claims?.sub) {
+          this.wss.handleUpgrade(request, socket, head, (ws) => {
+            this.wss.emit("connection", ws, request, { userId: user.claims.sub });
+          });
           return;
         }
 
-        this.wss.handleUpgrade(request, socket, head, (ws) => {
-          this.wss.emit("connection", ws, request, user);
-        });
+        try {
+          const cookies = parseCookies(request.headers.cookie);
+          const token = cookies["__session"];
+          if (token && process.env.CLERK_SECRET_KEY) {
+            const payload = await verifyToken(token, {
+              secretKey: process.env.CLERK_SECRET_KEY,
+            });
+            if (payload?.sub) {
+              this.wss.handleUpgrade(request, socket, head, (ws) => {
+                this.wss.emit("connection", ws, request, { userId: payload.sub });
+              });
+              return;
+            }
+          }
+        } catch (e) {
+          console.error("[WS] Clerk token verification failed:", e);
+        }
+
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
       });
     });
 
-    this.wss.on("connection", (ws: WebSocket, _request: IncomingMessage, user: any) => {
-      const userId = user.claims.sub;
+    this.wss.on("connection", (ws: WebSocket, _request: IncomingMessage, authInfo: { userId: string }) => {
+      const userId = authInfo.userId;
 
       storage.getUser(userId).then(dbUser => {
         const userRole = dbUser?.role || "unknown";

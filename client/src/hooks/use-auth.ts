@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useUser, useClerk } from "@clerk/clerk-react";
 import type { User } from "@shared/models/auth";
 
 async function fetchUser(): Promise<User | null> {
@@ -17,35 +18,45 @@ async function fetchUser(): Promise<User | null> {
   return response.json();
 }
 
-async function logout(user: User | null | undefined): Promise<void> {
-  const isDemoUser = user?.id?.startsWith("demo-");
-  window.location.href = isDemoUser ? "/api/demo-logout" : "/api/logout";
-}
-
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { data: user, isLoading } = useQuery<User | null>({
+  const { user: clerkUser, isLoaded: clerkLoaded } = useUser();
+  const { signOut } = useClerk();
+
+  const { data: dbUser, isLoading: dbLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: fetchUser,
     retry: false,
-    staleTime: 1000 * 60 * 5, // 5 minutes
+    staleTime: 1000 * 60 * 5,
+    enabled: clerkLoaded,
   });
 
+  const isLoading = !clerkLoaded || dbLoading;
+  const user = dbUser;
+  const isAuthenticated = !!user;
+
+  const isLocalOrDemo = user?.id?.startsWith("local-") || user?.id?.startsWith("demo-");
+
   const logoutMutation = useMutation({
-    mutationFn: () => logout(user),
+    mutationFn: async () => {
+      if (isLocalOrDemo) {
+        window.location.href = "/api/demo-logout";
+      } else {
+        await signOut();
+        queryClient.setQueryData(["/api/auth/user"], null);
+        window.location.href = "/";
+      }
+    },
     onSuccess: () => {
       queryClient.setQueryData(["/api/auth/user"], null);
     },
   });
 
-  const logoutUrl = user?.id?.startsWith("demo-") ? "/api/demo-logout" : "/api/logout";
-
   return {
     user,
     isLoading,
-    isAuthenticated: !!user,
+    isAuthenticated,
     logout: logoutMutation.mutate,
     isLoggingOut: logoutMutation.isPending,
-    logoutUrl,
   };
 }
