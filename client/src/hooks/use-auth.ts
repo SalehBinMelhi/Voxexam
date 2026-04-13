@@ -23,8 +23,10 @@ export function useAuth() {
   const { user: clerkUser, isLoaded: clerkLoaded } = useUser();
   const { signOut } = useClerk();
 
+  const clerkUserId = clerkUser?.id ?? null;
+
   const { data: dbUser, isLoading: dbLoading } = useQuery<User | null>({
-    queryKey: ["/api/auth/user"],
+    queryKey: ["/api/auth/user", clerkUserId],
     queryFn: fetchUser,
     retry: false,
     staleTime: 1000 * 60 * 5,
@@ -43,12 +45,9 @@ export function useAuth() {
         window.location.href = "/api/demo-logout";
       } else {
         await signOut();
-        queryClient.setQueryData(["/api/auth/user"], null);
+        queryClient.removeQueries({ queryKey: ["/api/auth/user"] });
         window.location.href = "/";
       }
-    },
-    onSuccess: () => {
-      queryClient.setQueryData(["/api/auth/user"], null);
     },
   });
 
@@ -56,7 +55,7 @@ export function useAuth() {
     user,
     isLoading,
     isAuthenticated,
-    logout: logoutMutation.mutate,
+    logout: () => logoutMutation.mutate(),
     isLoggingOut: logoutMutation.isPending,
   };
 }
