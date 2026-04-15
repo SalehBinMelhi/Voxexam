@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users } from "lucide-react";
 import { useLocation } from "wouter";
+import { useClerk } from "@clerk/clerk-react";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -110,6 +111,7 @@ export default function LandingPage() {
   const [classCodeInput, setClassCodeInput] = useState("");
   const [classLoginError, setClassLoginError] = useState("");
   const [classLoginLoading, setClassLoginLoading] = useState(false);
+  const clerk = useClerk();
 
   const handleDemoLogin = async (role: "professor" | "student") => {
     setLoggingIn(role);
@@ -200,15 +202,23 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <a href="/sign-in">
-              <Button variant="outline" size="sm" data-testid="button-admin-login">Professor / Admin Login</Button>
-            </a>
-            <a href="/sign-up">
-              <Button size="sm" className="gap-2" data-testid="button-signup">
-                <LogIn className="h-4 w-4" />
-                Sign Up
-              </Button>
-            </a>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="button-admin-login"
+              onClick={() => clerk.redirectToSignIn({ redirectUrl: "/" })}
+            >
+              Professor / Admin Login
+            </Button>
+            <Button
+              size="sm"
+              className="gap-2"
+              data-testid="button-signup"
+              onClick={() => clerk.redirectToSignUp({ redirectUrl: "/" })}
+            >
+              <LogIn className="h-4 w-4" />
+              Sign Up
+            </Button>
           </div>
         </div>
       </header>
