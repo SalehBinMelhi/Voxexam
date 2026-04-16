@@ -36,9 +36,6 @@ declare global {
       refresh_token?: string;
       expires_at?: number;
     }
-    interface Request {
-      userId?: string;
-    }
   }
 }
 
@@ -64,7 +61,7 @@ export async function registerRoutes(
 
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       let users = await storage.getAllUsers();
 
       const demoMatch = userId.match(/^demo-(professor|student)-(.+)$/);
@@ -98,7 +95,7 @@ export async function registerRoutes(
 
   app.patch("/api/users/:id/role", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       if (userId !== p(req.params.id)) {
         return res.status(403).json({ error: "Cannot update another user's role" });
       }
@@ -118,7 +115,7 @@ export async function registerRoutes(
 
   app.patch("/api/universities/:id/api-key", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can manage university settings" });
@@ -139,7 +136,7 @@ export async function registerRoutes(
 
   app.post("/api/generate-questions", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can generate questions" });
@@ -186,7 +183,7 @@ export async function registerRoutes(
 
   app.post("/api/ai-question-chat", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can use AI question generation" });
@@ -261,7 +258,7 @@ export async function registerRoutes(
 
   app.post("/api/universities", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can create universities" });
@@ -280,7 +277,7 @@ export async function registerRoutes(
   // Classes routes
   app.get("/api/classes", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -314,7 +311,7 @@ export async function registerRoutes(
 
   app.post("/api/classes", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can create classes" });
@@ -332,7 +329,7 @@ export async function registerRoutes(
 
   app.patch("/api/classes/:id/roster", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can update class roster" });
@@ -368,7 +365,7 @@ export async function registerRoutes(
 
   app.delete("/api/classes/:id", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can delete classes" });
@@ -401,7 +398,7 @@ export async function registerRoutes(
 
   app.post("/api/classes/:classId/enroll", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const classId = p(req.params.classId);
       
       const existingEnrollments = await storage.getEnrollmentsByStudent(userId);
@@ -463,7 +460,7 @@ export async function registerRoutes(
 
   app.post("/api/classes/:classId/materials", isAuthenticated, upload.single("file"), async (req: any, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can upload materials" });
@@ -579,7 +576,7 @@ export async function registerRoutes(
 
   app.delete("/api/materials/:id", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can delete materials" });
@@ -597,7 +594,7 @@ export async function registerRoutes(
   // Exams routes
   app.get("/api/exams", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -639,7 +636,7 @@ export async function registerRoutes(
 
   app.get("/api/exams/:id/analytics", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || (user.role !== "professor" && user.role !== "admin")) {
         return res.status(403).json({ error: "Professor or admin access required" });
@@ -669,7 +666,7 @@ export async function registerRoutes(
         });
       }
 
-      const professorId = req.userId!;
+      const professorId = req.user!.claims.sub;
       const exam = await storage.createExam(professorId, parseResult.data);
       res.status(201).json(exam);
     } catch (error) {
@@ -679,7 +676,7 @@ export async function registerRoutes(
 
   app.patch("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || (user.role !== "professor" && user.role !== "admin")) {
         return res.status(403).json({ error: "Only professors can update exams" });
       }
@@ -707,7 +704,7 @@ export async function registerRoutes(
 
   app.delete("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || (user.role !== "professor" && user.role !== "admin")) {
         return res.status(403).json({ error: "Only professors can delete exams" });
       }
@@ -740,7 +737,7 @@ export async function registerRoutes(
       } else if (studentId) {
         subs = await storage.getSubmissionsByStudent(studentId as string);
       } else {
-        const userId = req.userId!;
+        const userId = req.user!.claims.sub;
         const user = await storage.getUser(userId);
         if (user?.role === "professor") {
           const profExams = await storage.getExamsByProfessor(userId);
@@ -785,7 +782,7 @@ export async function registerRoutes(
       }
 
       const { examId, responses, isPreview } = parseResult.data;
-      const studentId = req.userId!;
+      const studentId = req.user!.claims.sub;
 
       const exam = await storage.getExam(examId);
       if (!exam) {
@@ -855,7 +852,7 @@ export async function registerRoutes(
 
   app.post("/api/submissions/:id/feedback", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
 
       const submission = await storage.getSubmission(p(req.params.id));
       if (!submission) {
@@ -928,7 +925,7 @@ export async function registerRoutes(
     { name: "webcamRecording", maxCount: 1 },
   ]), async (req: any, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -976,7 +973,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/recordings/:filename", isAuthenticated, async (req, res) => {
-    const userId = req.userId!;
+    const userId = req.user!.claims.sub;
     const filename = p(req.params.filename);
     if (filename.includes("..") || filename.includes("/")) {
       return res.status(400).json({ error: "Invalid filename" });
@@ -1006,7 +1003,7 @@ export async function registerRoutes(
 
   app.post("/api/submissions/:id/proctoring", isAuthenticated, express.json({ limit: "50mb" }), async (req: any, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -1081,7 +1078,7 @@ export async function registerRoutes(
 
   app.post("/api/submissions/:id/analyze-proctoring", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -1132,7 +1129,7 @@ export async function registerRoutes(
 
   app.get("/api/students/:id/performance-radar", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can access performance radar" });
@@ -1154,7 +1151,7 @@ export async function registerRoutes(
 
   app.get("/api/classes/:id/performance-radar", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can access class performance radar" });
@@ -1213,7 +1210,7 @@ export async function registerRoutes(
   // Exam access code regeneration
   app.post("/api/exams/:id/regenerate-code", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can regenerate exam codes" });
       }
@@ -1234,7 +1231,7 @@ export async function registerRoutes(
   // Class join code regeneration
   app.post("/api/classes/:id/regenerate-code", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can regenerate class codes" });
       }
@@ -1255,7 +1252,7 @@ export async function registerRoutes(
   // Support request routes
   app.post("/api/support-requests", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       const request = await storage.createSupportRequest({
         userId,
@@ -1277,7 +1274,7 @@ export async function registerRoutes(
 
   app.get("/api/admin/support-requests", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
       }
@@ -1290,7 +1287,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/support-requests/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
       }
@@ -1311,7 +1308,7 @@ export async function registerRoutes(
 
   app.get("/api/support-requests/:id/messages", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       const request = await storage.getSupportRequest(p(req.params.id));
       if (!request) {
@@ -1329,7 +1326,7 @@ export async function registerRoutes(
 
   app.post("/api/support-requests/:id/messages", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const user = await storage.getUser(userId);
       const request = await storage.getSupportRequest(p(req.params.id));
       if (!request) {
@@ -1369,7 +1366,7 @@ export async function registerRoutes(
   // Admin user list
   app.get("/api/admin/users", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.userId!);
+      const user = await storage.getUser(req.user!.claims.sub);
       if (!user || user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
       }
@@ -1390,145 +1387,12 @@ export async function registerRoutes(
   // Get user's own active support request
   app.get("/api/my-support-request", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.userId!;
+      const userId = req.user!.claims.sub;
       const requests = await storage.getSupportRequests();
       const active = requests.find(r => r.userId === userId && r.status !== "resolved");
       res.json(active || null);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch support request" });
-    }
-  });
-
-  app.get("/api/admin/analytics", isAuthenticated, async (req, res) => {
-    try {
-      const user = await storage.getUser(req.userId!);
-      if (!user || user.role !== "admin") {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
-      const { users: usersTable } = await import("@shared/models/auth");
-      const { userEvents, exams: examsTable, submissions: submissionsTable } = await import("@shared/schema");
-      const { count, sql, gte, and, eq, desc } = await import("drizzle-orm");
-      const { db } = await import("./db");
-
-      const now = new Date();
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-      const [totalUsersResult] = await db.select({ count: count() }).from(usersTable);
-      const totalUsers = totalUsersResult?.count || 0;
-
-      const [activeUsers7dResult] = await db
-        .select({ count: sql<number>`count(distinct ${userEvents.userId})` })
-        .from(userEvents)
-        .where(gte(userEvents.createdAt, sevenDaysAgo));
-      const activeUsers7d = activeUsers7dResult?.count || 0;
-
-      const [activeUsers30dResult] = await db
-        .select({ count: sql<number>`count(distinct ${userEvents.userId})` })
-        .from(userEvents)
-        .where(gte(userEvents.createdAt, thirtyDaysAgo));
-      const activeUsers30d = activeUsers30dResult?.count || 0;
-
-      const signupsByDay = await db
-        .select({
-          date: sql<string>`to_char(${usersTable.createdAt}, 'YYYY-MM-DD')`,
-          count: count(),
-        })
-        .from(usersTable)
-        .where(gte(usersTable.createdAt, thirtyDaysAgo))
-        .groupBy(sql`to_char(${usersTable.createdAt}, 'YYYY-MM-DD')`)
-        .orderBy(sql`to_char(${usersTable.createdAt}, 'YYYY-MM-DD')`);
-
-      const loginHistory = await db
-        .select({
-          userId: userEvents.userId,
-          eventType: userEvents.eventType,
-          metadata: userEvents.metadata,
-          createdAt: userEvents.createdAt,
-        })
-        .from(userEvents)
-        .where(eq(userEvents.eventType, "login"))
-        .orderBy(desc(userEvents.createdAt))
-        .limit(100);
-
-      const loginHistoryWithNames = await Promise.all(
-        loginHistory.map(async (event) => {
-          const u = await storage.getUser(event.userId);
-          const meta = event.metadata as Record<string, unknown> | null;
-          return {
-            ...event,
-            userName: u ? `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email : event.userId,
-            userEmail: u?.email || "",
-            authProvider: (meta && typeof meta.authProvider === "string") ? meta.authProvider : "unknown",
-          };
-        })
-      );
-
-      const [totalExamsResult] = await db.select({ count: count() }).from(examsTable);
-      const totalExams = totalExamsResult?.count || 0;
-
-      const [totalSubmissionsResult] = await db.select({ count: count() }).from(submissionsTable);
-      const totalSubmissions = totalSubmissionsResult?.count || 0;
-
-      const [examsCreated30dResult] = await db
-        .select({ count: count() })
-        .from(examsTable)
-        .where(gte(examsTable.createdAt, thirtyDaysAgo));
-      const examsCreated30d = examsCreated30dResult?.count || 0;
-
-      const [submissions30dResult] = await db
-        .select({ count: count() })
-        .from(submissionsTable)
-        .where(sql`${submissionsTable.submittedAt}::timestamp >= ${thirtyDaysAgo}`);
-      const submissions30d = submissions30dResult?.count || 0;
-
-      const examsByDay = await db
-        .select({
-          date: sql<string>`to_char(${examsTable.createdAt}, 'YYYY-MM-DD')`,
-          count: count(),
-        })
-        .from(examsTable)
-        .where(gte(examsTable.createdAt, thirtyDaysAgo))
-        .groupBy(sql`to_char(${examsTable.createdAt}, 'YYYY-MM-DD')`)
-        .orderBy(sql`to_char(${examsTable.createdAt}, 'YYYY-MM-DD')`);
-
-      const submissionsByDay = await db
-        .select({
-          date: sql<string>`to_char(${submissionsTable.submittedAt}::timestamp, 'YYYY-MM-DD')`,
-          count: count(),
-        })
-        .from(submissionsTable)
-        .where(sql`${submissionsTable.submittedAt}::timestamp >= ${thirtyDaysAgo}`)
-        .groupBy(sql`to_char(${submissionsTable.submittedAt}::timestamp, 'YYYY-MM-DD')`)
-        .orderBy(sql`to_char(${submissionsTable.submittedAt}::timestamp, 'YYYY-MM-DD')`);
-
-      const featureUsage = await db
-        .select({
-          eventType: userEvents.eventType,
-          count: count(),
-        })
-        .from(userEvents)
-        .groupBy(userEvents.eventType)
-        .orderBy(desc(count()));
-
-      res.json({
-        totalUsers,
-        activeUsers7d,
-        activeUsers30d,
-        signupsByDay,
-        loginHistory: loginHistoryWithNames,
-        totalExams,
-        totalSubmissions,
-        examsCreated30d,
-        submissions30d,
-        examsByDay,
-        submissionsByDay,
-        featureUsage,
-      });
-    } catch (error) {
-      console.error("Analytics error:", error);
-      res.status(500).json({ error: "Failed to fetch analytics" });
     }
   });
 

@@ -37,7 +37,7 @@ import type { University } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 
 export default function ProfessorDashboard() {
-  const { user, logout } = useAuth();
+  const { user, logout, logoutUrl } = useAuth();
   const { toast } = useToast();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("simple");
@@ -126,9 +126,11 @@ export default function ProfessorDashboard() {
               <Settings className="h-4 w-4" />
             </Button>
             <ThemeToggle />
-            <Button variant="ghost" size="icon" onClick={() => logout()} data-testid="button-logout">
-              <LogOut className="h-4 w-4" />
-            </Button>
+            <a href={logoutUrl}>
+              <Button variant="ghost" size="icon" data-testid="button-logout">
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </a>
           </div>
         </div>
       </header>

@@ -9,16 +9,6 @@ interface ConnectedClient {
   userRole: string;
 }
 
-function parseCookies(cookieHeader: string | undefined): Record<string, string> {
-  const cookies: Record<string, string> = {};
-  if (!cookieHeader) return cookies;
-  cookieHeader.split(";").forEach(pair => {
-    const [key, ...vals] = pair.trim().split("=");
-    if (key) cookies[key.trim()] = vals.join("=").trim();
-  });
-  return cookies;
-}
-
 class VoxWebSocketServer {
   private wss: WebSocketServer;
   private clients: Map<string, ConnectedClient[]> = new Map();
@@ -31,42 +21,25 @@ class VoxWebSocketServer {
         return;
       }
 
-      const origin = request.headers.origin;
-      const host = request.headers.host;
-      if (origin && host) {
-        try {
-          const originHost = new URL(origin).host;
-          if (originHost !== host) {
-            socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-            socket.destroy();
-            return;
-          }
-        } catch {
-          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
-          socket.destroy();
-          return;
-        }
-      }
-
-      sessionParser(request, {} as any, async () => {
+      sessionParser(request, {} as any, () => {
         const session = (request as any).session;
         const passport = session?.passport;
         const user = passport?.user;
 
-        if (user?.claims?.sub) {
-          this.wss.handleUpgrade(request, socket, head, (ws) => {
-            this.wss.emit("connection", ws, request, { userId: user.claims.sub });
-          });
+        if (!user?.claims?.sub) {
+          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+          socket.destroy();
           return;
         }
 
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          this.wss.emit("connection", ws, request, user);
+        });
       });
     });
 
-    this.wss.on("connection", (ws: WebSocket, _request: IncomingMessage, authInfo: { userId: string }) => {
-      const userId = authInfo.userId;
+    this.wss.on("connection", (ws: WebSocket, _request: IncomingMessage, user: any) => {
+      const userId = user.claims.sub;
 
       storage.getUser(userId).then(dbUser => {
         const userRole = dbUser?.role || "unknown";

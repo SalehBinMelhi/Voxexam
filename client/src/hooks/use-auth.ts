@@ -17,29 +17,35 @@ async function fetchUser(): Promise<User | null> {
   return response.json();
 }
 
+async function logout(user: User | null | undefined): Promise<void> {
+  const isDemoUser = user?.id?.startsWith("demo-");
+  window.location.href = isDemoUser ? "/api/demo-logout" : "/api/logout";
+}
+
 export function useAuth() {
   const queryClient = useQueryClient();
-
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: fetchUser,
     retry: false,
-    staleTime: 1000 * 60 * 5,
+    staleTime: 1000 * 60 * 5, // 5 minutes
   });
-
-  const isAuthenticated = !!user;
 
   const logoutMutation = useMutation({
-    mutationFn: async () => {
-      window.location.href = "/api/logout";
+    mutationFn: () => logout(user),
+    onSuccess: () => {
+      queryClient.setQueryData(["/api/auth/user"], null);
     },
   });
+
+  const logoutUrl = user?.id?.startsWith("demo-") ? "/api/demo-logout" : "/api/logout";
 
   return {
     user,
     isLoading,
-    isAuthenticated,
-    logout: () => logoutMutation.mutate(),
+    isAuthenticated: !!user,
+    logout: logoutMutation.mutate,
     isLoggingOut: logoutMutation.isPending,
+    logoutUrl,
   };
 }

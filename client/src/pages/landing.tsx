@@ -11,8 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users, X } from "lucide-react";
-import { SiGoogle } from "react-icons/si";
+import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users } from "lucide-react";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -111,10 +110,6 @@ export default function LandingPage() {
   const [classLoginError, setClassLoginError] = useState("");
   const [classLoginLoading, setClassLoginLoading] = useState(false);
 
-  const urlParams = new URLSearchParams(window.location.search);
-  const authError = urlParams.get("error");
-  const [showAuthError, setShowAuthError] = useState(!!authError);
-
   const handleDemoLogin = async (role: "professor" | "student") => {
     setLoggingIn(role);
     try {
@@ -204,46 +199,12 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <Button
-              size="sm"
-              className="gap-2"
-              data-testid="button-google-login"
-              onClick={() => { window.location.href = "/api/auth/google"; }}
-            >
-              <SiGoogle className="h-4 w-4" />
-              Sign in with Google
-            </Button>
+            <a href="/api/login">
+              <Button variant="outline" size="sm" data-testid="button-admin-login">Professor / Admin Login</Button>
+            </a>
           </div>
         </div>
       </header>
-
-      {showAuthError && authError && (
-        <div className="bg-destructive/10 border border-destructive/20 px-4 py-3" data-testid="auth-error-banner">
-          <div className="container mx-auto flex items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              <span>
-                {authError === "auth_failed"
-                  ? "Google sign-in failed. Please try again."
-                  : authError === "login_failed"
-                  ? "Login failed. Please try again."
-                  : "Google sign-in encountered an error. Please try again or use demo access below."}
-              </span>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 w-6 p-0 text-destructive hover:text-destructive"
-              onClick={() => {
-                setShowAuthError(false);
-                window.history.replaceState({}, "", "/");
-              }}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      )}
 
       <main>
         <section className="container mx-auto px-4 py-16 lg:py-24">

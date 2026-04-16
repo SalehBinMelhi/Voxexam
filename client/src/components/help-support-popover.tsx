@@ -57,10 +57,7 @@ export function HelpSupportPopover({ role, activeTab }: HelpSupportPopoverProps)
   });
 
   useEffect(() => {
-    setLocalMessages((prev) => {
-      if (prev.length === messages.length && JSON.stringify(prev) === JSON.stringify(messages)) return prev;
-      return messages;
-    });
+    setLocalMessages(messages);
   }, [messages]);
 
   useEffect(() => {

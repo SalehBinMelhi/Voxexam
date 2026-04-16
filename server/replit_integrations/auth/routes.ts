@@ -181,16 +181,6 @@ export function registerAuthRoutes(app: Express): void {
     });
   });
 
-  app.get("/api/logout", (req: any, res) => {
-    req.logout(() => {
-      if (req.session) {
-        req.session.destroy(() => {});
-      }
-      res.clearCookie("demo_session_id");
-      res.redirect("/");
-    });
-  });
-
   app.post("/api/class-login", async (req: any, res) => {
     try {
       const { studentName, classCode } = req.body;
@@ -268,7 +258,7 @@ export function registerAuthRoutes(app: Express): void {
 
   app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.userId;
+      const userId = req.user.claims.sub;
       const user = await authStorage.getUser(userId);
       if (user) {
         const { openaiApiKey, ...safeUser } = user;
