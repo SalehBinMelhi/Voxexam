@@ -49,10 +49,14 @@ export async function setupAuth(app: Express) {
     console.warn("[AUTH] GOOGLE_CLIENT_ID and/or GOOGLE_CLIENT_SECRET not set. Google OAuth sign-in will be unavailable.");
   }
 
+  const callbackURL = process.env.REPLIT_DOMAINS
+    ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}/api/auth/google/callback`
+    : "http://localhost:5000/api/auth/google/callback";
+
+  console.log(`[AUTH] Google OAuth callback URL: ${callbackURL}`);
+  console.log("[AUTH] Add this URL to your Google Cloud Console > Credentials > OAuth 2.0 Client > Authorized redirect URIs");
+
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
-    const callbackURL = process.env.REPLIT_DOMAINS
-      ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}/api/auth/google/callback`
-      : "http://localhost:5000/api/auth/google/callback";
 
     const strategyOptions = {
       clientID: process.env.GOOGLE_CLIENT_ID,
@@ -125,6 +129,10 @@ export async function setupAuth(app: Express) {
     );
   }
 
+  app.get("/api/auth/google/callback-url", (_req, res) => {
+    res.json({ callbackURL });
+  });
+
   app.get("/api/auth/google", (req, res, next) => {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
       return res.status(503).json({ message: "Google OAuth is not configured" });
@@ -136,9 +144,18 @@ export async function setupAuth(app: Express) {
     if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
       return res.status(503).json({ message: "Google OAuth is not configured" });
     }
-    passport.authenticate("google", { failureRedirect: "/?error=auth_failed" })(req, res, () => {
-      res.redirect("/");
-    });
+    passport.authenticate("google", (err: any, user: any) => {
+      if (err || !user) {
+        if (err) console.error("[AUTH] Google OAuth error:", err.message);
+        return res.redirect("/?error=auth_failed");
+      }
+      req.login(user, (loginErr: any) => {
+        if (loginErr) {
+          return res.redirect("/?error=login_failed");
+        }
+        res.redirect("/");
+      });
+    })(req, res, next);
   });
 }
 
