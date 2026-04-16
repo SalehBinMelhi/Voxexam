@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -29,8 +30,36 @@ import {
   MicOff,
   Mic,
   X,
+  Users,
+  BarChart3,
+  Activity,
+  TrendingUp,
+  FileText,
+  Clock,
 } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { SupportRequest, ChatMessage } from "@shared/schema";
+
+interface AnalyticsData {
+  totalUsers: number;
+  activeUsers7d: number;
+  activeUsers30d: number;
+  signupsByDay: { date: string; count: number }[];
+  loginHistory: {
+    userId: string;
+    userName: string;
+    userEmail: string;
+    authProvider: string;
+    createdAt: string;
+  }[];
+  totalExams: number;
+  totalSubmissions: number;
+  examsCreated30d: number;
+  submissions30d: number;
+  examsByDay: { date: string; count: number }[];
+  submissionsByDay: { date: string; count: number }[];
+  featureUsage: { eventType: string; count: number }[];
+}
 
 function getStatusBadge(status: string) {
   switch (status) {
@@ -50,8 +79,208 @@ function getRoleBadge(role: string | null) {
   return <Badge variant="secondary" className="text-xs">{role}</Badge>;
 }
 
+function AnalyticsSection() {
+  const { data: analytics, isLoading } = useQuery<AnalyticsData>({
+    queryKey: ["/api/admin/analytics"],
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm text-muted-foreground">Loading analytics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!analytics) {
+    return <p className="text-muted-foreground text-center py-8">No analytics data available</p>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card data-testid="card-stat-total-users">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Total Users</span>
+            </div>
+            <p className="text-2xl font-bold" data-testid="text-total-users">{analytics.totalUsers}</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="card-stat-active-7d">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <Activity className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Active (7d)</span>
+            </div>
+            <p className="text-2xl font-bold" data-testid="text-active-7d">{analytics.activeUsers7d}</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="card-stat-active-30d">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Active (30d)</span>
+            </div>
+            <p className="text-2xl font-bold" data-testid="text-active-30d">{analytics.activeUsers30d}</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="card-stat-total-exams">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <FileText className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Total Exams</span>
+            </div>
+            <p className="text-2xl font-bold" data-testid="text-total-exams">{analytics.totalExams}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <span className="text-xs text-muted-foreground">Total Submissions</span>
+            <p className="text-xl font-bold" data-testid="text-total-submissions">{analytics.totalSubmissions}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <span className="text-xs text-muted-foreground">Exams (30d)</span>
+            <p className="text-xl font-bold" data-testid="text-exams-30d">{analytics.examsCreated30d}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <span className="text-xs text-muted-foreground">Submissions (30d)</span>
+            <p className="text-xl font-bold" data-testid="text-submissions-30d">{analytics.submissions30d}</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {analytics.signupsByDay.length > 0 && (
+        <Card data-testid="card-signups-chart">
+          <CardContent className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2">
+              <TrendingUp className="h-4 w-4" />
+              New Sign-ups (Last 30 Days)
+            </h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={analytics.signupsByDay}>
+                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  labelFormatter={(v) => new Date(v).toLocaleDateString()}
+                  contentStyle={{ fontSize: 12 }}
+                />
+                <Bar dataKey="count" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {(analytics.examsByDay.length > 0 || analytics.submissionsByDay.length > 0) && (
+        <Card data-testid="card-exam-activity-chart">
+          <CardContent className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Exam Activity (Last 30 Days)
+            </h3>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={(() => {
+                const allDates = new Set([
+                  ...analytics.examsByDay.map(e => e.date),
+                  ...analytics.submissionsByDay.map(s => s.date),
+                ]);
+                return Array.from(allDates).sort().map(date => ({
+                  date,
+                  examsCreated: analytics.examsByDay.find(e => e.date === date)?.count || 0,
+                  submissions: analytics.submissionsByDay.find(s => s.date === date)?.count || 0,
+                }));
+              })()}>
+                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
+                <XAxis
+                  dataKey="date"
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => new Date(v).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  labelFormatter={(v) => new Date(v).toLocaleDateString()}
+                  contentStyle={{ fontSize: 12 }}
+                />
+                <Bar dataKey="examsCreated" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} name="Exams Created" />
+                <Bar dataKey="submissions" fill="hsl(var(--chart-2))" radius={[3, 3, 0, 0]} name="Submissions" />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {analytics.featureUsage.length > 0 && (
+        <Card data-testid="card-feature-usage">
+          <CardContent className="p-4">
+            <h3 className="font-semibold mb-4 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Feature Usage Breakdown
+            </h3>
+            <div className="space-y-2">
+              {analytics.featureUsage.map((f) => (
+                <div key={f.eventType} className="flex items-center justify-between" data-testid={`row-feature-${f.eventType}`}>
+                  <span className="text-sm">{f.eventType}</span>
+                  <Badge variant="secondary">{f.count}</Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card data-testid="card-login-history">
+        <CardContent className="p-4">
+          <h3 className="font-semibold mb-4 flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            Recent Login History
+          </h3>
+          <ScrollArea className="h-[300px]">
+            <div className="space-y-2">
+              {analytics.loginHistory.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">No login history</p>
+              )}
+              {analytics.loginHistory.map((entry, i) => (
+                <div key={i} className="flex items-center justify-between py-2 border-b last:border-0" data-testid={`row-login-${i}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{entry.userName || entry.userId}</p>
+                    <p className="text-xs text-muted-foreground truncate">{entry.userEmail}</p>
+                  </div>
+                  <div className="flex items-center gap-2 ml-2">
+                    <Badge variant="outline" className="text-xs shrink-0">{entry.authProvider}</Badge>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap">
+                      {entry.createdAt ? new Date(entry.createdAt).toLocaleString() : ""}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
+  const [activeTab, setActiveTab] = useState("support");
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
@@ -250,209 +479,228 @@ export default function AdminDashboard() {
       </header>
 
       <main className="container mx-auto px-4 py-6">
-        <div className="flex flex-col lg:flex-row gap-6">
-          <div className="lg:w-1/3 space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-lg font-semibold">Support Requests</h2>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-36" data-testid="select-status-filter">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="in-progress">In Progress</SelectItem>
-                  <SelectItem value="resolved">Resolved</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="mb-6" data-testid="tabs-admin">
+            <TabsTrigger value="support" className="gap-2" data-testid="tab-support">
+              <MessageCircle className="h-4 w-4" />
+              Support
+            </TabsTrigger>
+            <TabsTrigger value="analytics" className="gap-2" data-testid="tab-analytics">
+              <BarChart3 className="h-4 w-4" />
+              Analytics
+            </TabsTrigger>
+          </TabsList>
 
-            <ScrollArea className="h-[calc(100vh-200px)]">
-              <div className="space-y-3 pr-2">
-                {filteredRequests.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-8">No support requests</p>
-                )}
-                {filteredRequests.map((req) => (
-                  <Card
-                    key={req.id}
-                    className={`cursor-pointer hover-elevate ${selectedRequestId === req.id ? "ring-2 ring-primary" : ""}`}
-                    onClick={() => setSelectedRequestId(req.id)}
-                    data-testid={`card-support-request-${req.id}`}
-                  >
-                    <CardContent className="p-4 space-y-2">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-sm font-medium" data-testid={`text-user-name-${req.id}`}>
-                          {req.userName || "Unknown User"}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          {getRoleBadge(req.userRole)}
-                          {getStatusBadge(req.status)}
-                        </div>
-                      </div>
-                      {req.message && (
-                        <p className="text-xs text-muted-foreground line-clamp-2" data-testid={`text-message-preview-${req.id}`}>
-                          {req.message}
-                        </p>
-                      )}
-                      {req.createdAt && (
-                        <p className="text-xs text-muted-foreground" data-testid={`text-timestamp-${req.id}`}>
-                          {new Date(req.createdAt).toLocaleString()}
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            </ScrollArea>
-          </div>
+          <TabsContent value="analytics">
+            <AnalyticsSection />
+          </TabsContent>
 
-          <div className="lg:w-2/3">
-            {!selectedRequest ? (
-              <div className="flex items-center justify-center h-[calc(100vh-200px)]">
-                <div className="text-center text-muted-foreground">
-                  <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                  <p className="text-sm">Select a support request to view details</p>
-                </div>
-              </div>
-            ) : (
-              <Card className="h-[calc(100vh-200px)] flex flex-col">
-                <div className="p-4 border-b flex items-center justify-between gap-2 flex-wrap">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{selectedRequest.userName || "Unknown User"}</span>
-                    {getRoleBadge(selectedRequest.userRole)}
-                    {getStatusBadge(selectedRequest.status)}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleViewScreen}
-                      disabled={selectedRequest.status === "resolved"}
-                      data-testid="button-view-screen"
-                    >
-                      <Monitor className="h-4 w-4 mr-1" /> View Screen
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleRequestCall}
-                      disabled={selectedRequest.status === "resolved"}
-                      data-testid="button-request-call"
-                    >
-                      <Phone className="h-4 w-4 mr-1" /> Request Call
-                    </Button>
-                    {selectedRequest.status !== "resolved" && (
-                      <Button
-                        size="sm"
-                        onClick={() => resolveRequestMutation.mutate(selectedRequest.id)}
-                        disabled={resolveRequestMutation.isPending}
-                        data-testid="button-mark-resolved"
-                      >
-                        <Check className="h-4 w-4 mr-1" /> Mark Resolved
-                      </Button>
-                    )}
-                  </div>
+          <TabsContent value="support">
+            <div className="flex flex-col lg:flex-row gap-6">
+              <div className="lg:w-1/3 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-lg font-semibold">Support Requests</h2>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger className="w-36" data-testid="select-status-filter">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="in-progress">In Progress</SelectItem>
+                      <SelectItem value="resolved">Resolved</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                {remoteStream && (
-                  <div className="p-4 border-b">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-sm font-medium">Screen Share</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          setRemoteStream(null);
-                          pcRef.current?.close();
-                          pcRef.current = null;
-                        }}
-                        data-testid="button-close-screen-share"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      className="w-full rounded-md bg-black"
-                      data-testid="video-screen-share"
-                    />
-                  </div>
-                )}
-
-                {audioStream && (
-                  <div className="p-3 border-b flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-green-500" />
-                    <span className="text-sm">Voice call active</span>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={handleToggleMute}
-                      data-testid="button-toggle-mute"
-                    >
-                      {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                    </Button>
-                  </div>
-                )}
-
-                <ScrollArea className="flex-1 p-4">
-                  <div className="space-y-2">
-                    {selectedRequest.message && (
-                      <div className="bg-muted rounded-md p-3 text-sm mb-4">
-                        <p className="text-xs text-muted-foreground mb-1">Initial message:</p>
-                        {selectedRequest.message}
-                      </div>
+                <ScrollArea className="h-[calc(100vh-250px)]">
+                  <div className="space-y-3 pr-2">
+                    {filteredRequests.length === 0 && (
+                      <p className="text-sm text-muted-foreground text-center py-8">No support requests</p>
                     )}
-                    {localMessages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={`flex ${msg.senderRole === "admin" ? "justify-end" : "justify-start"}`}
-                        data-testid={`chat-message-${msg.id}`}
+                    {filteredRequests.map((req) => (
+                      <Card
+                        key={req.id}
+                        className={`cursor-pointer hover-elevate ${selectedRequestId === req.id ? "ring-2 ring-primary" : ""}`}
+                        onClick={() => setSelectedRequestId(req.id)}
+                        data-testid={`card-support-request-${req.id}`}
                       >
-                        <div
-                          className={`rounded-md px-3 py-2 text-sm max-w-[80%] ${
-                            msg.senderRole === "admin"
-                              ? "bg-primary text-primary-foreground"
-                              : "bg-muted text-foreground"
-                          }`}
-                        >
-                          {msg.message}
-                        </div>
-                      </div>
+                        <CardContent className="p-4 space-y-2">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-sm font-medium" data-testid={`text-user-name-${req.id}`}>
+                              {req.userName || "Unknown User"}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {getRoleBadge(req.userRole)}
+                              {getStatusBadge(req.status)}
+                            </div>
+                          </div>
+                          {req.message && (
+                            <p className="text-xs text-muted-foreground line-clamp-2" data-testid={`text-message-preview-${req.id}`}>
+                              {req.message}
+                            </p>
+                          )}
+                          {req.createdAt && (
+                            <p className="text-xs text-muted-foreground" data-testid={`text-timestamp-${req.id}`}>
+                              {new Date(req.createdAt).toLocaleString()}
+                            </p>
+                          )}
+                        </CardContent>
+                      </Card>
                     ))}
-                    <div ref={messagesEndRef} />
                   </div>
                 </ScrollArea>
+              </div>
 
-                {selectedRequest.status !== "resolved" && (
-                  <div className="p-4 border-t flex gap-2">
-                    <Input
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Type a message..."
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey && chatInput.trim()) {
-                          e.preventDefault();
-                          sendMessageMutation.mutate();
-                        }
-                      }}
-                      data-testid="input-admin-chat"
-                    />
-                    <Button
-                      size="icon"
-                      onClick={() => sendMessageMutation.mutate()}
-                      disabled={!chatInput.trim() || sendMessageMutation.isPending}
-                      data-testid="button-admin-send"
-                    >
-                      <Send className="h-4 w-4" />
-                    </Button>
+              <div className="lg:w-2/3">
+                {!selectedRequest ? (
+                  <div className="flex items-center justify-center h-[calc(100vh-250px)]">
+                    <div className="text-center text-muted-foreground">
+                      <MessageCircle className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                      <p className="text-sm">Select a support request to view details</p>
+                    </div>
                   </div>
+                ) : (
+                  <Card className="h-[calc(100vh-250px)] flex flex-col">
+                    <div className="p-4 border-b flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium">{selectedRequest.userName || "Unknown User"}</span>
+                        {getRoleBadge(selectedRequest.userRole)}
+                        {getStatusBadge(selectedRequest.status)}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleViewScreen}
+                          disabled={selectedRequest.status === "resolved"}
+                          data-testid="button-view-screen"
+                        >
+                          <Monitor className="h-4 w-4 mr-1" /> View Screen
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRequestCall}
+                          disabled={selectedRequest.status === "resolved"}
+                          data-testid="button-request-call"
+                        >
+                          <Phone className="h-4 w-4 mr-1" /> Request Call
+                        </Button>
+                        {selectedRequest.status !== "resolved" && (
+                          <Button
+                            size="sm"
+                            onClick={() => resolveRequestMutation.mutate(selectedRequest.id)}
+                            disabled={resolveRequestMutation.isPending}
+                            data-testid="button-mark-resolved"
+                          >
+                            <Check className="h-4 w-4 mr-1" /> Mark Resolved
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {remoteStream && (
+                      <div className="p-4 border-b">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-sm font-medium">Screen Share</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setRemoteStream(null);
+                              pcRef.current?.close();
+                              pcRef.current = null;
+                            }}
+                            data-testid="button-close-screen-share"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          className="w-full rounded-md bg-black"
+                          data-testid="video-screen-share"
+                        />
+                      </div>
+                    )}
+
+                    {audioStream && (
+                      <div className="p-3 border-b flex items-center gap-2">
+                        <Phone className="h-4 w-4 text-green-500" />
+                        <span className="text-sm">Voice call active</span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleToggleMute}
+                          data-testid="button-toggle-mute"
+                        >
+                          {isMuted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        </Button>
+                      </div>
+                    )}
+
+                    <ScrollArea className="flex-1 p-4">
+                      <div className="space-y-2">
+                        {selectedRequest.message && (
+                          <div className="bg-muted rounded-md p-3 text-sm mb-4">
+                            <p className="text-xs text-muted-foreground mb-1">Initial message:</p>
+                            {selectedRequest.message}
+                          </div>
+                        )}
+                        {localMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className={`flex ${msg.senderRole === "admin" ? "justify-end" : "justify-start"}`}
+                            data-testid={`chat-message-${msg.id}`}
+                          >
+                            <div
+                              className={`rounded-md px-3 py-2 text-sm max-w-[80%] ${
+                                msg.senderRole === "admin"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted text-foreground"
+                              }`}
+                            >
+                              {msg.message}
+                            </div>
+                          </div>
+                        ))}
+                        <div ref={messagesEndRef} />
+                      </div>
+                    </ScrollArea>
+
+                    {selectedRequest.status !== "resolved" && (
+                      <div className="p-4 border-t flex gap-2">
+                        <Input
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          placeholder="Type a message..."
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey && chatInput.trim()) {
+                              e.preventDefault();
+                              sendMessageMutation.mutate();
+                            }
+                          }}
+                          data-testid="input-admin-chat"
+                        />
+                        <Button
+                          size="icon"
+                          onClick={() => sendMessageMutation.mutate()}
+                          disabled={!chatInput.trim() || sendMessageMutation.isPending}
+                          data-testid="button-admin-send"
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    )}
+                  </Card>
                 )}
-              </Card>
-            )}
-          </div>
-        </div>
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

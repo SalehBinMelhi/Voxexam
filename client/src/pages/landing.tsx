@@ -12,8 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users } from "lucide-react";
-import { useLocation } from "wouter";
-import { useClerk } from "@clerk/clerk-react";
+import { SiGoogle } from "react-icons/si";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -111,7 +110,6 @@ export default function LandingPage() {
   const [classCodeInput, setClassCodeInput] = useState("");
   const [classLoginError, setClassLoginError] = useState("");
   const [classLoginLoading, setClassLoginLoading] = useState(false);
-  const clerk = useClerk();
 
   const handleDemoLogin = async (role: "professor" | "student") => {
     setLoggingIn(role);
@@ -203,21 +201,13 @@ export default function LandingPage() {
           <div className="flex items-center gap-3">
             <ThemeToggle />
             <Button
-              variant="outline"
-              size="sm"
-              data-testid="button-admin-login"
-              onClick={() => clerk.redirectToSignIn({ redirectUrl: "/" })}
-            >
-              Professor / Admin Login
-            </Button>
-            <Button
               size="sm"
               className="gap-2"
-              data-testid="button-signup"
-              onClick={() => clerk.redirectToSignUp({ redirectUrl: "/" })}
+              data-testid="button-google-login"
+              onClick={() => { window.location.href = "/api/auth/google"; }}
             >
-              <LogIn className="h-4 w-4" />
-              Sign Up
+              <SiGoogle className="h-4 w-4" />
+              Sign in with Google
             </Button>
           </div>
         </div>

@@ -1,9 +1,10 @@
-import { clerkMiddleware, getAuth, clerkClient } from "@clerk/express";
 import passport from "passport";
+import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
+import { logUserEvent } from "../../storage";
 
 let sessionMiddleware: RequestHandler | null = null;
 
@@ -44,43 +45,112 @@ export async function setupAuth(app: Express) {
   passport.serializeUser((user: Express.User, cb) => cb(null, user));
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
-  app.use("/api", clerkMiddleware());
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+    console.warn("[AUTH] GOOGLE_CLIENT_ID and/or GOOGLE_CLIENT_SECRET not set. Google OAuth sign-in will be unavailable.");
+  }
+
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    const callbackURL = process.env.REPLIT_DOMAINS
+      ? `https://${process.env.REPLIT_DOMAINS.split(",")[0]}/api/auth/google/callback`
+      : "http://localhost:5000/api/auth/google/callback";
+
+    const strategyOptions = {
+      clientID: process.env.GOOGLE_CLIENT_ID,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      callbackURL,
+      state: true,
+    };
+
+    passport.use(
+      new GoogleStrategy(
+        strategyOptions as GoogleStrategy.StrategyOptions,
+        async (_accessToken, _refreshToken, profile, done) => {
+          try {
+            const email = profile.emails?.[0]?.value || "";
+            const firstName = profile.name?.givenName || "";
+            const lastName = profile.name?.familyName || "";
+            const profileImageUrl = profile.photos?.[0]?.value || null;
+            const googleId = profile.id;
+            const newGoogleUserId = `google-${googleId}`;
+
+            const { users } = await import("@shared/models/auth");
+            const { db } = await import("../../db");
+            const { eq } = await import("drizzle-orm");
+
+            let userId = newGoogleUserId;
+
+            const existingByEmail = email ? await authStorage.getUserByEmail(email) : undefined;
+
+            if (existingByEmail && existingByEmail.id !== newGoogleUserId) {
+              userId = existingByEmail.id;
+              await db.update(users).set({
+                authProvider: "google",
+                firstName: firstName || existingByEmail.firstName,
+                lastName: lastName || existingByEmail.lastName,
+                profileImageUrl: profileImageUrl || existingByEmail.profileImageUrl,
+                updatedAt: new Date(),
+              }).where(eq(users.id, existingByEmail.id));
+            } else {
+              await authStorage.upsertUser({
+                id: newGoogleUserId,
+                email,
+                firstName,
+                lastName,
+                profileImageUrl,
+              });
+              await db.update(users).set({ authProvider: "google" }).where(eq(users.id, newGoogleUserId));
+            }
+
+            logUserEvent(userId, "login", { authProvider: "google", email });
+
+            const sessionUser = {
+              claims: {
+                sub: userId,
+                email,
+                first_name: firstName,
+                last_name: lastName,
+                profile_image_url: profileImageUrl,
+              },
+              access_token: `google-token-${googleId}`,
+              refresh_token: null,
+              expires_at: Math.floor(Date.now() / 1000) + 86400 * 7,
+            };
+
+            return done(null, sessionUser);
+          } catch (error) {
+            return done(error as Error);
+          }
+        }
+      )
+    );
+  }
+
+  app.get("/api/auth/google", (req, res, next) => {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+      return res.status(503).json({ message: "Google OAuth is not configured" });
+    }
+    passport.authenticate("google", { scope: ["profile", "email"] })(req, res, next);
+  });
+
+  app.get("/api/auth/google/callback", (req, res, next) => {
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+      return res.status(503).json({ message: "Google OAuth is not configured" });
+    }
+    passport.authenticate("google", { failureRedirect: "/?error=auth_failed" })(req, res, () => {
+      res.redirect("/");
+    });
+  });
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
-  const clerkAuth = getAuth(req);
-  if (clerkAuth && clerkAuth.userId) {
-    try {
-      const client = clerkClient();
-      const clerkUser = await client.users.getUser(clerkAuth.userId);
-
-      const email = clerkUser.emailAddresses?.[0]?.emailAddress || "";
-      const firstName = clerkUser.firstName || "";
-      const lastName = clerkUser.lastName || "";
-      const profileImageUrl = clerkUser.imageUrl || null;
-
-      await authStorage.upsertUser({
-        id: clerkAuth.userId,
-        email,
-        firstName,
-        lastName,
-        profileImageUrl,
-      });
-
-      (req as any).userId = clerkAuth.userId;
-      return next();
-    } catch (error) {
-      console.error("Clerk auth error:", error);
-    }
-  }
-
   const user = req.user as any;
   if (req.isAuthenticated() && user?.claims?.sub) {
     const isLocalOrDemo = user.access_token?.startsWith("local-token-") || user.access_token?.startsWith("demo-token-");
+    const isGoogle = user.access_token?.startsWith("google-token-");
     const now = Math.floor(Date.now() / 1000);
 
-    if (now <= user.expires_at || isLocalOrDemo) {
-      if (isLocalOrDemo) {
+    if (now <= user.expires_at || isLocalOrDemo || isGoogle) {
+      if (isLocalOrDemo || isGoogle) {
         user.expires_at = Math.floor(Date.now() / 1000) + 86400 * 7;
       }
       (req as any).userId = user.claims.sub;

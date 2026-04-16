@@ -22,7 +22,7 @@ export const users = pgTable("users", {
   role: varchar("role"),
   universityId: varchar("university_id"),
   openaiApiKey: varchar("openai_api_key"),
-  authProvider: varchar("auth_provider").default("clerk"),
+  authProvider: varchar("auth_provider").default("google"),
   studentId: varchar("student_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

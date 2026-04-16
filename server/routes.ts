@@ -1399,5 +1399,138 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/admin/analytics", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.userId!);
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const { users: usersTable } = await import("@shared/models/auth");
+      const { userEvents, exams: examsTable, submissions: submissionsTable } = await import("@shared/schema");
+      const { count, sql, gte, and, eq, desc } = await import("drizzle-orm");
+      const { db } = await import("./db");
+
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      const [totalUsersResult] = await db.select({ count: count() }).from(usersTable);
+      const totalUsers = totalUsersResult?.count || 0;
+
+      const [activeUsers7dResult] = await db
+        .select({ count: sql<number>`count(distinct ${userEvents.userId})` })
+        .from(userEvents)
+        .where(gte(userEvents.createdAt, sevenDaysAgo));
+      const activeUsers7d = activeUsers7dResult?.count || 0;
+
+      const [activeUsers30dResult] = await db
+        .select({ count: sql<number>`count(distinct ${userEvents.userId})` })
+        .from(userEvents)
+        .where(gte(userEvents.createdAt, thirtyDaysAgo));
+      const activeUsers30d = activeUsers30dResult?.count || 0;
+
+      const signupsByDay = await db
+        .select({
+          date: sql<string>`to_char(${usersTable.createdAt}, 'YYYY-MM-DD')`,
+          count: count(),
+        })
+        .from(usersTable)
+        .where(gte(usersTable.createdAt, thirtyDaysAgo))
+        .groupBy(sql`to_char(${usersTable.createdAt}, 'YYYY-MM-DD')`)
+        .orderBy(sql`to_char(${usersTable.createdAt}, 'YYYY-MM-DD')`);
+
+      const loginHistory = await db
+        .select({
+          userId: userEvents.userId,
+          eventType: userEvents.eventType,
+          metadata: userEvents.metadata,
+          createdAt: userEvents.createdAt,
+        })
+        .from(userEvents)
+        .where(eq(userEvents.eventType, "login"))
+        .orderBy(desc(userEvents.createdAt))
+        .limit(100);
+
+      const loginHistoryWithNames = await Promise.all(
+        loginHistory.map(async (event) => {
+          const u = await storage.getUser(event.userId);
+          const meta = event.metadata as Record<string, unknown> | null;
+          return {
+            ...event,
+            userName: u ? `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.email : event.userId,
+            userEmail: u?.email || "",
+            authProvider: (meta && typeof meta.authProvider === "string") ? meta.authProvider : "unknown",
+          };
+        })
+      );
+
+      const [totalExamsResult] = await db.select({ count: count() }).from(examsTable);
+      const totalExams = totalExamsResult?.count || 0;
+
+      const [totalSubmissionsResult] = await db.select({ count: count() }).from(submissionsTable);
+      const totalSubmissions = totalSubmissionsResult?.count || 0;
+
+      const [examsCreated30dResult] = await db
+        .select({ count: count() })
+        .from(examsTable)
+        .where(gte(examsTable.createdAt, thirtyDaysAgo));
+      const examsCreated30d = examsCreated30dResult?.count || 0;
+
+      const [submissions30dResult] = await db
+        .select({ count: count() })
+        .from(submissionsTable)
+        .where(sql`${submissionsTable.submittedAt}::timestamp >= ${thirtyDaysAgo}`);
+      const submissions30d = submissions30dResult?.count || 0;
+
+      const examsByDay = await db
+        .select({
+          date: sql<string>`to_char(${examsTable.createdAt}, 'YYYY-MM-DD')`,
+          count: count(),
+        })
+        .from(examsTable)
+        .where(gte(examsTable.createdAt, thirtyDaysAgo))
+        .groupBy(sql`to_char(${examsTable.createdAt}, 'YYYY-MM-DD')`)
+        .orderBy(sql`to_char(${examsTable.createdAt}, 'YYYY-MM-DD')`);
+
+      const submissionsByDay = await db
+        .select({
+          date: sql<string>`to_char(${submissionsTable.submittedAt}::timestamp, 'YYYY-MM-DD')`,
+          count: count(),
+        })
+        .from(submissionsTable)
+        .where(sql`${submissionsTable.submittedAt}::timestamp >= ${thirtyDaysAgo}`)
+        .groupBy(sql`to_char(${submissionsTable.submittedAt}::timestamp, 'YYYY-MM-DD')`)
+        .orderBy(sql`to_char(${submissionsTable.submittedAt}::timestamp, 'YYYY-MM-DD')`);
+
+      const featureUsage = await db
+        .select({
+          eventType: userEvents.eventType,
+          count: count(),
+        })
+        .from(userEvents)
+        .groupBy(userEvents.eventType)
+        .orderBy(desc(count()));
+
+      res.json({
+        totalUsers,
+        activeUsers7d,
+        activeUsers30d,
+        signupsByDay,
+        loginHistory: loginHistoryWithNames,
+        totalExams,
+        totalSubmissions,
+        examsCreated30d,
+        submissions30d,
+        examsByDay,
+        submissionsByDay,
+        featureUsage,
+      });
+    } catch (error) {
+      console.error("Analytics error:", error);
+      res.status(500).json({ error: "Failed to fetch analytics" });
+    }
+  });
+
   return httpServer;
 }

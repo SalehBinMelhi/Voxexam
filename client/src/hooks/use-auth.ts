@@ -1,5 +1,4 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useUser, useClerk } from "@clerk/clerk-react";
 import type { User } from "@shared/models/auth";
 
 async function fetchUser(): Promise<User | null> {
@@ -20,34 +19,19 @@ async function fetchUser(): Promise<User | null> {
 
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { user: clerkUser, isLoaded: clerkLoaded } = useUser();
-  const { signOut } = useClerk();
 
-  const clerkUserId = clerkUser?.id ?? null;
-
-  const { data: dbUser, isLoading: dbLoading } = useQuery<User | null>({
-    queryKey: ["/api/auth/user", clerkUserId],
+  const { data: user, isLoading } = useQuery<User | null>({
+    queryKey: ["/api/auth/user"],
     queryFn: fetchUser,
     retry: false,
     staleTime: 1000 * 60 * 5,
-    enabled: clerkLoaded,
   });
 
-  const isLoading = !clerkLoaded || dbLoading;
-  const user = dbUser;
   const isAuthenticated = !!user;
-
-  const isLocalOrDemo = user?.id?.startsWith("local-") || user?.id?.startsWith("demo-");
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      if (isLocalOrDemo) {
-        window.location.href = "/api/demo-logout";
-      } else {
-        await signOut();
-        queryClient.removeQueries({ queryKey: ["/api/auth/user"] });
-        window.location.href = "/";
-      }
+      window.location.href = "/api/logout";
     },
   });
 

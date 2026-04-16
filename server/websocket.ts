@@ -2,7 +2,6 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import type { IncomingMessage } from "http";
 import { storage } from "./storage";
-import { verifyToken } from "@clerk/express";
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -59,24 +58,6 @@ class VoxWebSocketServer {
             this.wss.emit("connection", ws, request, { userId: user.claims.sub });
           });
           return;
-        }
-
-        try {
-          const cookies = parseCookies(request.headers.cookie);
-          const token = cookies["__session"];
-          if (token && process.env.CLERK_SECRET_KEY) {
-            const payload = await verifyToken(token, {
-              secretKey: process.env.CLERK_SECRET_KEY,
-            });
-            if (payload?.sub) {
-              this.wss.handleUpgrade(request, socket, head, (ws) => {
-                this.wss.emit("connection", ws, request, { userId: payload.sub });
-              });
-              return;
-            }
-          }
-        } catch (e) {
-          console.error("[WS] Clerk token verification failed:", e);
         }
 
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");

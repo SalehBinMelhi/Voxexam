@@ -19,30 +19,33 @@ VoxExams is a comprehensive web application designed for universities to manage 
 
 ## System Architecture
 
-The application is a full-stack web platform built with a React, TypeScript, Vite, TailwindCSS, and shadcn/ui frontend, and an Express.js backend utilizing a PostgreSQL database with Drizzle ORM. Authentication uses a hybrid system: Clerk for professors/admins (with Google sign-in) and Passport.js sessions for students (exam/class code login) and demo users. Server state management leverages TanStack Query. AI grading and transcription capabilities are powered by OpenAI's GPT-4o-mini model, integrated through Replit AI Integrations.
+The application is a full-stack web platform built with a React, TypeScript, Vite, TailwindCSS, and shadcn/ui frontend, and an Express.js backend utilizing a PostgreSQL database with Drizzle ORM. Authentication uses a hybrid system: Google OAuth (via Passport.js + passport-google-oauth20) for professors/admins and Passport.js sessions for students (exam/class code login) and demo users. Server state management leverages TanStack Query. AI grading and transcription capabilities are powered by OpenAI's GPT-4o-mini model, integrated through Replit AI Integrations.
 
 **UI/UX Decisions:**
 - Uses TailwindCSS and shadcn/ui for a modern, responsive, and accessible user interface.
 - **Color Theme:** Academic slate blue (primary) + muted teal (accent) palette. Deep navy-charcoal dark mode. Colors defined as HSL CSS variables in `client/src/index.css`. Brand logo uses `--brand-blue` and `--brand-teal` variables.
 - Features a clean, question-by-question interface for students taking exams.
-- Dashboards are role-specific (professor/student) providing tailored functionalities and views.
+- Dashboards are role-specific (professor/student/admin) providing tailored functionalities and views.
 - Student performance is visualized using Recharts for graphical representations (e.g., radar charts, line graphs).
 - Interactive chat interface for AI question generation.
+- Admin dashboard includes an Analytics tab with user stats, sign-up charts, login history, exam activity, and feature usage breakdown.
 
 **Technical Implementations:**
 - **Authentication:** Hybrid system:
-  - **Clerk** (`@clerk/express` + `@clerk/clerk-react`) for professors/admins with Google sign-in, email/password. Clerk handles sign-in/sign-up UI at `/sign-in` and `/sign-up` routes.
-  - **Passport.js + express-session** (stored in PostgreSQL via `connect-pg-simple`) for student exam/class code login and demo sessions.
-  - `isAuthenticated` middleware checks Clerk JWT first, then falls back to passport session.
+  - **Google OAuth** (`passport-google-oauth20`) for professors/admins. Users click "Sign in with Google" on the landing page, which redirects to Google's consent screen. On success, users are upserted into the database with `authProvider: "google"` and a Passport session is created.
+  - **Passport.js + express-session** (stored in PostgreSQL via `connect-pg-simple`) for all session types (Google, student exam/class code login, demo).
+  - `isAuthenticated` middleware checks Passport sessions for all user types (Google, local, demo).
   - `req.userId` is set by the middleware for all authenticated routes.
-  - Environment variables: `CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `VITE_CLERK_PUBLISHABLE_KEY`, `SESSION_SECRET`.
+  - Google OAuth routes: `GET /api/auth/google` (initiate) and `GET /api/auth/google/callback` (callback).
+  - Environment variables: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`.
 - **Database:** PostgreSQL with Drizzle ORM for type-safe schema definition and querying.
 - **State Management:** TanStack Query for efficient server-side data fetching, caching, and synchronization.
 - **AI Integration:** OpenAI GPT-4o-mini for dual scoring (correctness and understanding) and audio transcription.
 - **File Processing:** `unpdf` and `pdf-parse` for PDF text extraction, direct parsing for TXT, MD, CSV, DOCX, PPTX, XLSX.
 - **Audio Processing:** `ffmpeg` for converting audio formats (WebM/OGG to WAV) before transcription.
 - **Proctoring:** Webcam and screen recording for exam integrity, recordings saved per submission.
-- **WebSocket:** Origin validation added for CSWSH protection. Auth supports both Clerk JWT and passport sessions.
+- **WebSocket:** Origin validation added for CSWSH protection. Auth supports passport sessions.
+- **Analytics:** Admin dashboard analytics powered by queries against `users` and `user_events` tables. API endpoint: `GET /api/admin/analytics`.
 - **Scalability:** Designed with a clear separation of frontend and backend concerns, and leveraging PostgreSQL for data storage.
 
 **Feature Specifications:**
@@ -52,6 +55,7 @@ The application is a full-stack web platform built with a React, TypeScript, Vit
 - **Grading:** Dual AI grading provides both correctness and understanding scores. Manual override for professor adjustments.
 - **Class Materials:** Upload and processing of various document types (PDF, TXT, MD, CSV, DOCX, PPTX, XLSX) to provide AI with contextual information for grading.
 - **Performance Analytics:** Professors have access to student performance radar charts, score trends, and detailed submission breakdowns, including proctoring alerts. Exam-level analytics available via `GET /api/exams/:id/analytics` with per-student correctness/understanding breakdowns and CSV export.
+- **Admin Analytics:** Admin dashboard includes an Analytics tab showing: total users, active users (7d/30d), new sign-ups chart over time, login history with auth method, exam activity stats (total exams, submissions, 30d counts), and feature usage breakdown from the `user_events` table.
 - **Session Management:** Demo sessions are isolated using `demo_session_id` cookies.
 
 ## External Dependencies
@@ -64,7 +68,7 @@ The application is a full-stack web platform built with a React, TypeScript, Vit
 -   **Backend Framework:** Express.js
 -   **Database:** PostgreSQL (e.g., Neon for hosting)
 -   **ORM:** Drizzle ORM
--   **Authentication:** Clerk (`@clerk/express`, `@clerk/clerk-react`) for professor/admin login with Google sign-in; Passport.js + express-session for student/demo login
+-   **Authentication:** Google OAuth via `passport-google-oauth20` for professor/admin login; Passport.js + express-session for all session types (Google, student/demo login)
 -   **AI Services:** OpenAI GPT-4o-mini (via Replit AI Integrations) for:
     -   AI Question Generation
     -   Dual AI Grading (correctness and understanding)
