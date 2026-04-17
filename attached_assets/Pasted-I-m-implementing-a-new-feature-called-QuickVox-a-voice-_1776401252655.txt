@@ -1,0 +1,62 @@
+I'm implementing a new feature called QuickVox: a voice-only, single-question, 
+no-proctoring version of Quick Exam. This is Phase 1 of 4. Do ONLY the changes 
+below. Do NOT add QR codes, do NOT change the AI grading prompt, do NOT touch 
+the professor dashboard beyond what's listed.
+
+=== PHASE 1 SCOPE ===
+
+1. SCHEMA (shared/schema.ts)
+   - Add a new column `mode` to the `exams` table: varchar, not null, 
+     default 'exam'. Valid values: 'exam' or 'quickvox'.
+   - Add `mode` to the `insertExamSchema` Zod schema as an optional string 
+     field with default 'exam'.
+
+2. BACKEND
+   - Update the POST /api/exams route to accept and persist the `mode` field.
+   - No other backend changes.
+
+3. PROFESSOR DASHBOARD - NEW BUTTON AND FORM
+   - In the existing Quick Exam tab (client/src/components/simple-exam-tab.tsx), 
+     add a new button labeled "Create QuickVox" next to (or near) the existing 
+     "Create Quick Exam" flow.
+   - When clicked, open a simplified creation form with ONLY:
+       - Exam Title (required)
+       - ONE Question text field (required) - the answer type is hardcoded 
+         to "audio" (voice), no option to change it.
+       - A "Create QuickVox" submit button.
+   - On submit, POST to /api/exams with:
+       - title, the single question (type: "audio")
+       - mode: "quickvox"
+       - assignedStudentIds: [], assignedStudentNames: []
+       - no reference materials, no class, no dates
+   - Do NOT modify the existing Quick Exam creation form.
+
+4. STUDENT TAKE-EXAM FLOW (client/src/components/take-exam-dialog.tsx)
+   - When the loaded exam has mode === 'quickvox':
+       - Skip startWebcam()
+       - Skip startScreenShare()
+       - Skip startRecordings() for webcam and screen (do NOT create those 
+         MediaRecorders)
+       - Skip startScreenshotCapture()
+       - Do NOT track proctoringEventsRef or tabSwitchCount for this exam
+       - Bypass the setup gate that currently waits for webcamReady and 
+         screenReady; go straight to the answer step
+   - Audio recording, submission, and existing grading must still work normally.
+   - When mode !== 'quickvox' (including null/undefined): behavior is unchanged.
+
+=== DO NOT ===
+- Do NOT change the AI grading prompt or model. Leave evaluateWithAI alone.
+- Do NOT add QR code generation.
+- Do NOT change the post-submission UI for students.
+- Do NOT change existing Quick Exam behavior.
+
+=== BEFORE STARTING ===
+Confirm you understand the scope. If anything is unclear or you see a risk 
+that breaks existing Quick Exam behavior, ask me ONE specific question first 
+instead of guessing.
+
+=== AFTER FINISHING ===
+- List every file you changed with a one-line summary per file.
+- Confirm the server starts cleanly.
+- Do NOT try to test the full flow yourself. I will test by opening the app 
+  in a new tab and creating a QuickVox.

@@ -1,0 +1,52 @@
+Two small but important fixes to QuickVox Phase 1. Combine them into one task.
+
+=== FIX 1: QuickVox should skip the Draft/Publish flow entirely ===
+
+Problem: When a professor creates a QuickVox, the exam detail view still 
+shows the "Publish Exam" button and the "Draft" status. Clicking Publish 
+regenerates the access code, which is confusing and breaks the "one-step 
+creation" goal of QuickVox. For QuickVox, creation should immediately 
+produce a final, active code.
+
+Change in UI (client/src/components/simple-exam-tab.tsx, around the exam 
+detail view):
+- When selectedExam.mode === 'quickvox':
+  - Hide the "Publish Exam" button entirely.
+  - Hide the "Draft" status badge (or replace it with an "Active" / "Live" 
+    badge if you want, but do NOT show "Draft").
+  - Keep the "New Code" button (regenerate) visible, it's still useful.
+  - Keep the access code display, copy button, and expiry badge visible.
+
+Change in backend behavior:
+- The existing createExam logic already generates accessCode and 
+  accessCodeExpiresAt on creation. That's correct for QuickVox and we 
+  rely on it. Do NOT change that path.
+- Do NOT change anything about how non-QuickVox exams handle Draft/Publish. 
+  Regular Quick Exams keep their existing workflow.
+
+=== FIX 2: QuickVox access codes should last 7 days, not 30 minutes ===
+
+Problem: QuickVox codes are meant to be printed on QR stickers and shared 
+at events. A 30-minute expiry kills that use case. For any new exam with 
+mode === 'quickvox', accessCodeExpiresAt should be set to 7 days (168 hours) 
+from creation time. Non-QuickVox exams keep the current 30-minute default.
+
+File: server/storage.ts, the createExam function around lines 763-799 
+where autoGenerateCode sets accessCodeExpiresAt.
+
+Change: when insertExam.mode === 'quickvox', use 7 days (168 hours) instead 
+of 30 minutes. When mode is anything else (or undefined), keep 30 minutes.
+
+Also: the "Regenerate Code" path (when a professor clicks "New Code") 
+should use the same 7-day expiry for QuickVox exams. Find where access 
+code regeneration happens and apply the same rule there.
+
+=== DO NOT ===
+- Do NOT touch AI grading.
+- Do NOT touch any non-QuickVox exam behavior.
+- Do NOT change the existing access codes on exams already in the database. 
+  Only new creations and new regenerations use the 7-day expiry.
+
+=== AFTER YOU'RE DONE ===
+List each file you changed with a one-line summary. Confirm server starts 
+cleanly. I will manually retest by creating a fresh QuickVox.
