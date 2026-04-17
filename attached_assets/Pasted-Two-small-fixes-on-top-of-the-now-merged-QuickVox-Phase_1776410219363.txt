@@ -1,0 +1,49 @@
+Two small fixes on top of the now-merged QuickVox Phase 1.
+
+=== FIX 1: QuickVox should skip the Draft/Publish flow entirely ===
+
+Problem: When a professor creates a QuickVox, the exam detail view still 
+shows the "Publish Exam" button and the "Draft" status. Clicking Publish 
+regenerates the access code, which is confusing and breaks the "one-step 
+creation" goal of QuickVox. For QuickVox, creation should immediately 
+produce a final, active code.
+
+Change in UI (client/src/components/simple-exam-tab.tsx, around the exam 
+detail view):
+- When selectedExam.mode === 'quickvox':
+  - Hide the "Publish Exam" button entirely.
+  - Hide the "Draft" status badge. You may replace it with an "Active" or 
+    "Live" badge, but do NOT show "Draft".
+  - Keep the "New Code" button (regenerate) visible.
+  - Keep the access code display, copy button, and expiry badge visible.
+
+Backend behavior:
+- createExam already generates accessCode and accessCodeExpiresAt on 
+  creation. Keep that path.
+- Do NOT change anything about how non-QuickVox exams handle Draft/Publish.
+
+=== FIX 2: QuickVox access codes should last 7 days, not 30 minutes ===
+
+Problem: QuickVox codes are meant to be printed on QR stickers and shared 
+at events. A 30-minute expiry kills that use case.
+
+File: server/storage.ts, createExam function, where autoGenerateCode sets 
+accessCodeExpiresAt.
+
+Change: when the exam being created has mode === 'quickvox', set 
+accessCodeExpiresAt to 7 days (168 hours) from creation time. When mode is 
+anything else (or undefined), keep the current 30-minute default.
+
+Also: the "Regenerate Code" path (when a professor clicks "New Code") must 
+use the same 7-day expiry for QuickVox exams. Find where access code 
+regeneration happens and apply the same rule there.
+
+=== DO NOT ===
+- Do NOT touch AI grading.
+- Do NOT touch any non-QuickVox exam behavior.
+- Do NOT change existing access codes already in the database.
+
+=== AFTER YOU'RE DONE ===
+List each file you changed with a one-line summary. Confirm the server 
+starts cleanly. Do not end-to-end test; I will test manually after 
+approving and merging.
