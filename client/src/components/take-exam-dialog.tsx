@@ -510,6 +510,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
   useEffect(() => {
     if (phase !== "exam") return;
+    if (exam.mode === "quickvox") return;
 
     const handleVisibilityChange = async () => {
       if (document.hidden) {
@@ -583,9 +584,13 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     };
   }, [phase, toast]);
 
+  const isQuickVox = exam.mode === "quickvox";
+
   const handleStartExam = () => {
-    startRecordings();
-    startScreenshotCapture();
+    if (!isQuickVox) {
+      startRecordings();
+      startScreenshotCapture();
+    }
     setPhase("exam");
   };
 
@@ -619,7 +624,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
         }
       }
 
-      if ((proctoringEventsRef.current.length > 0 || tabSwitchCount > 0) && result.id) {
+      if (!isQuickVox && (proctoringEventsRef.current.length > 0 || tabSwitchCount > 0) && result.id) {
         try {
           await fetch(`/api/submissions/${result.id}/proctoring`, {
             method: "POST",
@@ -744,6 +749,34 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   };
 
   if (phase === "setup") {
+    if (isQuickVox) {
+      return (
+        <Dialog open={open} onOpenChange={handleClose}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                {exam.title}
+                {previewMode && <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>}
+              </DialogTitle>
+              <DialogDescription>
+                QuickVox: a quick voice answer. No camera or screen sharing required.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4 text-sm text-muted-foreground text-center">
+              {totalQuestions} question{totalQuestions !== 1 ? "s" : ""} · Audio response only
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleClose} data-testid="button-cancel-exam">
+                Cancel
+              </Button>
+              <Button onClick={handleStartExam} data-testid="button-start-exam">
+                Start QuickVox
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      );
+    }
     return (
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="max-w-lg">
@@ -956,13 +989,13 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {tabSwitchCount > 0 && (
+              {!isQuickVox && tabSwitchCount > 0 && (
                 <Badge variant="destructive" className="flex items-center gap-1" data-testid="badge-tab-switch-count">
                   <ShieldAlert className="h-3 w-3" />
                   {tabSwitchCount}
                 </Badge>
               )}
-              {webcamStream && (
+              {!isQuickVox && webcamStream && (
                 <div className="relative">
                   <video
                     ref={webcamVideoRef}
@@ -991,7 +1024,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
         <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
           <div className="py-6">
-            {tabSwitchCount > 0 && (
+            {!isQuickVox && tabSwitchCount > 0 && (
               <div className="mb-4 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3 flex items-center gap-2" data-testid="tab-switch-warning">
                 <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
                 <p className="text-sm text-red-700 dark:text-red-300">

@@ -792,6 +792,7 @@ export class DatabaseStorage implements IStorage {
       assignedStudentNames: insertExam.assignedStudentNames || [],
       accessCode,
       accessCodeExpiresAt,
+      mode: insertExam.mode || "exam",
     }).returning();
 
     return exam;

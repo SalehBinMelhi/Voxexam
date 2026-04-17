@@ -9,6 +9,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -104,6 +112,10 @@ export function SimpleExamTab() {
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
 
+  const [quickVoxOpen, setQuickVoxOpen] = useState(false);
+  const [quickVoxTitle, setQuickVoxTitle] = useState("");
+  const [quickVoxQuestion, setQuickVoxQuestion] = useState("");
+
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
   });
@@ -165,6 +177,29 @@ export function SimpleExamTab() {
     },
     onError: () => {
       toast({ title: "Error", description: "Failed to create exam.", variant: "destructive" });
+    },
+  });
+
+  const createQuickVoxMutation = useMutation({
+    mutationFn: async (data: { title: string; question: string }) => {
+      const response = await apiRequest("POST", "/api/exams", {
+        title: data.title,
+        questions: [{ text: data.question, type: "audio" as QuestionType }],
+        mode: "quickvox",
+        assignedStudentIds: [],
+        assignedStudentNames: [],
+      });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
+      toast({ title: "QuickVox created", description: "Your QuickVox is ready." });
+      setQuickVoxOpen(false);
+      setQuickVoxTitle("");
+      setQuickVoxQuestion("");
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to create QuickVox.", variant: "destructive" });
     },
   });
 
@@ -765,6 +800,17 @@ export function SimpleExamTab() {
 
   return (
     <div className="space-y-8">
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          onClick={() => setQuickVoxOpen(true)}
+          data-testid="button-open-create-quickvox"
+        >
+          <Mic className="h-4 w-4 mr-2" />
+          Create QuickVox
+        </Button>
+      </div>
+
       <Card data-testid="card-simple-exam-form">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -1069,6 +1115,61 @@ export function SimpleExamTab() {
           </div>
         )}
       </div>
+
+      <Dialog open={quickVoxOpen} onOpenChange={(o) => { if (!createQuickVoxMutation.isPending) setQuickVoxOpen(o); }}>
+        <DialogContent className="max-w-md" data-testid="dialog-create-quickvox">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Mic className="h-5 w-5" />
+              Create QuickVox
+            </DialogTitle>
+            <DialogDescription>
+              A voice-only, single-question exam. No camera, screen, or proctoring.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="quickvox-title">Exam Title <span className="text-red-500">*</span></Label>
+              <Input
+                id="quickvox-title"
+                placeholder="e.g., Quick Check-in"
+                value={quickVoxTitle}
+                onChange={(e) => setQuickVoxTitle(e.target.value)}
+                data-testid="input-quickvox-title"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="quickvox-question">Question <span className="text-red-500">*</span></Label>
+              <Textarea
+                id="quickvox-question"
+                placeholder="Enter the question students will answer with their voice..."
+                value={quickVoxQuestion}
+                onChange={(e) => setQuickVoxQuestion(e.target.value)}
+                rows={4}
+                data-testid="textarea-quickvox-question"
+              />
+              <p className="text-xs text-muted-foreground">Students will record an audio response.</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setQuickVoxOpen(false)}
+              disabled={createQuickVoxMutation.isPending}
+              data-testid="button-cancel-quickvox"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => createQuickVoxMutation.mutate({ title: quickVoxTitle.trim(), question: quickVoxQuestion.trim() })}
+              disabled={!quickVoxTitle.trim() || !quickVoxQuestion.trim() || createQuickVoxMutation.isPending}
+              data-testid="button-submit-quickvox"
+            >
+              {createQuickVoxMutation.isPending ? "Creating..." : "Create QuickVox"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

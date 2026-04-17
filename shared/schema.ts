@@ -100,6 +100,7 @@ export const exams = pgTable("exams", {
   assignedStudentNames: jsonb("assigned_student_names").notNull().$type<string[]>().default([]),
   accessCode: varchar("access_code").unique(),
   accessCodeExpiresAt: timestamp("access_code_expires_at"),
+  mode: varchar("mode").notNull().default("exam"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -116,6 +117,7 @@ export const insertExamSchema = z.object({
   professorId: z.string().optional(),
   customAccessCode: z.string().max(10).optional(),
   autoGenerateCode: z.boolean().optional(),
+  mode: z.enum(["exam", "quickvox"]).optional().default("exam"),
 });
 
 export type InsertExam = z.infer<typeof insertExamSchema>;
