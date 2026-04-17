@@ -451,7 +451,7 @@ export function SimpleExamTab() {
               <Eye className="h-4 w-4 mr-1" />
               Preview as Student
             </Button>
-            {status.label === "Draft" && (
+            {selectedExam.mode !== "quickvox" && status.label === "Draft" && (
               <Button
                 size="sm"
                 onClick={() => publishExamMutation.mutate(selectedExam.id)}
@@ -462,7 +462,7 @@ export function SimpleExamTab() {
                 {publishExamMutation.isPending ? "Publishing..." : "Publish Exam"}
               </Button>
             )}
-            {(status.label === "Active" || status.label === "Scheduled") && (
+            {selectedExam.mode !== "quickvox" && (status.label === "Active" || status.label === "Scheduled") && (
               <Button
                 variant="outline"
                 size="sm"
@@ -474,7 +474,11 @@ export function SimpleExamTab() {
                 {deactivateExamMutation.isPending ? "Deactivating..." : "Deactivate"}
               </Button>
             )}
-            <Badge variant={status.variant}>{status.label}</Badge>
+            {selectedExam.mode === "quickvox" ? (
+              <Badge variant="default" className="bg-green-600 text-white no-default-hover-elevate no-default-active-elevate" data-testid="badge-quickvox-live">Live</Badge>
+            ) : (
+              <Badge variant={status.variant}>{status.label}</Badge>
+            )}
           </div>
         </div>
 

@@ -768,6 +768,9 @@ export class DatabaseStorage implements IStorage {
 
     let accessCode: string | null = null;
     let accessCodeExpiresAt: Date | null = null;
+    const expiryMs = insertExam.mode === "quickvox"
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 60 * 1000;
 
     if (insertExam.customAccessCode) {
       const [existing] = await db.select().from(exams).where(eq(exams.accessCode, insertExam.customAccessCode));
@@ -775,10 +778,10 @@ export class DatabaseStorage implements IStorage {
         throw new Error("Access code already in use");
       }
       accessCode = insertExam.customAccessCode;
-      accessCodeExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+      accessCodeExpiresAt = new Date(Date.now() + expiryMs);
     } else if (insertExam.autoGenerateCode !== false) {
       accessCode = await generateExamAccessCode();
-      accessCodeExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+      accessCodeExpiresAt = new Date(Date.now() + expiryMs);
     }
 
     const [exam] = await db.insert(exams).values({
@@ -991,8 +994,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async regenerateExamAccessCode(examId: string): Promise<Exam | undefined> {
+    const [existing] = await db.select().from(exams).where(eq(exams.id, examId));
+    if (!existing) return undefined;
     const newCode = await generateExamAccessCode();
-    const newExpiry = new Date(Date.now() + 30 * 60 * 1000);
+    const expiryMs = existing.mode === "quickvox"
+      ? 7 * 24 * 60 * 60 * 1000
+      : 30 * 60 * 1000;
+    const newExpiry = new Date(Date.now() + expiryMs);
     const [updated] = await db.update(exams).set({
       accessCode: newCode,
       accessCodeExpiresAt: newExpiry,
