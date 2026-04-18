@@ -437,7 +437,7 @@ export function ExamDetailsDialog({
                   </div>
                 </CardContent>
               </Card>
-              {examSubmissions.length > 0 && (
+              {examSubmissions.length > 0 && exam.mode !== "quickvox" && (
                 <>
                   <Card>
                     <CardContent className="p-3">
@@ -633,14 +633,35 @@ export function ExamDetailsDialog({
                                   </p>
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <div className={`px-2 py-1 rounded text-xs font-medium ${getScoreBg(sub.totalScore)} ${getScoreColor(sub.totalScore)}`} data-testid={`badge-correctness-${sub.id}`}>
-                                  Correctness: {(sub.totalScore * 100).toFixed(0)}%
-                                </div>
-                                {sub.totalUnderstandingScore != null && (
-                                  <div className={`px-2 py-1 rounded text-xs font-medium ${getScoreBg(sub.totalUnderstandingScore)} ${getScoreColor(sub.totalUnderstandingScore)}`} data-testid={`badge-understanding-${sub.id}`}>
-                                    Understanding: {(sub.totalUnderstandingScore * 100).toFixed(0)}%
-                                  </div>
+                              <div className="flex items-center gap-2 max-w-[60%]">
+                                {exam.mode === "quickvox" ? (
+                                  <>
+                                    <div
+                                      className="px-2 py-1 rounded text-xs font-medium bg-primary/10 text-primary border border-primary/20 flex-shrink-0"
+                                      data-testid={`badge-quickvox-${sub.id}`}
+                                    >
+                                      QuickVox
+                                    </div>
+                                    {sub.quickvoxInsight && (
+                                      <p
+                                        className="text-xs text-muted-foreground line-clamp-2 text-left"
+                                        data-testid={`text-quickvox-insight-${sub.id}`}
+                                      >
+                                        {sub.quickvoxInsight}
+                                      </p>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className={`px-2 py-1 rounded text-xs font-medium ${getScoreBg(sub.totalScore)} ${getScoreColor(sub.totalScore)}`} data-testid={`badge-correctness-${sub.id}`}>
+                                      Correctness: {(sub.totalScore * 100).toFixed(0)}%
+                                    </div>
+                                    {sub.totalUnderstandingScore != null && (
+                                      <div className={`px-2 py-1 rounded text-xs font-medium ${getScoreBg(sub.totalUnderstandingScore)} ${getScoreColor(sub.totalUnderstandingScore)}`} data-testid={`badge-understanding-${sub.id}`}>
+                                        Understanding: {(sub.totalUnderstandingScore * 100).toFixed(0)}%
+                                      </div>
+                                    )}
+                                  </>
                                 )}
                                 {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                               </div>
@@ -648,7 +669,37 @@ export function ExamDetailsDialog({
 
                             {isExpanded && (
                               <div className="border-t px-4 pb-4 space-y-4">
-                                {feedback && (
+                                {exam.mode === "quickvox" && (sub.quickvoxInsight || sub.quickvoxFollowUp) && (
+                                  <div className="mt-4 space-y-3" data-testid={`quickvox-section-${sub.id}`}>
+                                    <h5 className="text-xs font-semibold flex items-center gap-1.5 text-primary">
+                                      <Sparkles className="h-3.5 w-3.5" />
+                                      QuickVox Insight
+                                    </h5>
+                                    {sub.quickvoxInsight && (
+                                      <Card className="border-primary/20 bg-primary/5">
+                                        <CardContent className="p-3">
+                                          <p className="text-xs leading-relaxed" data-testid={`text-quickvox-insight-expanded-${sub.id}`}>
+                                            {sub.quickvoxInsight}
+                                          </p>
+                                        </CardContent>
+                                      </Card>
+                                    )}
+                                    {sub.quickvoxFollowUp && (
+                                      <div
+                                        className="rounded-md bg-primary/5 border border-primary/20 p-3"
+                                        data-testid={`callout-quickvox-followup-${sub.id}`}
+                                      >
+                                        <p className="text-[10px] font-medium text-primary uppercase tracking-wide mb-1">
+                                          One more thought:
+                                        </p>
+                                        <p className="text-xs leading-relaxed" data-testid={`text-quickvox-followup-${sub.id}`}>
+                                          {sub.quickvoxFollowUp}
+                                        </p>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                                {exam.mode !== "quickvox" && feedback && (
                                   <div className="mt-4 space-y-3" data-testid={`feedback-section-${sub.id}`}>
                                     <h5 className="text-xs font-semibold flex items-center gap-1.5 text-primary">
                                       <Sparkles className="h-3.5 w-3.5" />
@@ -686,7 +737,7 @@ export function ExamDetailsDialog({
                                   </div>
                                 )}
 
-                                {!feedback && (
+                                {exam.mode !== "quickvox" && !feedback && (
                                   <div className="mt-4 flex items-center justify-between bg-muted/50 rounded-md p-3">
                                     <p className="text-xs text-muted-foreground">No AI feedback generated yet</p>
                                     <Button
@@ -723,7 +774,7 @@ export function ExamDetailsDialog({
                                             </p>
                                           </div>
                                           <div className="flex items-center gap-1 flex-shrink-0">
-                                            {isEditing ? (
+                                            {exam.mode === "quickvox" ? null : isEditing ? (
                                               <div className="flex items-center gap-1">
                                                 <Input
                                                   type="number"

@@ -1,0 +1,53 @@
+Two issues discovered during Phase 2 testing that need fixing 
+before this task can be merged to main:
+
+=== ISSUE 1: Share button doesn't include the QuickVox code ===
+
+When the answerer clicks Share, the share text currently contains 
+only the insight plus window.location.href (which is just the 
+root landing page URL). Recipients have no way to actually take 
+the QuickVox because there's no code and no question.
+
+Update the share text to include:
+- A friendly line like "Someone asked me: [question]"
+- The insight
+- A line like "Try it yourself: [base URL]"
+- The 5-digit access code on its own line, prefixed like 
+  "Code: XXXXX"
+
+The code should come from the exam object (exam.accessCode or 
+equivalent — check the schema). The base URL should be the root 
+(e.g., https://xxx.replit.app) not the current location. This way 
+the recipient can open the URL, land on the homepage, and enter 
+the code.
+
+=== ISSUE 2: Professor's "Completed Exams" dashboard shows the 
+     old Correctness/Understanding badges for QuickVox 
+     submissions ===
+
+When a professor views their Completed Exams list, QuickVox 
+submissions are displayed with the old Correctness: 0% / 
+Understanding: 0% red badges. This is wrong because QuickVox 
+submissions don't have correctness scores — they have insights.
+
+For any submission where exam.mode === 'quickvox', the card 
+should show:
+- A "QuickVox" badge (purple or primary color) instead of the 
+  Correctness/Understanding red badges
+- The insight text (truncated to 2 lines if needed)
+- The submission timestamp (already shown)
+- No percentage scores
+
+The existing Correctness/Understanding display must remain 
+unchanged for regular exam submissions.
+
+=== CONSTRAINTS ===
+
+- Do not touch the student-facing QuickVox result dialog (that 
+  one works well).
+- Do not modify evaluateWithAI or the regular exam result UI.
+- No database schema changes expected — this is pure UI work 
+  plus the share text.
+
+Reply with the list of files changed and confirmation that both 
+fixes are in place.

@@ -160,6 +160,8 @@ export const submissions = pgTable("submissions", {
   proctoringFlags: jsonb("proctoring_flags").$type<ProctoringFlag[]>(),
   tabSwitchCount: real("tab_switch_count").default(0),
   isSuspicious: varchar("is_suspicious").default("false"),
+  quickvoxInsight: text("quickvox_insight"),
+  quickvoxFollowUp: text("quickvox_follow_up"),
   submittedAt: varchar("submitted_at").notNull(),
 });
 

@@ -1,0 +1,71 @@
+Issue 2 from the previous instruction was not actually fixed. 
+The QuickVox mode changes are still missing from BOTH the student 
+dashboard and the professor dashboard. I need this fully 
+addressed before the task can be merged.
+
+Please audit and fix the following, scoped strictly to 
+submissions where exam.mode === 'quickvox'. Do not change 
+behavior for regular exams.
+
+=== STUDENT DASHBOARD (Completed Exams list) ===
+
+When a student views their own past submissions on the 
+student dashboard, QuickVox submissions currently display red 
+"Correctness: 0%" and "Understanding: 0%" badges. These badges 
+must be hidden for QuickVox submissions. Instead show a single 
+neutral or primary-colored "QuickVox" badge.
+
+=== PROFESSOR DASHBOARD (exam detail view) ===
+
+When a professor opens a QuickVox exam's detail page:
+
+1. The "Avg Score 0%" card is meaningless for QuickVox — hide it 
+   entirely for mode === 'quickvox'. Keep the "Submissions 
+   received" card.
+
+2. For each submission in the Student Results list:
+   - Replace the red "Score: 0%" badge with a neutral QuickVox 
+     badge.
+   - Expand the submission to show BOTH:
+     a) The transcript (already shown as "Transcript: ...")
+     b) The insight from submission.quickvoxInsight 
+        (prominently, as a card or highlighted block)
+     c) The follow-up from submission.quickvoxFollowUp 
+        (styled as a soft callout, similar to the student-side 
+        result dialog)
+
+3. Hide the "No AI feedback yet / Generate Feedback" button for 
+   QuickVox submissions. QuickVox submissions already have AI 
+   output (the insight). The Generate Feedback button is for the 
+   old correctness/understanding grading only.
+
+4. Hide or neutralize the "Per-Question Results" 0% score badge 
+   for QuickVox. QuickVox has no scoring — just show the question 
+   text and the transcript underneath, without a percentage.
+
+=== SHARE TEXT CLEANUP ===
+
+Also, the share text is currently duplicating the URL. It 
+appears once after "Try it yourself:" and again on a separate 
+line. Remove the duplicate — keep only ONE URL line. Final 
+format should be:
+
+   Someone asked me: [question]
+
+   [insight]
+
+   Try it yourself: [base URL]
+   Code: [5-digit code]
+
+=== CONSTRAINTS ===
+
+- Do not change behavior for regular exam submissions.
+- Do not modify the student-facing QuickVox result dialog 
+  (that one works).
+- Do not modify evaluateWithAI or the main exam grading path.
+- Do not touch the QuickVox creation form.
+
+Please verify your changes by describing which files you edited 
+and which specific UI elements now branch on exam.mode. Reply 
+with a concrete checklist confirming each of the four sections 
+above is addressed.

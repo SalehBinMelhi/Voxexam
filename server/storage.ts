@@ -167,6 +167,49 @@ The first number is correctness, the second is understanding.`;
   }
 }
 
+export async function evaluateQuickVoxAnswer(
+  question: string,
+  transcript: string,
+  customApiKey?: string | null
+): Promise<{ insight: string; followUp: string }> {
+  const systemPrompt = `You are a warm, thoughtful conversation partner. A person just answered a quick voice question (a "QuickVox"). Your job is to respond with ONE genuine insight about what they said and ONE follow-up question that invites them to reflect a little more deeply.
+
+Always respond in the SAME LANGUAGE as the person's answer.
+
+Return ONLY a JSON object in exactly this shape:
+{"insight": "...", "followUp": "..."}
+
+- "insight": 1–2 short sentences. Warm, specific, and human. Reflect back something meaningful you noticed in their answer — a strength, a tension, a non-obvious pattern. Avoid generic praise, judgment, or advice.
+- "followUp": ONE open-ended, curious question that builds naturally on what they said. Not a quiz, not a yes/no.
+
+Do not include anything outside the JSON object.`;
+
+  const userMessage = `Question: ${question}\n\nTheir answer: ${transcript}`;
+
+  try {
+    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userMessage },
+      ],
+      max_tokens: 250,
+      temperature: 0.7,
+      response_format: { type: "json_object" },
+    });
+
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+    const insight = typeof parsed.insight === "string" ? parsed.insight.trim() : "";
+    const followUp = typeof parsed.followUp === "string" ? parsed.followUp.trim() : "";
+    return { insight, followUp };
+  } catch (error) {
+    console.error("[QUICKVOX] evaluateQuickVoxAnswer failed:", error);
+    return { insight: "", followUp: "" };
+  }
+}
+
 function fallbackScore(question: Question, response: string): number {
   if (!question.correctAnswer) return 0.0;
   const correctWords = question.correctAnswer.toLowerCase().split(/\s+/);
@@ -862,6 +905,46 @@ export class DatabaseStorage implements IStorage {
     if (professor?.universityId) {
       const uni = await this.getUniversity(professor.universityId);
       if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+    }
+
+    if (exam.mode === "quickvox") {
+      let quickvoxInsight = "";
+      let quickvoxFollowUp = "";
+      const response = responses[0];
+      const question = response ? exam.questions.find((q) => q.id === response.questionId) : undefined;
+      if (response && question) {
+        let transcript = response.response || "";
+        if (question.type === "audio" && response.audioData && response.audioData.length > 0) {
+          const t = await transcribeAudio(response.audioData, question.text);
+          if (t) {
+            transcript = t;
+            response.transcript = t;
+          }
+        }
+        if (transcript && transcript.trim().length > 0) {
+          const result = await evaluateQuickVoxAnswer(question.text, transcript, customApiKey);
+          quickvoxInsight = result.insight;
+          quickvoxFollowUp = result.followUp;
+        }
+      }
+
+      const [submission] = await db.insert(submissions).values({
+        examId,
+        studentId,
+        responses,
+        scores: {},
+        understandingScores: {},
+        gradingMethods: {},
+        totalScore: 0,
+        totalUnderstandingScore: 0,
+        feedback: null,
+        quickvoxInsight,
+        quickvoxFollowUp,
+        isPreview: isPreview ? "true" : "false",
+        submittedAt: new Date().toISOString(),
+      }).returning();
+
+      return submission;
     }
 
     const scores: Record<string, number> = {};

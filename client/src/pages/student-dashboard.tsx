@@ -238,7 +238,15 @@ export default function StudentDashboard() {
                       <div className="flex items-start justify-between gap-2">
                         <CardTitle className="text-lg line-clamp-1">{exam.title}</CardTitle>
                         <div className="flex flex-col gap-1">
-                          {submission && (
+                          {submission && exam.mode === "quickvox" ? (
+                            <Badge
+                              variant="secondary"
+                              className="bg-primary/10 text-primary border-primary/20"
+                              data-testid={`badge-quickvox-${exam.id}`}
+                            >
+                              QuickVox
+                            </Badge>
+                          ) : submission ? (
                             <>
                               <Badge
                                 variant={submission.totalScore >= 0.7 ? "default" : submission.totalScore >= 0.5 ? "secondary" : "destructive"}
@@ -255,7 +263,7 @@ export default function StudentDashboard() {
                                 </Badge>
                               )}
                             </>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                       <CardDescription className="flex items-center gap-1">

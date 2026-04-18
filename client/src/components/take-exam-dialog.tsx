@@ -37,6 +37,8 @@ import {
   Monitor,
   AlertTriangle,
   ShieldAlert,
+  Sparkles,
+  Share2,
 } from "lucide-react";
 import type { Exam, ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
 import { format, parseISO, differenceInMinutes } from "date-fns";
@@ -871,6 +873,91 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   }
 
   if (phase === "results" && submissionResult) {
+    if (isQuickVox) {
+      const insight = submissionResult.quickvoxInsight || "";
+      const followUp = submissionResult.quickvoxFollowUp || "";
+      const baseUrl = window.location.origin;
+      const accessCode = exam.accessCode || "";
+      const questionText = exam.questions[0]?.text || "";
+      const shareLines = [
+        questionText ? `Someone asked me: ${questionText}` : null,
+        insight,
+        `Try it yourself: ${baseUrl}`,
+        accessCode ? `Code: ${accessCode}` : null,
+      ].filter(Boolean);
+      const shareText = shareLines.join("\n\n");
+      const handleShare = async () => {
+        try {
+          if (navigator.share) {
+            await navigator.share({ title: exam.title, text: shareText });
+            return;
+          }
+        } catch (e) {
+        }
+        try {
+          await navigator.clipboard.writeText(shareText);
+          toast({ title: "Copied to clipboard", description: "Share it anywhere you like." });
+        } catch (e) {
+          toast({ title: "Couldn't copy", description: "Please copy it manually.", variant: "destructive" });
+        }
+      };
+      return (
+        <Dialog open={open} onOpenChange={handleClose}>
+          <DialogContent className="max-w-md flex flex-col overflow-hidden">
+            <DialogHeader className="text-center flex-shrink-0">
+              <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+                <Sparkles className="h-8 w-8 text-primary" />
+              </div>
+              <DialogTitle className="text-2xl">Thanks for sharing</DialogTitle>
+              <DialogDescription>Here's a thought based on what you said.</DialogDescription>
+            </DialogHeader>
+
+            <div className="py-4 space-y-4">
+              <Card data-testid="card-quickvox-insight">
+                <CardContent className="p-5">
+                  <p className="text-base leading-relaxed" data-testid="text-quickvox-insight">
+                    {insight || "Thanks for your thoughtful answer."}
+                  </p>
+                </CardContent>
+              </Card>
+
+              {followUp && (
+                <div
+                  className="rounded-lg bg-primary/5 border border-primary/20 p-4"
+                  data-testid="callout-quickvox-followup"
+                >
+                  <p className="text-xs font-medium text-primary uppercase tracking-wide mb-1">
+                    One more thought:
+                  </p>
+                  <p className="text-sm leading-relaxed" data-testid="text-quickvox-followup">
+                    {followUp}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="flex-shrink-0 flex-col sm:flex-row gap-2">
+              <Button
+                variant="outline"
+                className="w-full sm:w-auto"
+                onClick={handleShare}
+                data-testid="button-share-quickvox"
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Share
+              </Button>
+              <Button
+                className="w-full sm:w-auto"
+                onClick={handleClose}
+                data-testid="button-close-results"
+              >
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      );
+    }
     const understandingScores = submissionResult.understandingScores || {};
     return (
       <Dialog open={open} onOpenChange={handleClose}>
