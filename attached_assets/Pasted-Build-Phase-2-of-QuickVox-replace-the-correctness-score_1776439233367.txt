@@ -1,0 +1,85 @@
+Build Phase 2 of QuickVox: replace the correctness-score result 
+screen with an insight + follow-up experience for QuickVox 
+submissions only. DO NOT touch the existing exam grading path 
+(evaluateWithAI or the correctness/understanding result UI). 
+Phase 1 is working correctly — do not modify Phase 1 files 
+unless explicitly required below.
+
+=== BACKEND ===
+
+1. Add two new nullable columns to the submissions table in 
+   shared/schema.ts:
+   - quickvoxInsight: text, nullable
+   - quickvoxFollowUp: text, nullable
+   Update insertSubmissionSchema accordingly.
+
+2. Run `npm run db:push` (or `npx drizzle-kit push`) to sync the 
+   database schema. Confirm both columns exist before proceeding.
+
+3. In server/storage.ts, add a NEW function called 
+   `evaluateQuickVoxAnswer(question: string, transcript: string)` 
+   that:
+   - Uses model "gpt-4o" (NOT gpt-4o-mini)
+   - max_tokens around 250
+   - temperature 0.7
+   - Uses response_format JSON mode
+   - Returns { insight: string, followUp: string }
+   
+   System prompt (use exactly this):
+   
+   "You are a perceptive listener responding to a spoken answer. 
+   This is not an exam — there is no right or wrong answer. Your 
+   job is to make the speaker feel heard and a little delighted 
+   by what you noticed in their words.
+   
+   Return JSON with two fields:
+   - insight: 1-2 sentences. A warm, curious observation about 
+     what they said. Pick the tone (playful, thoughtful, 
+     appreciative, or analytical) based on what fits their 
+     answer. Never judge, never score.
+   - followUp: one short question that builds on something 
+     specific they said — not a new unrelated question. Make it 
+     feel like a real conversation continuing.
+   
+   IMPORTANT: Respond in the same language as the answer. If the 
+   answer is in Arabic, respond in Arabic. If in English, respond 
+   in English. Match their language exactly."
+
+4. In the submission grading path, branch on exam.mode:
+   - If exam.mode === 'quickvox': call evaluateQuickVoxAnswer, 
+     store result in quickvoxInsight and quickvoxFollowUp columns. 
+     Leave correctness/understanding scores as null.
+   - Else: keep the existing evaluateWithAI behavior untouched.
+
+=== FRONTEND ===
+
+5. In the student-facing "Exam Completed!" result dialog, check 
+   if the exam mode is 'quickvox'. If yes, render a completely 
+   different result view:
+   - No "Correctness" or "Understanding" badges
+   - No "Strengths / Areas to Improve / Recommendations" sections
+   - Instead: a single clean insight card showing 
+     submission.quickvoxInsight
+   - Below the insight: the follow-up question from 
+     submission.quickvoxFollowUp, styled as a soft "One more 
+     thought:" callout
+   - A "Share" button that uses the Web Share API 
+     (navigator.share) — falls back to copy-to-clipboard if 
+     Web Share isn't supported. Share text: the insight plus 
+     "Try it yourself" + the QuickVox URL.
+   - Keep the Close button.
+   
+   If exam.mode !== 'quickvox', keep the existing result UI 
+   exactly as it is.
+
+=== CONSTRAINTS ===
+
+- Do not modify evaluateWithAI.
+- Do not modify the existing result UI for regular exams.
+- Do not change the student login flow or the QuickVox creation 
+  form.
+- Confirm `npm run db:push` ran successfully before completing.
+
+Reply with: list of files changed, confirmation that db:push 
+succeeded, and any caveats or decisions you made during 
+implementation.
