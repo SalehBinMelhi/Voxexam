@@ -1,0 +1,69 @@
+QuickVox Phase 3 — Public Deep-Link + QR Access
+
+Implement public deep-link access and QR code sharing for QuickVox exams. This is scoped strictly to mode === 'quickvox' exams. Do not change any behavior for regular exams, the existing landing page, or the Join Exam flow.
+
+=== NEW PUBLIC ROUTE: /q/:code ===
+
+Add a new public route /q/:code to the wouter router. This route must:
+- Require no session / no authentication — unauthenticated visitors must be able to reach it without being redirected to login.
+- Fetch the QuickVox exam by access code from a new public API endpoint (see below).
+- Render a minimal branded page containing:
+  - The VoxExams logo/header (same as landing page)
+  - The QuickVox exam title
+  - A single text input: "Your Name" (placeholder: "e.g. John Smith")
+  - A "Start" button
+- If the code is invalid, not found, or the exam is not mode === 'quickvox', show a simple inline error: "This link is invalid or has expired."
+- On submit, create a student session using the same mechanism as the existing /api/student-login flow, then navigate the user directly into the QuickVox recording experience (the existing take-exam-dialog, QuickVox branch). The code is pre-filled from the URL — the user only types their name.
+
+=== NEW BACKEND ENDPOINT ===
+
+Add one new public (no auth required) API endpoint:
+
+GET /api/quickvox/:code
+
+Returns enough data to render the /q/:code landing page:
+{ "id": "...", "title": "...", "question": "..." }
+
+Where "question" is the text of the single QuickVox question. Returns 404 if the code doesn't match any exam with mode === 'quickvox'.
+
+This endpoint must not expose any professor data, student data, or submission data.
+
+=== SHARE LINK UPDATE ===
+
+In take-exam-dialog.tsx, in the QuickVox share text generation:
+- Change the URL from window.location.origin to `${window.location.origin}/q/${accessCode}`
+- Remove the "Code: XXXXX" line entirely — it is now redundant since the code is in the URL.
+- Final share text format:
+  Someone asked me: [question]
+  [insight]
+  Try it yourself: https://yourapp.com/q/22632
+
+=== QR CODE ON PROFESSOR SIDE ===
+
+In the QuickVox exam card in simple-exam-tab.tsx:
+- Add a QR code icon button next to the existing controls on the QuickVox exam card.
+- Clicking it opens a small modal/popover containing:
+  - A QR code encoding the full /q/:code URL for that exam, generated client-side.
+  - The direct link as copyable text beneath the QR code.
+- Use qrcode.react for QR generation. Install it via the package manager tool — do not edit package.json directly.
+- The modal needs no backend call — everything is derived from the exam's existing accessCode.
+
+=== CONSTRAINTS ===
+- Do not modify the existing / landing page or the Join Exam / Join Class form in any way.
+- Do not modify evaluateWithAI, the regular grading path, or any regular exam flow.
+- Do not add any new database columns or tables — the existing accessCode on the exams table is sufficient.
+- Do not modify vite.config.ts, server/vite.ts, or drizzle.config.ts.
+- Do not write hand-written SQL migrations — if any schema change were needed (it isn't here), use npm run db:push.
+- Every new interactive element needs a data-testid following the existing {action}-{target} convention.
+- Follow all existing frontend conventions: useToast, no explicit React import, TanStack Query object form, apiRequest from @/lib/queryClient.
+
+=== VERIFICATION CHECKLIST ===
+Reply with a concrete checklist confirming:
+- /q/:code route is public and accessible without a session
+- Invalid/non-quickvox codes show an error state
+- Valid code renders the name input + Start button with the exam title
+- Submitting creates a session and drops the user into the QuickVox recording flow
+- Share text URL is now /q/:code with no Code line
+- QR code button appears on QuickVox exam cards in the professor view
+- QR code modal shows the correct deep link URL and a copyable text link
+- No changes to regular exam behavior, landing page, or Join Exam form
