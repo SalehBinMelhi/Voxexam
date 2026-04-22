@@ -55,7 +55,9 @@ import {
   RefreshCw,
   Play,
   Square,
+  QrCode,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import type { InsertQuestion, QuestionType, Exam, ExamSubmission, User as UserType, ProctoringFlag } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
@@ -115,6 +117,7 @@ export function SimpleExamTab() {
   const [quickVoxOpen, setQuickVoxOpen] = useState(false);
   const [quickVoxTitle, setQuickVoxTitle] = useState("");
   const [quickVoxQuestion, setQuickVoxQuestion] = useState("");
+  const [qrExam, setQrExam] = useState<Exam | null>(null);
 
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
@@ -525,7 +528,8 @@ export function SimpleExamTab() {
         )}
 
         {examSubmissions.length > 0 && (
-          <div className="grid sm:grid-cols-2 gap-3">
+          <div className={`grid ${selectedExam.mode === "quickvox" ? "" : "sm:grid-cols-2"} gap-3`}>
+            {selectedExam.mode !== "quickvox" && (
             <Card>
               <CardContent className="p-3 flex items-center gap-2">
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -537,6 +541,7 @@ export function SimpleExamTab() {
                 </div>
               </CardContent>
             </Card>
+            )}
             <Card>
               <CardContent className="p-3 flex items-center gap-2">
                 <Users className="h-4 w-4 text-muted-foreground" />
@@ -642,16 +647,53 @@ export function SimpleExamTab() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <div className={`px-2 py-1 rounded text-xs font-medium ${getScoreBg(sub.totalScore)} ${getScoreColor(sub.totalScore)}`}>
-                            Score: {(sub.totalScore * 100).toFixed(0)}%
-                          </div>
+                          {selectedExam.mode === "quickvox" ? (
+                            <div className="px-2 py-1 rounded text-xs font-medium bg-muted text-muted-foreground" data-testid={`badge-quickvox-${sub.id}`}>
+                              QuickVox
+                            </div>
+                          ) : (
+                            <div className={`px-2 py-1 rounded text-xs font-medium ${getScoreBg(sub.totalScore)} ${getScoreColor(sub.totalScore)}`}>
+                              Score: {(sub.totalScore * 100).toFixed(0)}%
+                            </div>
+                          )}
                           {isExpanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
                         </div>
                       </button>
 
                       {isExpanded && (
                         <div className="border-t px-4 pb-4 space-y-4">
-                          {feedback && (
+                          {selectedExam.mode === "quickvox" && ((sub as any).quickvoxInsight || (sub as any).quickvoxFollowUp) && (
+                            <div className="mt-4 space-y-3" data-testid={`quickvox-section-${sub.id}`}>
+                              <h5 className="text-xs font-semibold flex items-center gap-1.5 text-primary">
+                                <Sparkles className="h-3.5 w-3.5" />
+                                QuickVox Insight
+                              </h5>
+                              {(sub as any).quickvoxInsight && (
+                                <Card className="border-primary/20 bg-primary/5">
+                                  <CardContent className="p-3">
+                                    <p className="text-xs leading-relaxed" data-testid={`text-quickvox-insight-expanded-${sub.id}`}>
+                                      {(sub as any).quickvoxInsight}
+                                    </p>
+                                  </CardContent>
+                                </Card>
+                              )}
+                              {(sub as any).quickvoxFollowUp && (
+                                <div
+                                  className="rounded-md bg-primary/5 border border-primary/20 p-3"
+                                  data-testid={`callout-quickvox-followup-${sub.id}`}
+                                >
+                                  <p className="text-[10px] font-medium text-primary uppercase tracking-wide mb-1">
+                                    One more thought:
+                                  </p>
+                                  <p className="text-xs leading-relaxed" data-testid={`text-quickvox-followup-${sub.id}`}>
+                                    {(sub as any).quickvoxFollowUp}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {selectedExam.mode !== "quickvox" && feedback && (
                             <div className="mt-4 space-y-3" data-testid={`feedback-section-${sub.id}`}>
                               <h5 className="text-xs font-semibold flex items-center gap-1.5 text-primary">
                                 <Sparkles className="h-3.5 w-3.5" />
@@ -686,7 +728,7 @@ export function SimpleExamTab() {
                             </div>
                           )}
 
-                          {!feedback && (
+                          {selectedExam.mode !== "quickvox" && !feedback && (
                             <div className="mt-4 flex items-center justify-between bg-muted/50 rounded-md p-3">
                               <p className="text-xs text-muted-foreground">No AI feedback yet</p>
                               <Button
@@ -718,7 +760,7 @@ export function SimpleExamTab() {
                                       <span className="text-muted-foreground">Q{idx + 1}:</span> {question?.text || "Unknown question"}
                                     </p>
                                     <div className="flex items-center gap-1 flex-shrink-0">
-                                      {isEditingThis ? (
+                                      {selectedExam.mode === "quickvox" ? null : isEditingThis ? (
                                         <div className="flex items-center gap-1">
                                           <Input type="number" min="0" max="100" value={newScoreValue} onChange={(e) => setNewScoreValue(e.target.value)} className="w-14 h-6 text-[10px]" />
                                           <span className="text-[10px] text-muted-foreground">%</span>
@@ -742,10 +784,12 @@ export function SimpleExamTab() {
                                       )}
                                     </div>
                                   </div>
-                                  {question?.correctAnswer && (
+                                  {selectedExam.mode !== "quickvox" && question?.correctAnswer && (
                                     <p className="text-[10px] text-muted-foreground">Expected: {question.correctAnswer}</p>
                                   )}
-                                  <p className="text-[10px]">Answer: {resp.response || "(no text response)"}</p>
+                                  {selectedExam.mode !== "quickvox" && (
+                                    <p className="text-[10px]">Answer: {resp.response || "(no text response)"}</p>
+                                  )}
                                   {resp.transcript && <p className="text-[10px] text-muted-foreground italic">Transcript: {resp.transcript}</p>}
                                 </div>
                               );
@@ -1094,7 +1138,21 @@ export function SimpleExamTab() {
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between gap-2">
                       <CardTitle className="text-lg line-clamp-1">{exam.title}</CardTitle>
-                      <Badge variant={status.variant}>{status.label}</Badge>
+                      <div className="flex items-center gap-1">
+                        {exam.mode === "quickvox" && exam.accessCode && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={(e) => { e.stopPropagation(); setQrExam(exam); }}
+                            data-testid={`button-show-qr-${exam.id}`}
+                            aria-label="Show QR code"
+                          >
+                            <QrCode className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                      </div>
                     </div>
                     <p className="text-sm text-muted-foreground flex items-center gap-1">
                       <FileQuestion className="h-3.5 w-3.5" />
@@ -1172,6 +1230,55 @@ export function SimpleExamTab() {
               {createQuickVoxMutation.isPending ? "Creating..." : "Create QuickVox"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!qrExam} onOpenChange={(o) => { if (!o) setQrExam(null); }}>
+        <DialogContent className="max-w-sm" data-testid="dialog-quickvox-qr">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="h-5 w-5" />
+              Share QuickVox
+            </DialogTitle>
+            <DialogDescription>
+              Scan or share this link to open the QuickVox.
+            </DialogDescription>
+          </DialogHeader>
+          {qrExam && qrExam.accessCode && (() => {
+            const url = `${window.location.origin}/q/${qrExam.accessCode}`;
+            return (
+              <div className="flex flex-col items-center gap-4 py-2">
+                <div className="bg-white p-3 rounded-md" data-testid="qr-quickvox">
+                  <QRCodeSVG value={url} size={200} includeMargin={false} />
+                </div>
+                <div className="w-full space-y-2">
+                  <p
+                    className="text-sm text-center break-all font-mono text-muted-foreground"
+                    data-testid="text-quickvox-link"
+                  >
+                    {url}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(url);
+                        toast({ title: "Link copied", description: "Share it anywhere you like." });
+                      } catch {
+                        toast({ title: "Couldn't copy", description: "Please copy it manually.", variant: "destructive" });
+                      }
+                    }}
+                    data-testid="button-copy-quickvox-link"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Copy link
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

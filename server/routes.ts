@@ -622,6 +622,23 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/quickvox/:code", async (req, res) => {
+    try {
+      const code = p(req.params.code).trim();
+      if (!code) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      const exam = await storage.getExamByAccessCode(code);
+      if (!exam || exam.mode !== "quickvox") {
+        return res.status(404).json({ error: "Not found" });
+      }
+      const question = exam.questions?.[0]?.text || "";
+      res.json({ id: exam.id, title: exam.title, question });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch QuickVox" });
+    }
+  });
+
   app.get("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
       const exam = await storage.getExam(p(req.params.id));

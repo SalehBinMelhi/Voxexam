@@ -51,7 +51,8 @@ export function registerAuthRoutes(app: Express): void {
       const assignedById = (exam.assignedStudentIds || []).includes(localUserId);
       const hasAssignedStudents = (exam.assignedStudentNames || []).length > 0 || (exam.assignedStudentIds || []).length > 0;
 
-      if (hasAssignedStudents && !assignedByName && !assignedById) {
+      const isQuickVox = exam.mode === "quickvox";
+      if (!isQuickVox && hasAssignedStudents && !assignedByName && !assignedById) {
         return res.status(403).json({ message: "You are not assigned to this exam. Please contact your professor." });
       }
 

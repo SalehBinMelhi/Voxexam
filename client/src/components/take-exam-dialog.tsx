@@ -879,11 +879,11 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       const baseUrl = window.location.origin;
       const accessCode = exam.accessCode || "";
       const questionText = exam.questions[0]?.text || "";
+      const shareUrl = accessCode ? `${baseUrl}/q/${accessCode}` : baseUrl;
       const shareLines = [
         questionText ? `Someone asked me: ${questionText}` : null,
         insight,
-        `Try it yourself: ${baseUrl}`,
-        accessCode ? `Code: ${accessCode}` : null,
+        `Try it yourself: ${shareUrl}`,
       ].filter(Boolean);
       const shareText = shareLines.join("\n\n");
       const handleShare = async () => {
