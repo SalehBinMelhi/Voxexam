@@ -1,0 +1,1 @@
+- [db:push interactive prompts](db-push-prompts.md) — drizzle db:push blocks on pre-existing unique-constraint drift prompts the sandbox can't answer; apply nullable column ALTERs via SQL instead.

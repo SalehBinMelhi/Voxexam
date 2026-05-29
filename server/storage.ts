@@ -26,6 +26,13 @@ import {
   type ExamResponse,
   type Question,
   type GradingMethod,
+  type VoxScoreProfile,
+  type VoxDimension,
+  type VoxDimensionScore,
+  type VoxBand,
+  voxDimensions,
+  VOX_DIMENSION_WEIGHTS,
+  VOX_PASS_THRESHOLD,
   type ClassMaterial,
   type InsertClassMaterial,
   type StudentPerformanceRadar,
@@ -88,6 +95,85 @@ interface EvalResult {
   understandingScore: number;
   method: GradingMethod;
   transcript?: string;
+  voxScoreProfile?: VoxScoreProfile;
+}
+
+// Clamp a number into the 1–5 band range as an integer.
+function clampBand(n: number): VoxBand {
+  const r = Math.round(n);
+  return Math.max(1, Math.min(5, r)) as VoxBand;
+}
+
+// Build a uniform VoxScoreProfile from a single 0–1 score (used on fallback paths
+// where no structured AI evaluation is available).
+function fallbackProfile(score: number, language = "unknown"): VoxScoreProfile {
+  const band = clampBand(score * 4 + 1);
+  const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => ({
+    dimension,
+    band,
+    weightedScore: (band / 5) * VOX_DIMENSION_WEIGHTS[dimension] * 100,
+    evidence: "Automatically estimated — structured AI evaluation unavailable.",
+    conceptsPresent: [],
+    conceptsMissing: [],
+    conceptsIncorrect: [],
+  }));
+  const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+  return {
+    dimensions,
+    totalScore,
+    passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+    confidenceLevel: "low",
+    asrQualityFlag: "needs_human_review",
+    languageDetected: language,
+  };
+}
+
+// Combine multiple per-question VoxScoreProfiles into one submission-level profile
+// by averaging each dimension's band and weighted score.
+function aggregateProfiles(profiles: VoxScoreProfile[]): VoxScoreProfile | undefined {
+  if (profiles.length === 0) return undefined;
+  if (profiles.length === 1) return profiles[0];
+
+  const confidenceRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+  const asrRank: Record<string, number> = { ok: 3, low_confidence: 2, needs_human_review: 1 };
+
+  const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => {
+    const perDim = profiles
+      .map((p) => p.dimensions.find((d) => d.dimension === dimension))
+      .filter((d): d is VoxDimensionScore => !!d);
+    const avgBand = clampBand(perDim.reduce((a, d) => a + d.band, 0) / perDim.length);
+    const avgWeighted = perDim.reduce((a, d) => a + d.weightedScore, 0) / perDim.length;
+    const dedupe = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+    return {
+      dimension,
+      band: avgBand,
+      weightedScore: avgWeighted,
+      evidence: perDim.map((d) => d.evidence).filter(Boolean).join(" "),
+      conceptsPresent: dedupe(perDim.flatMap((d) => d.conceptsPresent || [])),
+      conceptsMissing: dedupe(perDim.flatMap((d) => d.conceptsMissing || [])),
+      conceptsIncorrect: dedupe(perDim.flatMap((d) => d.conceptsIncorrect || [])),
+    };
+  });
+  const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+
+  const worstConfidence = profiles.reduce(
+    (acc, p) => (confidenceRank[p.confidenceLevel] < confidenceRank[acc] ? p.confidenceLevel : acc),
+    profiles[0].confidenceLevel
+  );
+  const worstAsr = profiles.reduce(
+    (acc, p) => (asrRank[p.asrQualityFlag] < asrRank[acc] ? p.asrQualityFlag : acc),
+    profiles[0].asrQualityFlag
+  );
+  const languages = Array.from(new Set(profiles.map((p) => p.languageDetected).filter(Boolean)));
+
+  return {
+    dimensions,
+    totalScore,
+    passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+    confidenceLevel: worstConfidence,
+    asrQualityFlag: worstAsr,
+    languageDetected: languages.length === 1 ? languages[0] : languages.join(", ") || "unknown",
+  };
 }
 
 async function evaluateWithAI(
@@ -101,7 +187,7 @@ async function evaluateWithAI(
       ? `\nClass Materials Context (use this to assess the answer):\n${materialContext}\n`
       : "";
 
-    const prompt = `You are a fair, experienced university professor grading a student's oral exam answer. You must provide TWO independent scores. These scores should often be DIFFERENT from each other.
+    const prompt = `You are a fair, experienced university professor grading a student's oral exam answer using the VoxScore framework. Evaluate the answer across SEVEN independent dimensions. A student can score high on some dimensions and low on others — the dimension scores should reflect genuine differences.
 ${materialSection}
 Question: ${question.text}
 
@@ -109,61 +195,106 @@ Expected Answer: ${question.correctAnswer || "No specific expected answer provid
 
 Student's Answer: ${response}
 
-Provide TWO scores from 0.0 to 1.0. These are INDEPENDENT dimensions — a student can score high on one and low on the other:
+Score the academic meaning of the answer regardless of whether it is in English, Arabic, or a mix of both. Never penalize language choice, accent, or code-switching unless meaning is materially blocked.
 
-1. CORRECTNESS SCORE — Are the specific facts, terms, and claims accurate?
-Focus ONLY on factual precision. Ask: "Did the student state things that are true?"
-- 1.0 = All facts stated are accurate and complete
-- 0.8-0.9 = Core facts are right, one or two minor inaccuracies or omissions
-- 0.6-0.7 = Main idea is right but contains a factual error or significant omission
-- 0.4-0.5 = Mix of correct and incorrect claims
-- 0.1-0.3 = Mostly incorrect facts
-- 0.0 = Completely wrong or irrelevant
+For each dimension, assign a BAND from 1 to 5:
+- 1 = Inadequate
+- 2 = Limited
+- 3 = Developing
+- 4 = Proficient
+- 5 = Exemplary
 
-2. UNDERSTANDING SCORE — Does the student genuinely grasp the underlying concept?
-Focus on conceptual comprehension, NOT polish or precision of wording. Ask: "Does this person actually understand how this works, even if they expressed it imperfectly?"
-- 0.9-1.0 = Clearly understands the concept — can explain the mechanism, give examples, show how things connect. Imprecise wording is OK if the reasoning is sound.
-- 0.7-0.8 = Good grasp of the concept with minor gaps in depth or nuance
-- 0.5-0.6 = Understands the basics but misses important aspects of why/how
-- 0.3-0.4 = Vague or superficial — seems to have heard of it but can't explain it
-- 0.0-0.2 = No demonstrated understanding
+The seven dimensions and their weights:
+- D1 Subject Knowledge and Content Accuracy (weight 25%) — factual correctness, depth, disciplinary terminology, conceptual relationships, absence of misconceptions
+- D2 Reasoning and Critical Thinking (weight 20%) — analysis, synthesis, causal explanation, evaluation, assumptions, limitations, intellectual independence
+- D3 Evidence and Justification (weight 15%) — use of examples, cases, data, or discipline-specific evidence to justify claims
+- D4 Responsiveness and Defense (weight 15%) — directly answering the question, adapting under probing, defending or revising claims, epistemic honesty
+- D5 Organization and Coherence (weight 10%) — logical sequencing, transitions, structure, topic control
+- D6 Communication Clarity (weight 10%) — comprehensibility, lexical precision, clear central message; score meaning not accent or language choice
+- D7 Professionalism and Composure (weight 5%) — academic register, respectful engagement, composure
 
-KEY RULES:
-- These two scores SHOULD often differ. A student who understands the concept but states one wrong fact should get a HIGHER understanding score than correctness score.
-- A student who memorized the right answer without understanding should get a HIGHER correctness score than understanding score.
-- For oral/spoken answers: do NOT penalize informal language, repetition, filler words, or conversational tone. Students speak differently than they write. Focus on the substance.
-- For simple factual questions: a correct concise answer proves understanding (give 0.9-1.0 for understanding).
-- Be generous with understanding when the student demonstrates they grasp the core mechanism, even if their examples or terminology are slightly off.
+Guidelines:
+- For oral/spoken answers, do NOT penalize informal language, repetition, filler words, or conversational tone. Focus on substance.
+- For each dimension provide: a band (1-5), a short evidence string citing the answer, and concept lists (conceptsPresent, conceptsMissing, conceptsIncorrect) grounded in the question and any materials. Concept lists may be empty arrays.
 
-Respond with ONLY two numbers separated by a comma, like: 0.7,0.85
-The first number is correctness, the second is understanding.`;
+Respond with ONLY a JSON object in EXACTLY this shape:
+{
+  "dimensions": [
+    {"dimension":"D1","band":4,"evidence":"...","conceptsPresent":["..."],"conceptsMissing":["..."],"conceptsIncorrect":["..."]},
+    {"dimension":"D2","band":3,"evidence":"...","conceptsPresent":[],"conceptsMissing":[],"conceptsIncorrect":[]},
+    {"dimension":"D3", ...},
+    {"dimension":"D4", ...},
+    {"dimension":"D5", ...},
+    {"dimension":"D6", ...},
+    {"dimension":"D7", ...}
+  ],
+  "confidenceLevel": "high" | "medium" | "low",
+  "languageDetected": "english" | "arabic" | "mixed" | "other"
+}
+Include all seven dimensions D1 through D7 exactly once.`;
 
     const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
 
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 20,
+      max_tokens: 1200,
       temperature: 0.1,
+      response_format: { type: "json_object" },
     });
 
-    const responseText = completion.choices[0]?.message?.content?.trim() || "0,0";
-    const parts = responseText.split(",").map(s => parseFloat(s.trim()));
-    
-    const correctness = parts[0];
-    const understanding = parts.length > 1 ? parts[1] : parts[0];
-    
-    if (isNaN(correctness) || correctness < 0 || correctness > 1 ||
-        isNaN(understanding) || understanding < 0 || understanding > 1) {
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || !Array.isArray(parsed.dimensions)) {
       const fb = fallbackScore(question, response);
-      return { score: fb, understandingScore: fb, method: "fallback" };
+      return { score: fb, understandingScore: fb, method: "fallback", voxScoreProfile: fallbackProfile(fb) };
     }
-    
-    return { score: correctness, understandingScore: understanding, method: "ai" };
+
+    const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => {
+      const d = parsed.dimensions.find((x: any) => x?.dimension === dimension);
+      const band = clampBand(typeof d?.band === "number" ? d.band : 3);
+      const toStrArr = (v: any): string[] =>
+        Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim().length > 0) : [];
+      return {
+        dimension,
+        band,
+        weightedScore: (band / 5) * VOX_DIMENSION_WEIGHTS[dimension] * 100,
+        evidence: typeof d?.evidence === "string" ? d.evidence : "",
+        conceptsPresent: toStrArr(d?.conceptsPresent),
+        conceptsMissing: toStrArr(d?.conceptsMissing),
+        conceptsIncorrect: toStrArr(d?.conceptsIncorrect),
+      };
+    });
+
+    const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+    const confidenceLevel =
+      parsed.confidenceLevel === "high" || parsed.confidenceLevel === "medium" || parsed.confidenceLevel === "low"
+        ? parsed.confidenceLevel
+        : "medium";
+    const languageDetected = typeof parsed.languageDetected === "string" ? parsed.languageDetected : "unknown";
+
+    const voxScoreProfile: VoxScoreProfile = {
+      dimensions,
+      totalScore,
+      passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+      confidenceLevel,
+      asrQualityFlag: "ok",
+      languageDetected,
+    };
+
+    // Legacy flat scores derived from the profile so existing aggregates keep working.
+    // Correctness maps to D1 (content accuracy); understanding maps to D2 (reasoning).
+    const d1 = dimensions.find((d) => d.dimension === "D1")!;
+    const d2 = dimensions.find((d) => d.dimension === "D2")!;
+    const score = d1.band / 5;
+    const understandingScore = d2.band / 5;
+
+    return { score, understandingScore, method: "ai", voxScoreProfile };
   } catch (error) {
     console.error("[AI-GRADING] AI grading failed, using fallback:", error);
     const fb = fallbackScore(question, response);
-    return { score: fb, understandingScore: fb, method: "fallback" };
+    return { score: fb, understandingScore: fb, method: "fallback", voxScoreProfile: fallbackProfile(fb) };
   }
 }
 
@@ -950,6 +1081,7 @@ export class DatabaseStorage implements IStorage {
     const scores: Record<string, number> = {};
     const understandingScoresMap: Record<string, number> = {};
     const gradingMethodsMap: Record<string, GradingMethod> = {};
+    const questionProfiles: VoxScoreProfile[] = [];
 
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
@@ -958,6 +1090,9 @@ export class DatabaseStorage implements IStorage {
         scores[response.questionId] = result.score;
         understandingScoresMap[response.questionId] = result.understandingScore;
         gradingMethodsMap[response.questionId] = result.method;
+        if (result.voxScoreProfile) {
+          questionProfiles.push(result.voxScoreProfile);
+        }
         if (result.transcript) {
           response.transcript = result.transcript;
         }
@@ -974,6 +1109,12 @@ export class DatabaseStorage implements IStorage {
       ? understandingValues.reduce((a, b) => a + b, 0) / understandingValues.length
       : 0;
 
+    // Submission-level VoxScore profile (0–100). The legacy totalScore column stays
+    // on its 0–1 scale for backwards compatibility, so when a profile exists we set it
+    // from voxScoreProfile.totalScore / 100.
+    const voxScoreProfile = aggregateProfiles(questionProfiles) ?? null;
+    const legacyTotalScore = voxScoreProfile ? voxScoreProfile.totalScore / 100 : totalScore;
+
     let feedback: { strengths: string; weakPoints: string; recommendations: string } | null = null;
     try {
       feedback = await generateFeedback(exam, responses, scores, understandingScoresMap, materialContext || undefined, customApiKey);
@@ -988,9 +1129,10 @@ export class DatabaseStorage implements IStorage {
       scores,
       understandingScores: understandingScoresMap,
       gradingMethods: gradingMethodsMap,
-      totalScore,
+      totalScore: legacyTotalScore,
       totalUnderstandingScore,
       feedback,
+      voxScoreProfile,
       isPreview: isPreview ? "true" : "false",
       submittedAt: new Date().toISOString(),
     }).returning();

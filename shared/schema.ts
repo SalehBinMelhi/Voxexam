@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { pgTable, varchar, timestamp, jsonb, real, text } from "drizzle-orm/pg-core";
+import { pgTable, varchar, timestamp, jsonb, real, text, boolean, integer } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -142,6 +142,63 @@ export interface ProctoringFlag {
 // Suspicious threshold for tab switches
 export const TAB_SWITCH_SUSPICIOUS_THRESHOLD = 3;
 
+// ---------------------------------------------------------------------------
+// VoxScore seven-dimension framework
+// ---------------------------------------------------------------------------
+
+// The seven VoxScore dimensions (D1–D7)
+export const voxDimensions = ["D1", "D2", "D3", "D4", "D5", "D6", "D7"] as const;
+export type VoxDimension = (typeof voxDimensions)[number];
+
+// Canonical dimension weights (sum to 1.0)
+export const VOX_DIMENSION_WEIGHTS: Record<VoxDimension, number> = {
+  D1: 0.25,
+  D2: 0.2,
+  D3: 0.15,
+  D4: 0.15,
+  D5: 0.1,
+  D6: 0.1,
+  D7: 0.05,
+};
+
+// VoxScore pass threshold (out of 100)
+export const VOX_PASS_THRESHOLD = 60;
+
+// Five bands per dimension: Inadequate (1) … Exemplary (5)
+export const voxBands = [1, 2, 3, 4, 5] as const;
+export type VoxBand = (typeof voxBands)[number];
+
+// Per-dimension scoring result
+export interface VoxDimensionScore {
+  dimension: VoxDimension;
+  band: VoxBand;
+  weightedScore: number; // contribution to the 0–100 total for this dimension
+  evidence: string;
+  conceptsPresent: string[];
+  conceptsMissing: string[];
+  conceptsIncorrect: string[];
+}
+
+// Confidence in the AI evaluation
+export type VoxConfidenceLevel = "high" | "medium" | "low";
+
+// ASR quality flag for the underlying transcript
+export type VoxAsrQualityFlag = "ok" | "low_confidence" | "needs_human_review";
+
+// Full seven-dimension VoxScore profile (0–100 scale)
+export interface VoxScoreProfile {
+  dimensions: VoxDimensionScore[];
+  totalScore: number; // 0–100
+  passFail: "pass" | "fail";
+  confidenceLevel: VoxConfidenceLevel;
+  asrQualityFlag: VoxAsrQualityFlag;
+  languageDetected: string;
+}
+
+// Professor decision on an AI-suggested VoxScore
+export const professorDecisions = ["accepted", "adjusted", "overridden"] as const;
+export type ProfessorDecision = (typeof professorDecisions)[number];
+
 // Submissions table
 export const submissions = pgTable("submissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -162,6 +219,21 @@ export const submissions = pgTable("submissions", {
   isSuspicious: varchar("is_suspicious").default("false"),
   quickvoxInsight: text("quickvox_insight"),
   quickvoxFollowUp: text("quickvox_follow_up"),
+  voxScoreProfile: jsonb("vox_score_profile").$type<VoxScoreProfile>(),
+  professorVoxScoreProfile: jsonb("professor_vox_score_profile").$type<VoxScoreProfile>(),
+  professorDecision: text("professor_decision"),
+  professorOverrideReason: text("professor_override_reason"),
+  professorHolisticScore: real("professor_holistic_score"),
+  professorReviewTimestamp: timestamp("professor_review_timestamp"),
+  professorReviewDurationMinutes: real("professor_review_duration_minutes"),
+  gradingGap: real("grading_gap"),
+  arabicFlag: boolean("arabic_flag"),
+  asrConfidenceLevel: text("asr_confidence_level"),
+  asrEstimatedWer: text("asr_estimated_wer"),
+  criticalConceptErrorFlag: boolean("critical_concept_error_flag"),
+  languageUsed: text("language_used"),
+  answerDurationSeconds: real("answer_duration_seconds"),
+  estimatedWordCount: integer("estimated_word_count"),
   submittedAt: varchar("submitted_at").notNull(),
 });
 
