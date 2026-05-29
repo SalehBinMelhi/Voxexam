@@ -344,6 +344,44 @@ export function SimpleExamTab() {
     },
   });
 
+  const [decisionDrafts, setDecisionDrafts] = useState<Record<string, { decision: string; reason: string; holistic: string }>>({});
+
+  const getDecisionDraft = (sub: ExamSubmission) => {
+    return decisionDrafts[sub.id] ?? {
+      decision: sub.professorDecision ?? "",
+      reason: sub.professorOverrideReason ?? "",
+      holistic: sub.professorHolisticScore != null ? String(sub.professorHolisticScore) : "",
+    };
+  };
+
+  const setDecisionDraft = (sub: ExamSubmission, patch: Partial<{ decision: string; reason: string; holistic: string }>) => {
+    setDecisionDrafts((prev) => ({ ...prev, [sub.id]: { ...getDecisionDraft(sub), ...patch } }));
+  };
+
+  const saveDecisionMutation = useMutation({
+    mutationFn: async ({ submissionId, decision, reason, holistic }: { submissionId: string; decision: string; reason: string; holistic: string }) => {
+      const holisticNum = holistic.trim() === "" ? null : parseFloat(holistic);
+      const response = await apiRequest("PATCH", `/api/submissions/${submissionId}/decision`, {
+        professorDecision: decision,
+        professorOverrideReason: reason.trim() === "" ? null : reason.trim(),
+        professorHolisticScore: holisticNum,
+      });
+      return response.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
+      toast({ title: "Decision saved" });
+      setDecisionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[variables.submissionId];
+        return next;
+      });
+    },
+    onError: () => {
+      toast({ title: "Could not save decision", variant: "destructive" });
+    },
+  });
+
   const startEditing = (submissionId: string, questionId: string, currentScore: number) => {
     setEditingScore({ submissionId, questionId, currentScore });
     setNewScoreValue(Math.round(currentScore * 100).toString());
@@ -821,6 +859,97 @@ export function SimpleExamTab() {
                               </div>
                             </div>
                           )}
+
+                          {selectedExam.mode !== "quickvox" && (() => {
+                            const draft = getDecisionDraft(sub);
+                            const decided = sub.professorDecision;
+                            const isSavingThis = saveDecisionMutation.isPending && saveDecisionMutation.variables?.submissionId === sub.id;
+                            const decisionOptions: { value: string; label: string; icon: typeof Check }[] = [
+                              { value: "accepted", label: "Accept", icon: Check },
+                              { value: "adjusted", label: "Adjust", icon: Edit2 },
+                              { value: "overridden", label: "Override", icon: AlertCircle },
+                            ];
+                            return (
+                              <div className="space-y-3 mt-4 rounded-md border border-primary/30 bg-primary/5 p-3" data-testid={`decision-panel-${sub.id}`}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <h5 className="text-xs font-semibold flex items-center gap-1.5">
+                                    <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+                                    Professor Decision
+                                  </h5>
+                                  {decided && (
+                                    <Badge variant="secondary" className="text-[10px] capitalize" data-testid={`decision-status-${sub.id}`}>
+                                      {decided}
+                                    </Badge>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  {decisionOptions.map((opt) => {
+                                    const Icon = opt.icon;
+                                    const active = draft.decision === opt.value;
+                                    return (
+                                      <Button
+                                        key={opt.value}
+                                        type="button"
+                                        size="sm"
+                                        variant={active ? "default" : "outline"}
+                                        onClick={() => setDecisionDraft(sub, { decision: opt.value })}
+                                        data-testid={`button-decision-${opt.value}-${sub.id}`}
+                                      >
+                                        <Icon className="h-3.5 w-3.5 mr-1" />
+                                        {opt.label}
+                                      </Button>
+                                    );
+                                  })}
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <Label className="text-[11px] text-muted-foreground" htmlFor={`override-reason-${sub.id}`}>
+                                    Override / adjustment reason (optional)
+                                  </Label>
+                                  <Textarea
+                                    id={`override-reason-${sub.id}`}
+                                    value={draft.reason}
+                                    onChange={(e) => setDecisionDraft(sub, { reason: e.target.value })}
+                                    placeholder="Explain why you adjusted or overrode the AI-suggested score…"
+                                    className="text-xs min-h-[60px]"
+                                    data-testid={`input-override-reason-${sub.id}`}
+                                  />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <Label className="text-[11px] text-muted-foreground" htmlFor={`holistic-score-${sub.id}`}>
+                                    Holistic impression score (0–10, optional)
+                                  </Label>
+                                  <Input
+                                    id={`holistic-score-${sub.id}`}
+                                    type="number"
+                                    min="0"
+                                    max="10"
+                                    step="0.5"
+                                    value={draft.holistic}
+                                    onChange={(e) => setDecisionDraft(sub, { holistic: e.target.value })}
+                                    placeholder="e.g. 7.5"
+                                    className="w-28 text-xs"
+                                    data-testid={`input-holistic-score-${sub.id}`}
+                                  />
+                                </div>
+
+                                <div className="flex justify-end">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => saveDecisionMutation.mutate({ submissionId: sub.id, decision: draft.decision, reason: draft.reason, holistic: draft.holistic })}
+                                    disabled={!draft.decision || isSavingThis}
+                                    data-testid={`button-save-decision-${sub.id}`}
+                                  >
+                                    <Check className="h-3.5 w-3.5 mr-1" />
+                                    {isSavingThis ? "Saving…" : "Save Decision"}
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </CardContent>

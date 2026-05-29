@@ -892,6 +892,58 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/submissions/:id/decision", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const { professorDecision, professorOverrideReason, professorHolisticScore } = req.body;
+
+      const validDecisions = ["accepted", "adjusted", "overridden"];
+      if (!professorDecision || !validDecisions.includes(professorDecision)) {
+        return res.status(400).json({ error: "professorDecision must be one of: accepted, adjusted, overridden" });
+      }
+
+      if (
+        professorHolisticScore !== undefined &&
+        professorHolisticScore !== null &&
+        (!Number.isFinite(professorHolisticScore) || professorHolisticScore < 0 || professorHolisticScore > 10)
+      ) {
+        return res.status(400).json({ error: "professorHolisticScore must be a number between 0 and 10" });
+      }
+
+      if (professorOverrideReason !== undefined && professorOverrideReason !== null && typeof professorOverrideReason !== "string") {
+        return res.status(400).json({ error: "professorOverrideReason must be a string" });
+      }
+
+      const existing = await storage.getSubmission(p(req.params.id));
+      if (!existing) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const exam = await storage.getExam(existing.examId);
+      if (!exam) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+
+      if (exam.professorId !== userId) {
+        return res.status(403).json({ error: "Not authorized to review this submission" });
+      }
+
+      const submission = await storage.updateSubmissionDecision(p(req.params.id), {
+        professorDecision,
+        professorOverrideReason: professorOverrideReason ?? null,
+        professorHolisticScore: professorHolisticScore ?? null,
+      });
+
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      res.json(submission);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to save decision" });
+    }
+  });
+
   app.post("/api/submissions/:id/feedback", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user!.claims.sub;
