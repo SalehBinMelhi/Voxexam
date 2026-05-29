@@ -12,6 +12,7 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
+import { objectStorageClient } from "./replit_integrations/object_storage";
 import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -20,6 +21,30 @@ const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { file
 const RECORDINGS_DIR = path.join(process.cwd(), "recordings");
 if (!fs.existsSync(RECORDINGS_DIR)) {
   fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+}
+
+// Resolve the bucket and object name for a proctoring recording stored in
+// Replit Object Storage, under the private object dir's "recordings/" prefix.
+function getRecordingObjectLocation(fileName: string): { bucketName: string; objectName: string } {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
+  if (!privateDir) {
+    throw new Error(
+      "PRIVATE_OBJECT_DIR not set. Object Storage must be configured to store recordings."
+    );
+  }
+  const fullPath = `${privateDir.replace(/\/$/, "")}/recordings/${fileName}`;
+  const normalized = fullPath.startsWith("/") ? fullPath : `/${fullPath}`;
+  const parts = normalized.split("/");
+  const bucketName = parts[1];
+  const objectName = parts.slice(2).join("/");
+  return { bucketName, objectName };
+}
+
+// Upload a proctoring recording buffer to Object Storage. Returns the filename.
+async function uploadRecordingToObjectStorage(fileName: string, buffer: Buffer): Promise<void> {
+  const { bucketName, objectName } = getRecordingObjectLocation(fileName);
+  const file = objectStorageClient.bucket(bucketName).file(objectName);
+  await file.save(buffer, { contentType: "video/webm" });
 }
 
 declare global {
@@ -965,16 +990,14 @@ export async function registerRoutes(
       if (req.files?.screenRecording?.[0]) {
         const file = req.files.screenRecording[0];
         const fileName = `screen_${submissionId}_${Date.now()}.webm`;
-        const filePath = path.join(RECORDINGS_DIR, fileName);
-        fs.writeFileSync(filePath, file.buffer);
+        await uploadRecordingToObjectStorage(fileName, file.buffer);
         updates.screenRecordingUrl = `/api/recordings/${fileName}`;
       }
 
       if (req.files?.webcamRecording?.[0]) {
         const file = req.files.webcamRecording[0];
         const fileName = `webcam_${submissionId}_${Date.now()}.webm`;
-        const filePath = path.join(RECORDINGS_DIR, fileName);
-        fs.writeFileSync(filePath, file.buffer);
+        await uploadRecordingToObjectStorage(fileName, file.buffer);
         updates.webcamRecordingUrl = `/api/recordings/${fileName}`;
       }
 
@@ -1010,12 +1033,37 @@ export async function registerRoutes(
       }
     }
 
+    // Legacy recordings written to the filesystem before the move to Object
+    // Storage are still served from disk so they remain accessible.
     const filePath = path.join(RECORDINGS_DIR, filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "Recording not found" });
+    if (fs.existsSync(filePath)) {
+      res.setHeader("Content-Type", "video/webm");
+      return res.sendFile(filePath);
     }
-    res.setHeader("Content-Type", "video/webm");
-    res.sendFile(filePath);
+
+    // New recordings live in Object Storage.
+    try {
+      const { bucketName, objectName } = getRecordingObjectLocation(filename);
+      const objectFile = objectStorageClient.bucket(bucketName).file(objectName);
+      const [exists] = await objectFile.exists();
+      if (!exists) {
+        return res.status(404).json({ error: "Recording not found" });
+      }
+      res.setHeader("Content-Type", "video/webm");
+      const stream = objectFile.createReadStream();
+      stream.on("error", (err) => {
+        console.error("Error streaming recording:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error streaming recording" });
+        }
+      });
+      stream.pipe(res);
+    } catch (error) {
+      console.error("Failed to load recording:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to load recording" });
+      }
+    }
   });
 
   app.post("/api/submissions/:id/proctoring", isAuthenticated, express.json({ limit: "50mb" }), async (req: any, res) => {
