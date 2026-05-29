@@ -1,27 +1,28 @@
 ---
-name: db:push interactive prompts
-description: Why `npm run db:push` hangs in this repo and how to apply schema changes anyway.
+name: db:push interactive prompts (resolved)
+description: Why `npm run db:push` used to hang in this repo and how the constraint name drift was fixed.
 ---
 
-`npm run db:push` (drizzle-kit) prompts interactively to confirm adding several
-pre-existing unique constraints that are in `shared/schema.ts` but missing from the
-live DB (e.g. `classes_join_code_unique`, `exams_access_code_unique`). These prompts
-use a raw-TTY arrow-key menu.
+**Resolved.** `npm run db:push -- --force` now runs fully non-interactively
+("No changes detected"), and `scripts/post-merge.sh` applies schema changes
+automatically after merges.
 
-**Why it matters:** The agent sandbox terminates any command it detects as "waiting on
-user input", and piping newlines / Python `pty` enter-keys both get killed before all
-prompts are answered. So a clean non-interactive `db:push` is not currently possible
-here until that constraint drift is resolved.
+**Root cause:** The hang was NOT missing constraints — it was a constraint *name*
+mismatch. The unique constraints already existed in the live DB under Postgres's
+auto-generated names (`classes_join_code_key`, `exams_access_code_key`), but the
+drizzle schema's `.unique()` makes drizzle-kit expect its own convention
+(`classes_join_code_unique`, `exams_access_code_unique`). The name difference made
+drizzle-kit push treat it as a rename/recreate and show a raw-TTY arrow-key prompt
+that `--force` does not answer, so post-merge (stdin closed) aborted and additive
+column changes silently never applied. The "duplicate" code values were all NULLs
+(valid under a unique constraint) — no real data conflict.
 
-**Symptom of the resulting drift:** because pushes silently never apply, the live DB
-ends up missing columns the drizzle schema declares. Any `db.select()`/`insert().returning()`
-on that table then throws, surfacing as blanket 500s (e.g. "Failed to fetch exams",
-"Failed to create exam"). Diagnose by diffing `information_schema.columns` against the
-`pgTable` definition. Real cases hit: `exams.mode`, `submissions.quickvox_insight`,
-`submissions.quickvox_follow_up`.
+**Fix (permanent):** Renamed the live DB constraints to match drizzle-kit's
+convention via metadata-only `ALTER TABLE ... RENAME CONSTRAINT` (no data touched,
+no drop/recreate). After that, push reports no diff and exits cleanly. Verify names
+against `pg_constraint`. This survives future merges because the drift is resolved
+in the DB itself, not worked around per-merge.
 
-**How to apply schema changes:** For additive, nullable column changes, run the exact
-`ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` statements directly (via `executeSql`
-in code_execution) matching the drizzle column names/types, then verify against
-`information_schema.columns`. drizzle `real`→`real`, `timestamp`→`timestamp without
-time zone`, `integer`→`integer`, `boolean`→`boolean`, `jsonb`→`jsonb`.
+**If a similar prompt reappears:** diff drizzle's expected constraint name against
+the actual `pg_constraint.conname` for that column and `RENAME CONSTRAINT` to align,
+rather than dropping/recreating or piping fake input into the prompt.
