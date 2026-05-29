@@ -1,0 +1,80 @@
+Professor Decision Workflow — Task #27
+
+Add the professor decision workflow to the exam submission review UI. This is a UI + backend task that builds on the new schema columns added in Task #26. No changes to evaluateWithAI, evaluateQuickVoxAnswer, or any grading logic.
+
+=== WHAT NEEDS TO BE BUILT ===
+
+On the professor dashboard, when a professor expands a student submission in the Student Results list, they currently see AI Feedback and Per-Question Results. Add a decision panel to every expanded submission with the following:
+
+1. THREE DECISION BUTTONS
+Show three mutually exclusive buttons: "Accept", "Adjust", "Override"
+- Accept: professor agrees with the AI score. Clicking sets professorDecision = 'accepted' and professorReviewTimestamp = now. No score change.
+- Adjust: professor wants to change one or more scores but keeps the AI assessment as the base. Clicking opens the score editing fields (already partially exists via the pencil icon) and sets professorDecision = 'adjusted' when saved.
+- Override: professor completely replaces the AI score. Clicking opens a full score entry and sets professorDecision = 'overridden' when saved.
+
+Only one button can be active at a time. If a decision has already been made, show which one is active. Professor can change their decision at any time.
+
+2. OVERRIDE REASON FIELD
+Below the three buttons, show a text area labeled "Reason for adjustment (optional but encouraged)"
+- Always visible when Adjust or Override is selected
+- Never visible when Accept is selected
+- Never a hard gate — professor can save without filling it in
+- If professor starts typing, do not interrupt
+- If professor saves Adjust or Override without any text, show one gentle prompt: "Adding a reason helps improve AI accuracy over time. Skip anyway?" with a "Add reason" button and a "Skip" button. If they click Skip, save without reason. Never show this prompt twice for the same submission.
+
+3. HOLISTIC IMPRESSION SCORE
+Below the reason field, show a 1-10 number input labeled "Your overall impression (1–10) — not part of the official score"
+- Only visible on official exam submissions (mode === 'exam')
+- Never shown on QuickVox submissions
+- Optional, never required
+- Saves to professorHolisticScore column
+
+4. SAVE BUTTON
+A "Save Decision" button that:
+- Saves professorDecision, professorOverrideReason, professorHolisticScore, professorReviewTimestamp to the submission
+- Calculates and saves gradingGap as AI totalScore minus professor adjusted totalScore (if adjusted/overridden) or 0 (if accepted)
+- Sets arabicFlag = true if languageUsed is 'arabic' or 'mixed' AND gradingGap exceeds 6 points
+- Shows a success toast on save
+- Tracks professorReviewDurationMinutes as time from when submission was expanded to when Save was clicked
+
+=== NEW BACKEND ENDPOINT ===
+
+Add PATCH /api/submissions/:id/decision
+
+Accepts:
+{
+  professorDecision: 'accepted' | 'adjusted' | 'overridden',
+  professorOverrideReason?: string,
+  professorHolisticScore?: number,
+  professorReviewDurationMinutes?: number,
+  adjustedScores?: Record<string, number>
+}
+
+Updates the submission record with all provided fields plus:
+- professorReviewTimestamp = now
+- gradingGap calculated server-side
+- arabicFlag set server-side based on languageUsed and gradingGap
+
+Requires professor session. Returns updated submission.
+
+=== CONSTRAINTS ===
+- Do not modify evaluateWithAI, evaluateQuickVoxAnswer, or any grading path
+- Do not change QuickVox submission display
+- Do not add holistic score field to QuickVox submissions
+- All new columns used here already exist from Task #26 — no new schema changes needed
+- Do not touch vite.config.ts, server/vite.ts, or drizzle.config.ts
+- Follow existing frontend conventions: useToast, no explicit React import, TanStack Query object form, apiRequest from @/lib/queryClient
+- Every new interactive element needs a data-testid
+
+=== VERIFICATION CHECKLIST ===
+Reply confirming:
+- Accept / Adjust / Override buttons appear on expanded submissions
+- Clicking Accept saves the decision immediately with no score change
+- Clicking Adjust or Override opens score editing and reason field
+- Reason field is optional — never blocks saving
+- One-time gentle prompt appears when saving without a reason
+- Holistic score field appears on regular exam submissions only
+- Save Decision button persists all fields correctly to the database
+- gradingGap is calculated and saved correctly
+- arabicFlag is set correctly when conditions are met
+- No changes to QuickVox, grading path, or schema
