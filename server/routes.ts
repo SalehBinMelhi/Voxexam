@@ -895,17 +895,24 @@ export async function registerRoutes(
   app.patch("/api/submissions/:id/decision", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user!.claims.sub;
-      const { professorDecision, professorOverrideReason, professorHolisticScore } = req.body;
+      const {
+        professorDecision,
+        professorOverrideReason,
+        professorHolisticScore,
+        professorReviewDurationMinutes,
+        adjustedScores,
+        aiTotalScore,
+      } = req.body;
 
-      const validDecisions = ["accepted", "adjusted", "overridden"];
-      if (!professorDecision || !validDecisions.includes(professorDecision)) {
-        return res.status(400).json({ error: "professorDecision must be one of: accepted, adjusted, overridden" });
+      if (!["accepted", "adjusted", "overridden"].includes(professorDecision)) {
+        return res.status(400).json({ error: "Invalid professorDecision" });
       }
 
       if (
         professorHolisticScore !== undefined &&
         professorHolisticScore !== null &&
-        (!Number.isFinite(professorHolisticScore) || professorHolisticScore < 0 || professorHolisticScore > 10)
+        professorHolisticScore !== "" &&
+        (!Number.isFinite(Number(professorHolisticScore)) || Number(professorHolisticScore) < 0 || Number(professorHolisticScore) > 10)
       ) {
         return res.status(400).json({ error: "professorHolisticScore must be a number between 0 and 10" });
       }
@@ -914,33 +921,66 @@ export async function registerRoutes(
         return res.status(400).json({ error: "professorOverrideReason must be a string" });
       }
 
-      const existing = await storage.getSubmission(p(req.params.id));
-      if (!existing) {
+      let submission = await storage.getSubmission(p(req.params.id));
+      if (!submission) {
         return res.status(404).json({ error: "Submission not found" });
       }
 
-      const exam = await storage.getExam(existing.examId);
+      const exam = await storage.getExam(submission.examId);
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
       }
 
       if (exam.professorId !== userId) {
-        return res.status(403).json({ error: "Not authorized to review this submission" });
+        return res.status(403).json({ error: "Only the exam's professor can record a decision" });
       }
 
-      const submission = await storage.updateSubmissionDecision(p(req.params.id), {
+      const aiTotal = (typeof aiTotalScore === "number" && aiTotalScore >= 0 && aiTotalScore <= 1)
+        ? aiTotalScore
+        : submission.totalScore;
+
+      if (adjustedScores && typeof adjustedScores === "object") {
+        for (const [questionId, rawScore] of Object.entries(adjustedScores)) {
+          const score = Number(rawScore);
+          if (isNaN(score) || score < 0 || score > 1) continue;
+          const updated = await storage.updateSubmissionScore(submission.id, questionId, score);
+          if (updated) submission = updated;
+        }
+      }
+
+      const professorTotal = submission.totalScore;
+      const gradingGap = professorDecision === "accepted"
+        ? 0
+        : Math.round((aiTotal - professorTotal) * 100);
+
+      const lang = (submission.languageUsed || "").toLowerCase();
+      const arabicFlag = (lang === "arabic" || lang === "mixed") && gradingGap > 6;
+
+      const holistic = professorHolisticScore === undefined || professorHolisticScore === null || professorHolisticScore === ""
+        ? null
+        : Math.max(1, Math.min(10, Number(professorHolisticScore)));
+
+      const duration = professorReviewDurationMinutes === undefined || professorReviewDurationMinutes === null
+        ? null
+        : Number(professorReviewDurationMinutes);
+
+      const result = await storage.updateSubmissionDecision(submission.id, {
         professorDecision,
-        professorOverrideReason: professorOverrideReason ?? null,
-        professorHolisticScore: professorHolisticScore ?? null,
+        professorOverrideReason: professorDecision === "accepted" ? null : (professorOverrideReason || null),
+        professorHolisticScore: exam.mode === "exam" ? holistic : null,
+        professorReviewDurationMinutes: duration,
+        gradingGap,
+        arabicFlag,
       });
 
-      if (!submission) {
+      if (!result) {
         return res.status(404).json({ error: "Submission not found" });
       }
 
-      res.json(submission);
+      res.json(result);
     } catch (error) {
-      res.status(500).json({ error: "Failed to save decision" });
+      console.error("Failed to record decision:", error);
+      res.status(500).json({ error: "Failed to record professor decision" });
     }
   });
 

@@ -780,7 +780,14 @@ export interface IStorage {
   getAllSubmissions(): Promise<ExamSubmission[]>;
   createSubmission(studentId: string, examId: string, responses: ExamResponse[], isPreview?: boolean): Promise<ExamSubmission>;
   updateSubmissionScore(submissionId: string, questionId: string, newScore: number): Promise<ExamSubmission | undefined>;
-  updateSubmissionDecision(submissionId: string, decision: { professorDecision: string; professorOverrideReason?: string | null; professorHolisticScore?: number | null }): Promise<ExamSubmission | undefined>;
+  updateSubmissionDecision(submissionId: string, data: {
+    professorDecision: string;
+    professorOverrideReason?: string | null;
+    professorHolisticScore?: number | null;
+    professorReviewDurationMinutes?: number | null;
+    gradingGap: number;
+    arabicFlag: boolean;
+  }): Promise<ExamSubmission | undefined>;
 
   // Support
   createSupportRequest(data: { userId: string; userName?: string; userRole?: string; message?: string; pageUrl?: string }): Promise<SupportRequest>;
@@ -1180,18 +1187,22 @@ export class DatabaseStorage implements IStorage {
     return updated || undefined;
   }
 
-  async updateSubmissionDecision(
-    submissionId: string,
-    decision: { professorDecision: string; professorOverrideReason?: string | null; professorHolisticScore?: number | null }
-  ): Promise<ExamSubmission | undefined> {
-    const [sub] = await db.select().from(submissions).where(eq(submissions.id, submissionId));
-    if (!sub) return undefined;
-
+  async updateSubmissionDecision(submissionId: string, data: {
+    professorDecision: string;
+    professorOverrideReason?: string | null;
+    professorHolisticScore?: number | null;
+    professorReviewDurationMinutes?: number | null;
+    gradingGap: number;
+    arabicFlag: boolean;
+  }): Promise<ExamSubmission | undefined> {
     const [updated] = await db.update(submissions).set({
-      professorDecision: decision.professorDecision,
-      professorOverrideReason: decision.professorOverrideReason ?? null,
-      professorHolisticScore: decision.professorHolisticScore ?? null,
+      professorDecision: data.professorDecision,
+      professorOverrideReason: data.professorOverrideReason ?? null,
+      professorHolisticScore: data.professorHolisticScore ?? null,
+      professorReviewDurationMinutes: data.professorReviewDurationMinutes ?? null,
       professorReviewTimestamp: new Date(),
+      gradingGap: data.gradingGap,
+      arabicFlag: data.arabicFlag,
     }).where(eq(submissions.id, submissionId)).returning();
 
     return updated || undefined;
