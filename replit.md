@@ -537,7 +537,7 @@ A detailed VoxClasses explanation is weighted higher than a blank VoxExam overri
 - **AI:** OpenAI — `gpt-4o` for QuickVox and VoxClasses, `gpt-4o-mini` for graded exam evaluation, Whisper / gpt-4o-transcribe for audio transcription
 - **Sharing:** Web Share API (`navigator.share`) with clipboard fallback
 - **Auth target:** Microsoft SSO — UAE university professors and students already have university Microsoft accounts. Current auth is Replit OIDC for professors and code-based login for students — Microsoft SSO is the planned migration.
-- **DNS:** Domain to be registered on Cloudflare — both .com and .ae variants
+- **DNS:** `voxexam.com` and `voxexams.com` registered on Cloudflare (`voxexam.ae` not registered). A Cloudflare Page Rule redirects `voxexams.com` to `voxexam.com`.
 - **Database hosting target:** PostgreSQL must move to Supabase or Neon — data must never be trapped inside Replit
 - **Secrets:** All environment variables stored as Replit environment variables — never hardcoded
 
@@ -555,7 +555,9 @@ A detailed VoxClasses explanation is weighted higher than a blank VoxExam overri
 
 **Take Exam Flow** — In-browser audio recording with ffmpeg.wasm format conversion, full proctoring for VoxExam, QuickVox bypasses all proctoring. Status: Working.
 
-**AI Grading (current state — being upgraded)** — Two fields: correctness and understanding via gpt-4o-mini, manual professor score override, AI strengths/weaknesses feedback on regular exams only. Status: Working — will be replaced by seven-dimension VoxScore system.
+**AI Grading (seven-dimension VoxScore)** — `evaluateWithAI` (gpt-4o-mini) now returns a structured VoxScoreProfile across all seven dimensions (D1–D7 with weights), stored on the submissions table. Legacy `totalScore` retained for backwards compatibility on a 0–1 scale. AI strengths/weaknesses feedback on regular exams only. Status: Working.
+
+**VoxScore breakdown UI** — Professor view shows a compact strip (total, band, strongest, weakest) with an expandable 7-row dimension table (dimension, weight, band chip, weighted contribution, evidence, view-evidence link). The table auto-opens on Adjust/Override, a near-boundary score, or a weak dimension. Students see a simplified VoxScore section in the result dialog plus a VoxScore badge on completed exam cards. Null-safe for older submissions that predate the schema upgrade. Status: Working.
 
 **Analytics** — Per-exam averages, per-student breakdown, CSV export, radar chart and score trend. Status: Working — needs full rebuild when VoxScore schema ships.
 
@@ -579,19 +581,21 @@ Status: Pending — blocks all real student data collection.
 
 **Database migration** — Move PostgreSQL from Replit to Supabase or Neon. Status: Pending — high priority before real users.
 
-**Domain registration** — Register voxexam.com and voxexam.ae on Cloudflare. Status: Pending.
+**Domain registration** — `voxexam.com` and `voxexams.com` registered on Cloudflare (`voxexam.ae` was not registered as originally planned). Cloudflare Page Rule redirect from `voxexams.com` to `voxexam.com` is live. Status: Done.
 
 **Microsoft SSO** — Replace or supplement current auth with Microsoft SSO. Status: Pending — not yet scoped.
 
 **GitHub connection** — Connect Replit project to GitHub repository to enable Codex desktop app access and codebase backup. Status: Pending.
 
+**Infrastructure fixes (done)** — `db:push` now runs fully non-interactively: unique constraint names in the database were renamed from `*_key` to `*_unique` to match Drizzle's expectations, removing the blocking prompts. The `/api/exams` 500 error caused by a schema/DB mismatch was fixed by applying the missing columns to the database. Status: Done.
+
 ### VoxScore Upgrade — Core Schema and Grading
 
-**VoxScore schema upgrade** — Replace two-field grading with all seven VoxScore dimension scores plus all required submission fields. Status: Pending — blocks all VoxScore features.
+**VoxScore schema upgrade** — Flat two-field grading replaced with a full VoxScoreProfile across all seven dimensions (D1–D7 with weights); 15 new nullable columns added to the submissions table; `evaluateWithAI` now returns a structured VoxScoreProfile; legacy `totalScore` retained for backwards compatibility on a 0–1 scale. Status: Done.
 
-**Professor decision workflow** — Accepted, Adjusted, Overridden field on every VoxExam submission, override reason text field with AI assistant, gentle prompt if explanation skipped. Status: Pending.
+**Professor decision workflow** — Accept/Adjust/Override decision panel on every expanded submission in the professor dashboard, with reason text area, holistic impression score (1–10, official exams only), Save Decision button; new `PATCH /api/submissions/:id/decision` endpoint; columns came from the schema upgrade. Status: Done.
 
-**Grading gap calculation and Arabic flag** — Automated gap calculation, automatic flagging of Arabic and Mixed answers, routing to mandatory professor review queue. Status: Pending.
+**Grading gap calculation and Arabic flag** — Grading-gap calculation and `arabicFlag` are implemented as part of the professor decision workflow (gap captured against the AI baseline, Arabic/Mixed answers flagged). Status: Done.
 
 ### Product Rebuild
 
