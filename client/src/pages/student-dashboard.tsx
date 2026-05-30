@@ -20,6 +20,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 import type { Exam, ExamSubmission } from "@shared/schema";
+import { voxTotalBandColor } from "@/lib/voxscore";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 
 function getExamStatus(exam: Exam): { label: string; variant: "default" | "secondary" | "destructive" | "outline"; canTake: boolean } {
@@ -260,6 +261,18 @@ export default function StudentDashboard() {
                             >
                               QuickVox
                             </Badge>
+                          ) : submission && submission.voxScoreProfile ? (
+                            (() => {
+                              const c = voxTotalBandColor(submission.voxScoreProfile.totalScore);
+                              return (
+                                <Badge
+                                  className={`${c.bg} ${c.text} border ${c.border}`}
+                                  data-testid={`badge-voxscore-${exam.id}`}
+                                >
+                                  VoxScore: {Math.round(submission.voxScoreProfile.totalScore)}/100
+                                </Badge>
+                              );
+                            })()
                           ) : submission ? (
                             <>
                               <Badge

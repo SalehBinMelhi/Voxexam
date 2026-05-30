@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { ProfessorVoxScore } from "@/components/voxscore-breakdown";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -328,6 +329,17 @@ export function SimpleExamTab() {
   const [promptedIds, setPromptedIds] = useState<Set<string>>(new Set());
   const [expandedAt, setExpandedAt] = useState<number | null>(null);
   const [aiBaselineTotal, setAiBaselineTotal] = useState<number | null>(null);
+  const [voxBreakdownOpen, setVoxBreakdownOpen] = useState(false);
+  const [highlightTranscript, setHighlightTranscript] = useState(false);
+  const perQuestionRef = useRef<HTMLDivElement>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scrollToEvidence = () => {
+    perQuestionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightTranscript(true);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlightTranscript(false), 2000);
+  };
 
   const updateScoreMutation = useMutation({
     mutationFn: async ({ submissionId, questionId, score }: { submissionId: string; questionId: string; score: number }) => {
@@ -387,6 +399,17 @@ export function SimpleExamTab() {
     setDecisionReason(sub.professorOverrideReason || "");
     setHolisticScore(sub.professorHolisticScore != null ? String(sub.professorHolisticScore) : "");
     setShowReasonPrompt(false);
+    setHighlightTranscript(false);
+
+    const profile = sub.voxScoreProfile;
+    const decision = sub.professorDecision;
+    const autoOpen = !!profile && (
+      decision === "adjusted" ||
+      decision === "overridden" ||
+      (profile.totalScore >= 55 && profile.totalScore <= 65) ||
+      profile.dimensions.some((d) => d.band <= 2)
+    );
+    setVoxBreakdownOpen(autoOpen);
   };
 
   const closeSubmission = () => {
@@ -744,6 +767,16 @@ export function SimpleExamTab() {
 
                       {isExpanded && (
                         <div className="border-t px-4 pb-4 space-y-4">
+                          {selectedExam.mode !== "quickvox" && sub.voxScoreProfile && (
+                            <ProfessorVoxScore
+                              profile={sub.voxScoreProfile}
+                              open={voxBreakdownOpen}
+                              onToggle={() => setVoxBreakdownOpen((v) => !v)}
+                              onViewEvidence={scrollToEvidence}
+                              testId={sub.id}
+                            />
+                          )}
+
                           {selectedExam.mode === "quickvox" && ((sub as any).quickvoxInsight || (sub as any).quickvoxFollowUp) && (
                             <div className="mt-4 space-y-3" data-testid={`quickvox-section-${sub.id}`}>
                               <h5 className="text-xs font-semibold flex items-center gap-1.5 text-primary">
@@ -826,7 +859,11 @@ export function SimpleExamTab() {
                             </div>
                           )}
 
-                          <div className="space-y-2 mt-3">
+                          <div
+                            ref={perQuestionRef}
+                            className={`space-y-2 mt-3 rounded-md transition-all ${highlightTranscript ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`}
+                            data-testid={`per-question-results-${sub.id}`}
+                          >
                             <h5 className="text-xs font-semibold text-muted-foreground">Per-Question Results</h5>
                             {sub.responses.map((resp, idx) => {
                               const question = selectedExam.questions.find(q => q.id === resp.questionId);
@@ -899,7 +936,7 @@ export function SimpleExamTab() {
                                 <Button
                                   size="sm"
                                   variant={decisionChoice === "adjusted" ? "default" : "outline"}
-                                  onClick={() => { setDecisionChoice("adjusted"); setShowReasonPrompt(false); }}
+                                  onClick={() => { setDecisionChoice("adjusted"); setShowReasonPrompt(false); if (sub.voxScoreProfile) setVoxBreakdownOpen(true); }}
                                   data-testid={`button-decision-adjust-${sub.id}`}
                                 >
                                   Adjust
@@ -907,7 +944,7 @@ export function SimpleExamTab() {
                                 <Button
                                   size="sm"
                                   variant={decisionChoice === "overridden" ? "default" : "outline"}
-                                  onClick={() => { setDecisionChoice("overridden"); setShowReasonPrompt(false); }}
+                                  onClick={() => { setDecisionChoice("overridden"); setShowReasonPrompt(false); if (sub.voxScoreProfile) setVoxBreakdownOpen(true); }}
                                   data-testid={`button-decision-override-${sub.id}`}
                                 >
                                   Override
