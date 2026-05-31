@@ -195,6 +195,92 @@ export interface VoxScoreProfile {
   languageDetected: string;
 }
 
+// ---------------------------------------------------------------------------
+// VoxPractice — private, student-led oral self-training (separate from QuickVox
+// Phases 1-3 and from the professor-facing exam grading pipeline)
+// ---------------------------------------------------------------------------
+
+// Where the practice material came from
+export const practiceSourceTypes = ["upload", "subject", "topic"] as const;
+export type PracticeSourceType = (typeof practiceSourceTypes)[number];
+
+// Practice session intent / shape
+export const practiceSessionModes = ["warmup", "readiness_sprint", "weak_spot", "mock_oral"] as const;
+export type PracticeSessionMode = (typeof practiceSessionModes)[number];
+
+// How encouraging vs demanding the AI coach is
+export const practiceCoachStyles = ["gentle", "normal", "strict"] as const;
+export type PracticeCoachStyle = (typeof practiceCoachStyles)[number];
+
+// Cognitive level a practice question targets
+export const practiceCognitiveLevels = [
+  "recall",
+  "understanding",
+  "application",
+  "comparison",
+  "reasoning",
+  "defense",
+] as const;
+export type PracticeCognitiveLevel = (typeof practiceCognitiveLevels)[number];
+
+// Coverage status for a single concept/topic in a session
+export const practiceCoverageStatuses = ["strong", "developing", "weak", "not_covered"] as const;
+export type PracticeCoverageStatus = (typeof practiceCoverageStatuses)[number];
+
+// A single practice question plus everything captured while answering it
+export interface PracticeQuestion {
+  id: string;
+  text: string;
+  cognitiveLevel: PracticeCognitiveLevel;
+  concept?: string; // the material concept this question targets
+  transcript?: string; // the student's transcribed answer
+  followUpProbe?: string; // single AI probe drawn from the approved list
+  followUpTranscript?: string; // student's answer to the probe (optional)
+  microFeedback?: string; // short per-answer coaching note
+  voxScoreProfile?: VoxScoreProfile; // 7-dimension practice score for this answer
+}
+
+// Coverage map: concept/topic -> status
+export type PracticeConceptCoverageMap = Record<string, PracticeCoverageStatus>;
+
+// Practice sessions table (private to the student — never visible to professors)
+export const practiceSessions = pgTable("practice_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studentId: varchar("student_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  sourceType: text("source_type").notNull(),
+  sourceSummary: text("source_summary"),
+  sessionMode: text("session_mode").notNull(),
+  coachStyle: text("coach_style").notNull().default("normal"),
+  questions: jsonb("questions").$type<PracticeQuestion[]>().default([]),
+  overallReadinessScore: real("overall_readiness_score"),
+  overallVoxScoreProfile: jsonb("overall_vox_score_profile").$type<VoxScoreProfile>(),
+  conceptCoverageMap: jsonb("concept_coverage_map").$type<PracticeConceptCoverageMap>(),
+  languageUsed: text("language_used"),
+  completedQuestionCount: integer("completed_question_count").default(0),
+});
+
+export type PracticeSession = typeof practiceSessions.$inferSelect;
+
+export const insertPracticeSessionSchema = createInsertSchema(practiceSessions, {
+  sourceType: z.enum(practiceSourceTypes),
+  sessionMode: z.enum(practiceSessionModes),
+  coachStyle: z.enum(practiceCoachStyles).optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  completedAt: true,
+  studentId: true,
+  questions: true,
+  overallReadinessScore: true,
+  overallVoxScoreProfile: true,
+  conceptCoverageMap: true,
+  completedQuestionCount: true,
+});
+
+export type InsertPracticeSession = z.infer<typeof insertPracticeSessionSchema>;
+
 // Professor decision on an AI-suggested VoxScore
 export const professorDecisions = ["accepted", "adjusted", "overridden"] as const;
 export type ProfessorDecision = (typeof professorDecisions)[number];

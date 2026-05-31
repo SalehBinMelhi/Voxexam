@@ -10,10 +10,11 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent, analyzePracticeMaterial, generatePracticeQuestions, generatePracticeProbe, generatePracticeMicroFeedback, buildPracticeReadinessReport } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
 import { objectStorageClient } from "./replit_integrations/object_storage";
-import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
+import { insertExamSchema, insertExamSubmissionSchema, insertPracticeSessionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD, type PracticeQuestion } from "@shared/schema";
+import { z } from "zod";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -661,6 +662,267 @@ export async function registerRoutes(
       res.json({ id: exam.id, title: exam.title, question });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch QuickVox" });
+    }
+  });
+
+  // =========================================================================
+  // VoxPractice — private, student-led oral self-training.
+  // Every route is scoped to the authenticated student; practice data is never
+  // exposed to professors, directors, or any other role.
+  // =========================================================================
+
+  // Resolve the OpenAI key for a practice student: prefer their university's
+  // configured key, otherwise fall back to the default integration key.
+  const resolvePracticeApiKey = async (userId: string): Promise<string | null> => {
+    const user = await storage.getUser(userId);
+    if (user?.universityId) {
+      const uni = await storage.getUniversity(user.universityId);
+      if (uni?.openaiApiKey) return uni.openaiApiKey;
+    }
+    return null;
+  };
+
+  // Load a practice session and assert the caller owns it. Returns the session
+  // or sends the appropriate error response and returns null.
+  const loadOwnedPracticeSession = async (req: Request, res: any) => {
+    const userId = req.user!.claims.sub;
+    const session = await storage.getPracticeSession(p(req.params.id));
+    if (!session) {
+      res.status(404).json({ error: "Practice session not found" });
+      return null;
+    }
+    if (session.studentId !== userId) {
+      res.status(403).json({ error: "Not authorized to access this practice session" });
+      return null;
+    }
+    return session;
+  };
+
+  // Resolve a transcript from the request body — either provided directly or by
+  // transcribing supplied audio through the existing transcription pipeline.
+  const resolvePracticeTranscript = async (body: any, questionText?: string): Promise<string> => {
+    if (typeof body?.transcript === "string" && body.transcript.trim().length > 0) {
+      return body.transcript.trim();
+    }
+    if (typeof body?.audioData === "string" && body.audioData.length > 0) {
+      const t = await transcribeAudio(body.audioData, questionText);
+      return (t || "").trim();
+    }
+    return "";
+  };
+
+  // Student-only guard: VoxPractice is a private self-training tool. Professors,
+  // directors, and admins must never access it. Runs after isAuthenticated.
+  const requireStudent: express.RequestHandler = async (req, res, next) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "student") {
+        return res.status(403).json({ error: "VoxPractice is available to students only" });
+      }
+      next();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Authorization check failed" });
+    }
+  };
+
+  // Zod request contracts for the practice routes (creation uses the shared
+  // insert schema). An answer payload must carry either a transcript or audio.
+  const analyzeMaterialBody = z.object({ content: z.string().min(1) });
+  const generateQuestionsBody = z.object({
+    materialContent: z.string().min(1),
+    count: z.number().int().positive().max(20).optional(),
+    focusConcepts: z.array(z.string()).optional(),
+  });
+  const answerBody = z
+    .object({
+      questionId: z.string().min(1),
+      transcript: z.string().optional(),
+      audioData: z.string().optional(),
+      materialContent: z.string().optional(),
+    })
+    .refine(
+      (b) => (b.transcript && b.transcript.trim().length > 0) || (b.audioData && b.audioData.length > 0),
+      { message: "A transcript or audio answer is required" }
+    );
+  const finalizeBody = z.object({}).optional();
+
+  // Analyze chosen material into a concept/topic/question summary.
+  app.post("/api/practice/analyze-material", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const parsed = analyzeMaterialBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Material content is required", details: parsed.error.errors });
+      }
+      const apiKey = await resolvePracticeApiKey(userId);
+      const summary = await analyzePracticeMaterial(parsed.data.content, apiKey);
+      res.json(summary);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to analyze material" });
+    }
+  });
+
+  // Create a practice session (scoped to the authenticated student).
+  app.post("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const parsed = insertPracticeSessionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid practice session data", details: parsed.error.errors });
+      }
+      const session = await storage.createPracticeSession(userId, parsed.data);
+      res.status(201).json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create practice session" });
+    }
+  });
+
+  // List the authenticated student's own practice sessions.
+  app.get("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const sessions = await storage.getPracticeSessionsByStudent(userId);
+      res.json(sessions);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch practice sessions" });
+    }
+  });
+
+  // Get one practice session (must be owned by the caller).
+  app.get("/api/practice/sessions/:id", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      res.json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch practice session" });
+    }
+  });
+
+  // Generate a material-grounded question set and store it on the session.
+  app.post("/api/practice/sessions/:id/generate-questions", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = generateQuestionsBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid generate-questions request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const apiKey = await resolvePracticeApiKey(session.studentId);
+      const questions = await generatePracticeQuestions(
+        parsed.data.materialContent,
+        {
+          sessionMode: session.sessionMode as any,
+          coachStyle: session.coachStyle as any,
+          count: parsed.data.count,
+          focusConcepts: parsed.data.focusConcepts,
+        },
+        apiKey
+      );
+      const updated = await storage.updatePracticeSession(session.id, { questions });
+      res.json({ questions, session: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate practice questions" });
+    }
+  });
+
+  // Produce a single follow-up probe for an answer (from the approved list only).
+  app.post("/api/practice/sessions/:id/probe", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = answerBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid probe request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const questions = (session.questions || []) as PracticeQuestion[];
+      const question = questions.find((q) => q.id === parsed.data.questionId);
+      if (!question) {
+        return res.status(400).json({ error: "questionId does not match a question in this session" });
+      }
+      const transcript = await resolvePracticeTranscript(parsed.data, question.text);
+      if (!transcript) {
+        return res.status(400).json({ error: "A transcript or audio answer is required" });
+      }
+      const apiKey = await resolvePracticeApiKey(session.studentId);
+      const { probe } = await generatePracticeProbe(
+        question.text,
+        transcript,
+        { coachStyle: session.coachStyle as any },
+        apiKey
+      );
+      const updatedQuestions = questions.map((q) =>
+        q.id === parsed.data.questionId ? { ...q, transcript, followUpProbe: probe } : q
+      );
+      await storage.updatePracticeSession(session.id, { questions: updatedQuestions });
+      res.json({ probe, transcript });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate follow-up probe" });
+    }
+  });
+
+  // Produce per-answer micro-feedback plus a 7-dimension practice VoxScore.
+  app.post("/api/practice/sessions/:id/feedback", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = answerBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid feedback request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const questions = (session.questions || []) as PracticeQuestion[];
+      const question = questions.find((q) => q.id === parsed.data.questionId);
+      if (!question) {
+        return res.status(400).json({ error: "questionId does not match a question in this session" });
+      }
+      const transcript = await resolvePracticeTranscript(parsed.data, question.text);
+      if (!transcript) {
+        return res.status(400).json({ error: "A transcript or audio answer is required" });
+      }
+      const materialContent = parsed.data.materialContent ?? null;
+      const apiKey = await resolvePracticeApiKey(session.studentId);
+      const { microFeedback, voxScoreProfile } = await generatePracticeMicroFeedback(
+        question.text,
+        transcript,
+        { coachStyle: session.coachStyle as any, materialContent, concept: question.concept ?? null },
+        apiKey
+      );
+      const updatedQuestions = questions.map((q) =>
+        q.id === parsed.data.questionId ? { ...q, transcript, microFeedback, voxScoreProfile } : q
+      );
+      await storage.updatePracticeSession(session.id, {
+        questions: updatedQuestions,
+        languageUsed: session.languageUsed || voxScoreProfile.languageDetected,
+      });
+      res.json({ microFeedback, voxScoreProfile });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate micro-feedback" });
+    }
+  });
+
+  // Finalize a session into a readiness report (aggregate over answered questions).
+  app.post("/api/practice/sessions/:id/finalize", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = finalizeBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid finalize request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const questions = (session.questions || []) as PracticeQuestion[];
+      const report = buildPracticeReadinessReport(questions);
+      const updated = await storage.updatePracticeSession(session.id, {
+        overallReadinessScore: report.overallReadinessScore,
+        overallVoxScoreProfile: report.overallVoxScoreProfile ?? undefined,
+        conceptCoverageMap: report.conceptCoverageMap,
+        completedQuestionCount: report.completedQuestionCount,
+        languageUsed: session.languageUsed || report.languageUsed,
+        completedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to finalize practice session" });
     }
   });
 
