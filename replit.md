@@ -4,7 +4,7 @@
 
 ## What is VOX Exam
 
-VOX Exam is an EdTech platform for university oral examinations. It consists of four distinct products: QuickVox, VoxClasses, VoxExam, and VoxLive. Students answer questions by voice, AI transcribes and grades the response using VoxScore, and proctoring is built in for official exam mode. It is being built on Replit by a non-technical founder using the Replit Agent for code changes.
+VOX Exam is an EdTech platform for university oral examinations. It consists of four distinct products: VoxPractice, VoxClasses, VoxExam, and VoxLive. Students answer questions by voice, AI transcribes and grades the response using VoxScore, and proctoring is built in for official exam mode. It is being built on Replit by a non-technical founder using the Replit Agent for code changes.
 
 **Target audience.** UAE universities — professors and students. Bilingual Arabic and English is a hard requirement.
 
@@ -14,7 +14,7 @@ VOX Exam is an EdTech platform for university oral examinations. It consists of 
 
 ## The Four Products
 
-**QuickVox** — Student-led voice practice and self-study tool. No professor needed. Student logs in, picks a topic, AI generates a question, student answers by voice, AI gives coaching or scoring feedback depending on mode. Two modes: Coach Mode (default, no score) and VoxExam Mode (full VoxScore). Requires student login for persistent identity and score history. No QR code. No public route.
+**VoxPractice** — Student-led voice practice and self-study tool. No professor needed. Student logs in, picks a topic, AI generates a question, student answers by voice, AI gives coaching or scoring feedback depending on mode. Two modes: Coach Mode (default, no score) and Mock Oral Exam Mode (full VoxScore). Requires student login for persistent identity and score history. No QR code. No public route. Previously referred to as QuickVox in older documentation — VoxPractice is the correct current name.
 
 **VoxClasses** — Professor-created classes where students practice oral answers on their own time. Professor assigns topics and uploads materials. AI scores every answer automatically using full VoxScore. Professor has complete visibility into all student performance and can adjust any score. No transcript impact. No proctoring. Students join via class join code or QR.
 
@@ -93,7 +93,7 @@ VoxScore is VOX Exam's proprietary oral assessment scoring system and the core s
 
 ## AI Follow-Up and Probing Protocol (Locked In — Platform Wide)
 
-This protocol applies in QuickVox Coach Mode, QuickVox VoxExam Mode, and VoxExam official sessions.
+This protocol applies in VoxPractice Coach Mode, VoxPractice Mock Oral Exam Mode, and VoxExam official sessions.
 
 **Acceptable probes** — questions that open up thinking without leading toward the answer:
 - "Can you give me an example?"
@@ -113,7 +113,7 @@ This protocol applies in QuickVox Coach Mode, QuickVox VoxExam Mode, and VoxExam
 
 ---
 
-## QuickVox — Student Self-Study Tool (Locked In)
+## VoxPractice — Student Self-Study Tool (Locked In)
 
 ### Topic Sources
 Students choose from three topic paths:
@@ -175,11 +175,11 @@ Mode selection uses a two-card selector — not a toggle switch:
 ### Multiple Question Sessions
 - Each question is its own conversation unit — resolved before moving to next
 - Session ends with cross-question summary showing which dimensions were consistently weak
-- "Coaching only — no official grade" label always visible on QuickVox
+- "Coaching only — no official grade" label always visible on VoxPractice
 
 ### Enrolled vs Non-Enrolled in One UI
 - No enrollment: show only self-study paths, hide all class language
-- Enrolled in VoxClass: class topics appear first with clear label "VoxClass Assignment — may be visible to professor", self-study topics second with label "QuickVox Self-Study — private"
+- Enrolled in VoxClass: class topics appear first with clear label "VoxClass Assignment — may be visible to professor", self-study topics second with label "VoxPractice Self-Study — private"
 - Never mix the two without clear visual distinction
 
 ### Arabic UI
@@ -192,7 +192,7 @@ Mode selection uses a two-card selector — not a toggle switch:
 ## VoxClasses (Locked In)
 
 - Professor creates a class and shares a join code or QR code
-- Professor uploads materials that become available to enrolled students as topic sources in QuickVox
+- Professor uploads materials that become available to enrolled students as topic sources in VoxPractice
 - Professor assigns practice topics or questions
 - AI scores every student answer automatically using full VoxScore across all seven dimensions
 - No mandatory professor pre-approval required for practice answers
@@ -245,18 +245,18 @@ Mode selection uses a two-card selector — not a toggle switch:
 
 ### Proctoring
 - Full proctoring: webcam recording, screen recording, tab-switch detection, copy-paste blocking
-- All proctoring skipped entirely on QuickVox and VoxClasses
+- All proctoring skipped entirely on VoxPractice and VoxClasses
 
 ---
 
 ## VoxLive — Public Voice Sessions (Locked In)
 
-- Renamed from QuickVox public route — no longer called QuickVox
+- Renamed from original public QuickVox route — VoxLive is the correct current name
 - Professor-created, no-login, QR-based public voice session
 - Used for demos, open days, conference booths, classroom icebreakers, orientation events
 - One professor-set question, one voice response, optional display name, optional lightweight demo feedback
 - Demo feedback labeled "demo only — not an official VoxScore"
-- Every completed session ends with CTA: "Practice privately with score history — open QuickVox"
+- Every completed session ends with CTA: "Practice privately with score history — open VoxPractice"
 - Codes expire by default: 24 hours for events, 7 days for pilots
 - Maximum responses per code configurable by professor
 - Rate limited by code and IP
@@ -265,8 +265,8 @@ Mode selection uses a two-card selector — not a toggle switch:
 - Audio deleted after configurable TTL
 - `/q/:code` retained as compatibility alias for existing printed QR codes
 - New public links use `/v/:code`
-- Smart resolver: public event link → render VoxLive session; VoxClass assignment link → redirect to login with return URL; expired link → show expired page with QuickVox CTA; invalid code → safe error page
-- Not called QuickVox Public, Guest QuickVox, or Anonymous QuickVox
+- Smart resolver: public event link → render VoxLive session; VoxClass assignment link → redirect to login with return URL; expired link → show expired page with VoxPractice CTA; invalid code → safe error page
+- Not called VoxPractice Public, Guest VoxPractice, or Anonymous VoxPractice
 
 ---
 
@@ -276,7 +276,7 @@ Mode selection uses a two-card selector — not a toggle switch:
 
 | Tier | Who | Access | Score Label | Professor Visibility |
 |---|---|---|---|---|
-| Personal Learner | Any verified email | Full QuickVox Coach Mode and VoxExam Mode, private score history | Private VoxScore estimate | Never |
+| Personal Learner | Any verified email | Full VoxPractice Coach Mode and Mock Oral Exam Mode, private score history | Private VoxScore estimate | Never |
 | University Verified | University domain, SSO, or domain allowlist | Everything above plus university topic suggestions | Private VoxScore estimate | Never unless enrolled |
 | VoxClass Enrolled | Professor invite, class code, roster sync | Everything above plus class materials and assignments | Institutional VoxScore | Class policy controls |
 | Official VoxExam | Institution-approved, professor-enabled | Full official exam with proctoring | Official assessment | Professor reviews and approves |
@@ -289,7 +289,7 @@ Mode selection uses a two-card selector — not a toggle switch:
 - Consent screen required before first voice recording — cannot be skipped
 
 **Account linking when joining a VoxClass:**
-- System checks if professor's invited email already has a QuickVox account
+- System checks if professor's invited email already has a VoxPractice account
 - If yes: existing account promoted to VoxClass Enrolled — no new account created — all history preserved
 - If institutional SSO: prompted to link SSO to existing account with one explicit confirmation step
 - Personal practice history before VoxClass enrollment: visible to student only — never visible to professor unless explicitly submitted
@@ -311,7 +311,7 @@ Mode selection uses a two-card selector — not a toggle switch:
 
 ---
 
-## QuickVox First-Time Flow (Locked In)
+## VoxPractice First-Time Flow (Locked In)
 
 - Screen 0: entry detection — if no enrollments and no prior sessions, show first-run experience
 - Headline: "Practice one oral answer privately. No class needed." — bilingual
@@ -372,7 +372,7 @@ The programme director dashboard is a governance, quality assurance, curriculum 
 - Individual student drill-down requires explicit click, logged in audit trail, purpose reminder displayed
 - Minimum five students in any displayed cohort segment — smaller segments suppressed
 - Raw audio requires logged case reason
-- Private QuickVox history never appears at any dashboard level
+- Private VoxPractice history never appears at any dashboard level
 
 **The five decisions the dashboard serves:** curriculum redesign, assessment moderation, student support, faculty development, accreditation evidence.
 
@@ -531,14 +531,14 @@ A detailed VoxClasses explanation is weighted higher than a blank VoxExam overri
 ## Tech Stack
 
 - **Client:** React + TypeScript, wouter for routing, qrcode.react for QR
-- **Server:** Node.js + TypeScript on Replit
+- **Server:** Node.js + TypeScript, Express. Hosting target: Render Starter ($7/mo). Currently running on Replit dev URL during development.
 - **DB:** PostgreSQL via Drizzle ORM. Schema lives in `shared/schema.ts`. Migrations applied via `npm run db:push`
 - **Validation:** Zod via `insertExamSchema` / `insertSubmissionSchema`
-- **AI:** OpenAI — `gpt-4o` for QuickVox and VoxClasses, `gpt-4o-mini` for graded exam evaluation, Whisper / gpt-4o-transcribe for audio transcription
+- **AI:** OpenAI — `gpt-4o` for VoxPractice and VoxClasses, `gpt-4o-mini` for graded exam evaluation, Whisper / gpt-4o-transcribe for audio transcription
 - **Sharing:** Web Share API (`navigator.share`) with clipboard fallback
 - **Auth target:** Microsoft SSO — UAE university professors and students already have university Microsoft accounts. Current auth is Replit OIDC for professors and code-based login for students — Microsoft SSO is the planned migration.
-- **DNS:** Domain to be registered on Cloudflare — both .com and .ae variants
-- **Database hosting target:** PostgreSQL must move to Supabase or Neon — data must never be trapped inside Replit
+- **DNS:** `voxexam.com` and `voxexams.com` are registered on Cloudflare. `voxexams.com` redirects to `voxexam.com`. `.ae` variant remains pending if pursued.
+- **Database hosting:** Neon (PostgreSQL). Data is not on Replit internal storage.
 - **Secrets:** All environment variables stored as Replit environment variables — never hardcoded
 
 ---
@@ -547,19 +547,35 @@ A detailed VoxClasses explanation is weighted higher than a blank VoxExam overri
 
 **Authentication** — Replit OIDC for professors and admins, local code-based login for students, demo sessions, class join code enrollment. Status: Working.
 
-**Exam Creation (VoxExam path)** — Manual question builder (MCQ, short answer, audio response), AI question generation from materials, conversational question builder chat. Status: Partially working — gpt-5.1 bug must be fixed before professor uses chat feature.
+**Exam Creation (VoxExam path)** — Manual question builder (MCQ, short answer, audio response), AI question generation from materials, conversational question builder chat. Status: Partially working — oral recreation and full benchmark package not yet built.
 
-**QuickVox (current state — being repurposed)** — One-question voice-only variant, no proctoring, no login wall on public entry, 7-day access code, public `/q/:code` route, QR code modal, Web Share API, AI insight and one follow-up question. Phase 4A (interactive follow-up reply) active on its own branch. Status: Phase 1–3 done, Phase 4A active, full repurpose pending.
+**VoxPractice backend** — Backend rebuild for the student self-study tool, including practice-session logic and backend support for the new private voice-practice experience. Status: Completed in Task #37.
+
+**VoxPractice UI** — The new student-facing practice UI is under active build. Status: In progress in Task #38.
 
 **Classes (being rebuilt as VoxClasses)** — Class creation with join codes and rosters, document upload with parsing, basic AI question generation from materials. Status: Working at basic level — VoxScore analytics layer and full professor visibility not yet built.
 
-**Take Exam Flow** — In-browser audio recording with ffmpeg.wasm format conversion, full proctoring for VoxExam, QuickVox bypasses all proctoring. Status: Working.
+**Take Exam Flow** — In-browser audio recording with ffmpeg.wasm format conversion, full proctoring for VoxExam, VoxPractice bypasses all proctoring. Status: Working.
 
-**AI Grading (current state — being upgraded)** — Two fields: correctness and understanding via gpt-4o-mini, manual professor score override, AI strengths/weaknesses feedback on regular exams only. Status: Working — will be replaced by seven-dimension VoxScore system.
+**AI Grading and VoxScore** — The seven-dimension VoxScore schema upgrade is now implemented, the professor decision workflow is live, and the VoxScore UI has been added to the product. Status: Core upgrade completed in Tasks #26, #29, and #33.
 
-**Analytics** — Per-exam averages, per-student breakdown, CSV export, radar chart and score trend. Status: Working — needs full rebuild when VoxScore schema ships.
+**Database schema deployment** — The `npm run db:push` workflow issue has been fixed so schema changes can be pushed reliably after updates. Status: Completed in Task #32.
+
+**Analytics** — Per-exam averages, per-student breakdown, CSV export, radar chart and score trend. Status: Legacy analytics still work, but a full VoxScore-aware rebuild is still pending.
 
 **Admin** — Live support via WebSocket, WebRTC screen view and voice call. Status: Working.
+
+---
+
+## Recently Completed Work
+
+- **Task #26 — VoxScore schema upgrade completed.** The database and submission model now support the seven-dimension VoxScore framework and the expanded grading data structure.
+- **Task #29 — Professor decision workflow completed.** Official exam review now supports Accepted, Adjusted, and Overridden decisions with the associated review fields.
+- **Task #32 — `db:push` fix completed.** Schema deployment workflow was repaired so migrations can be applied reliably after schema changes.
+- **Task #33 — VoxScore UI completed.** The application now shows VoxScore-oriented grading surfaces instead of only the older two-field grading presentation.
+- **Task #37 — VoxPractice backend completed.** Backend work for the VoxPractice self-study tool is now in place.
+- **Task #38 — VoxPractice UI in progress.** Frontend work for the rebuilt self-study experience is underway and should still be described as active rather than finished.
+- **Cloudflare domains completed.** `voxexam.com` and `voxexams.com` are registered on Cloudflare, with `voxexams.com` redirecting to `voxexam.com`.
 
 ---
 
@@ -568,8 +584,8 @@ A detailed VoxClasses explanation is weighted higher than a blank VoxExam overri
 ### Fix First — Before Any New Features
 
 **Fix gpt-5.1 bug**
-Change model reference in `server/replit_integrations/chat/routes.ts` from `gpt-5.1` to `gpt-4o`.
-Status: Pending — blocks professor question builder chat.
+Model reference in `server/replit_integrations/chat/routes.ts` corrected from `gpt-5.1` to `gpt-4o`.
+Status: Completed — professor question builder chat unblocked.
 
 **Consent flow**
 PDPL-compliant consent screen before any voice recording begins. Stores explicit consent flag on every submission record.
@@ -577,31 +593,37 @@ Status: Pending — blocks all real student data collection.
 
 ### Foundation — Infrastructure
 
-**Database migration** — Move PostgreSQL from Replit to Supabase or Neon. Status: Pending — high priority before real users.
+**Database** — PostgreSQL hosted on Neon. Status: Completed — confirmed not on Replit internal storage.
 
-**Domain registration** — Register voxexam.com and voxexam.ae on Cloudflare. Status: Pending.
+**Domain registration** — `voxexam.com` and `voxexams.com` are registered on Cloudflare, and redirect is active from `voxexams.com` to `voxexam.com`. `.ae` variant remains pending if still desired. Status: Partially completed.
 
 **Microsoft SSO** — Replace or supplement current auth with Microsoft SSO. Status: Pending — not yet scoped.
 
-**GitHub connection** — Connect Replit project to GitHub repository to enable Codex desktop app access and codebase backup. Status: Pending.
+**GitHub connection** — GitHub repository connected at github.com/AliAlahbabi/VoxExam with 191 commits. Codex desktop app connected via UAEU ChatGPT Edu subscription. Auto-push enabled. Status: Completed.
 
 ### VoxScore Upgrade — Core Schema and Grading
 
-**VoxScore schema upgrade** — Replace two-field grading with all seven VoxScore dimension scores plus all required submission fields. Status: Pending — blocks all VoxScore features.
+**VoxScore schema upgrade** — Replace two-field grading with all seven VoxScore dimension scores plus all required submission fields. Status: Completed in Task #26.
 
-**Professor decision workflow** — Accepted, Adjusted, Overridden field on every VoxExam submission, override reason text field with AI assistant, gentle prompt if explanation skipped. Status: Pending.
+**Professor decision workflow** — Accepted, Adjusted, Overridden field on every VoxExam submission, override reason text field with AI assistant, gentle prompt if explanation skipped. Status: Completed in Task #29.
 
-**Grading gap calculation and Arabic flag** — Automated gap calculation, automatic flagging of Arabic and Mixed answers, routing to mandatory professor review queue. Status: Pending.
+**VoxScore UI** — Student- and professor-facing grading surfaces updated to reflect the VoxScore framework. Status: Completed in Task #33.
+
+**`db:push` workflow fix** — Reliable schema deployment after Drizzle/schema changes. Status: Completed in Task #32.
+
+**Grading gap calculation and Arabic flag** — Automated gap calculation, automatic flagging of Arabic and Mixed answers, routing to mandatory professor review queue. Status: Completed — grading gap and Arabic flag built into professor decision workflow.
 
 ### Product Rebuild
 
-**QuickVox repurpose** — Full rebuild as student self-study tool with login, topic sources, two-card mode selector, first-time flow, multi-question sessions, cross-question summary. Status: Pending.
+**VoxPractice backend** — Backend rebuild for the student self-study tool. Status: Completed in Task #37.
+
+**VoxPractice UI** — Full student self-study UI rebuild with login, topic sources, session modes, voice loop, and readiness report. Status: Active — Task #38 currently in progress.
 
 **VoxClasses rebuild** — Rename, add VoxScore on all practice answers, full professor visibility, aggregate analytics, student VoxScore history, professor score adjustment. Status: Pending.
 
 **VoxExam question builder upgrade** — Four-method builder, full benchmark package per question, conversational builder with professor review before publish, oral recreation from previous exam. Status: Active — partially built, significant additions pending.
 
-**VoxLive (formerly public `/q/:code`)** — Rename, smart resolver, separate data collection, expiry, rate limiting, consent, post-session QuickVox CTA. Status: Pending.
+**VoxLive (formerly public `/q/:code`)** — Rename, smart resolver, separate data collection, expiry, rate limiting, consent, post-session VoxPractice CTA. Status: Pending.
 
 ### Platform Polish
 
@@ -617,20 +639,20 @@ Status: Pending — blocks all real student data collection.
 
 ## Hard Rules — Never Violated
 
-- No proctoring on QuickVox or VoxClasses under any circumstances
+- No proctoring on VoxPractice or VoxClasses under any circumstances
 - No graded transcript-impact scores without professor approval
 - No AI-only final grades on anything that affects an official transcript
 - No voice data stored without explicit consent flag
 - No hardcoded API keys or secrets anywhere in the codebase
 - No overselling — if something is broken or partial say so
-- `evaluateWithAI` on the graded exam path is never to be modified by QuickVox or VoxClasses work — explicit permanent constraint
-- `gpt-4o` for QuickVox and VoxClasses, `gpt-4o-mini` stays on graded exam path — never swap
+- `evaluateWithAI` on the graded exam path is never to be modified by VoxPractice or VoxClasses work — explicit permanent constraint
+- `gpt-4o` for VoxPractice and VoxClasses, `gpt-4o-mini` stays on graded exam path — never swap
 - Professor always reviews and edits all AI-generated questions before publishing in VoxExam — no exceptions
 - Nothing goes on the official student transcript without professor approval — no exceptions
 - Override explanations are optional but actively encouraged — never a hard gate that blocks the override
 - AI-only benchmark creation never permitted for official grading
 - ASR must never silently determine VoxScore — low confidence triggers human review not automatic scoring
-- Private QuickVox history never appears in any dashboard at any role level
+- Private VoxPractice history never appears in any dashboard at any role level
 - Programme director never edits student grades
 
 ---
