@@ -17,11 +17,11 @@ Repository: github.com/AliAlahbabi/VoxExam
 These rules override everything else. Read them first. Follow them always.
 
 1. **Never modify evaluateWithAI on the graded exam path** when working on VoxPractice,
-   VoxClasses, or QuickVox tasks. This function is protected. If a task appears to require
+   VoxClasses, or VoxLive tasks. This function is protected. If a task appears to require
    changes here, stop and ask for explicit human approval.
 
 2. **Never swap OpenAI model routing:**
-   - VoxPractice / QuickVox / VoxClasses use `gpt-4o`
+   - VoxPractice / VoxClasses use `gpt-4o`
    - Official graded exam path keeps `gpt-4o-mini`
    - Do not optimize, consolidate, or rename this routing without explicit approval.
 
@@ -97,7 +97,8 @@ shared/
   schema.ts              Drizzle ORM schema — single source of truth for all DB tables
 
 scripts/
-  post-merge.sh          Runs npm install + db:push after merges
+  post-merge.sh          WARNING: this script runs db:push automatically — this violates
+                         the db:push safety rule and must be deleted or disabled.
 
 AGENTS.md                This file
 ```
@@ -182,7 +183,7 @@ For any schema change:
 ## AI AND MODEL RULES
 
 ```
-VoxPractice / QuickVox / VoxClasses → gpt-4o (coaching quality matters)
+VoxPractice / VoxClasses → gpt-4o (coaching quality matters)
 Official graded exam path → gpt-4o-mini (evaluateWithAI function)
 Audio transcription → gpt-4o-transcribe or Whisper
 ```
