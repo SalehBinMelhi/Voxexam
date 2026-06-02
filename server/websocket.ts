@@ -134,7 +134,7 @@ class VoxWebSocketServer {
 
   sendToAdmins(data: any) {
     const msg = JSON.stringify(data);
-    for (const [, clients] of this.clients) {
+    for (const [, clients] of Array.from(this.clients.entries())) {
       for (const client of clients) {
         if (client.userRole === "admin" && client.ws.readyState === WebSocket.OPEN) {
           client.ws.send(msg);
@@ -149,7 +149,7 @@ class VoxWebSocketServer {
 
   private getTotalConnections(): number {
     let total = 0;
-    for (const clients of this.clients.values()) {
+    for (const clients of Array.from(this.clients.values())) {
       total += clients.length;
     }
     return total;

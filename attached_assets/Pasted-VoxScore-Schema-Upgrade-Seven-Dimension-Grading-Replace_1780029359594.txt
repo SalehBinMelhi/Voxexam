@@ -1,0 +1,105 @@
+VoxScore Schema Upgrade — Seven-Dimension Grading
+
+Replace the current flat two-field grading model with the full seven-dimension VoxScore structure. This is a schema and grading pipeline upgrade only. Do not change any UI yet — that is a separate task.
+
+=== CONSTRAINTS ===
+- Do not modify evaluateWithAI or the QuickVox grading path (evaluateQuickVoxAnswer)
+- Do not change any UI components yet
+- Do not break existing submissions — all new columns must be nullable so old records remain valid
+- Always run npm run db:push after schema changes and verify with information_schema.columns
+- Do not touch vite.config.ts, server/vite.ts, or drizzle.config.ts
+
+=== STEP 1 — ADD NEW TYPES IN shared/schema.ts ===
+
+Add the following types:
+
+// VoxScore dimension IDs
+type VoxDimension = 'D1' | 'D2' | 'D3' | 'D4' | 'D5' | 'D6' | 'D7'
+
+// Band score per dimension: 1=Inadequate, 2=Limited, 3=Developing, 4=Proficient, 5=Exemplary
+type VoxBand = 1 | 2 | 3 | 4 | 5
+
+// Per-dimension score profile
+type VoxDimensionScore = {
+  dimension: VoxDimension
+  band: VoxBand
+  weightedScore: number       // band × dimension weight × 100
+  evidence: string            // transcript excerpt or benchmark concept note
+  conceptsPresent: string[]   // benchmark concepts found in answer
+  conceptsMissing: string[]   // benchmark concepts not found
+  conceptsIncorrect: string[] // benchmark concepts present but wrong
+}
+
+// Full VoxScore profile
+type VoxScoreProfile = {
+  dimensions: VoxDimensionScore[]
+  totalScore: number          // sum of all weightedScores, 0-100
+  passFail: 'pass' | 'fail'   // pass threshold is 60
+  confidenceLevel: 'high' | 'medium' | 'low'
+  asrQualityFlag: boolean     // true if ASR confidence was below threshold
+  languageDetected: 'english' | 'arabic' | 'mixed'
+}
+
+// Professor decision on a submission
+type ProfessorDecision = 'accepted' | 'adjusted' | 'overridden'
+
+=== STEP 2 — ADD NEW COLUMNS TO submissions TABLE ===
+
+Add these nullable columns to the submissions table in shared/schema.ts:
+
+- voxScoreProfile: jsonb (VoxScoreProfile) — nullable — the full seven-dimension AI score profile
+- professorVoxScoreProfile: jsonb (VoxScoreProfile) — nullable — professor-adjusted version if changed
+- professorDecision: text — nullable — 'accepted' | 'adjusted' | 'overridden'
+- professorOverrideReason: text — nullable — explanation text, optional but encouraged
+- professorHolisticScore: real — nullable — out of 10, VoxExam only, never part of VoxScore calculation
+- professorReviewTimestamp: timestamp — nullable — when professor made their decision
+- professorReviewDurationMinutes: real — nullable — how long the review took
+- gradingGap: real — nullable — calculated as AI totalScore minus professor totalScore
+- arabicFlag: boolean — nullable — true when answer is Arabic or Mixed and gap exceeds threshold
+- asrConfidenceLevel: text — nullable — 'high' | 'medium' | 'low'
+- asrEstimatedWer: text — nullable — 'under_10' | '10_to_15' | '15_to_25' | 'above_25'
+- criticalConceptErrorFlag: boolean — nullable — true if rubric-critical concepts were lost in transcription
+- languageUsed: text — nullable — 'english' | 'arabic' | 'mixed'
+- answerDurationSeconds: real — nullable
+- estimatedWordCount: integer — nullable
+
+=== STEP 3 — UPDATE evaluateWithAI IN server/storage.ts ===
+
+Replace the current two-field grading output with a VoxScore profile. The updated function must:
+
+1. Use gpt-4o-mini (do not change the model)
+2. Send a structured prompt that evaluates the student answer across all seven dimensions:
+   - D1 Subject Knowledge and Content Accuracy — 25%
+   - D2 Reasoning and Critical Thinking — 20%
+   - D3 Evidence and Justification — 15%
+   - D4 Responsiveness and Defense — 15%
+   - D5 Organization and Coherence — 10%
+   - D6 Communication Clarity — 10%
+   - D7 Professionalism and Composure — 5%
+3. Return a VoxScoreProfile JSON object with all fields populated
+4. Calculate totalScore as the sum of (band × weight × 100) for all seven dimensions
+5. Set passFail based on totalScore >= 60
+6. Include this clause in the prompt: "Score the academic meaning of the answer regardless of whether it is in English, Arabic, or a mix of both. Never penalize language choice, accent, or code-switching unless meaning is materially blocked."
+7. Store the result in voxScoreProfile on the submission record
+8. Keep the existing totalScore field updated for backwards compatibility — set it equal to voxScoreProfile.totalScore
+
+=== STEP 4 — RUN AND VERIFY ===
+
+After making all changes:
+1. Run npm run db:push
+2. Verify all new columns exist in the database using information_schema.columns
+3. Confirm the server starts with no errors
+4. Confirm a test submission produces a voxScoreProfile with all seven dimensions populated
+5. Confirm existing submissions with null voxScoreProfile do not cause errors
+
+=== VERIFICATION CHECKLIST ===
+Reply with a checklist confirming:
+- All new types added to shared/schema.ts
+- All new columns added to submissions table
+- npm run db:push completed successfully
+- All new columns confirmed present in database
+- evaluateWithAI now returns a full VoxScoreProfile
+- totalScore backwards compatibility maintained
+- QuickVox grading path unchanged
+- Server starts cleanly with no errors
+- Test submission produces a valid seven-dimension VoxScoreProfile

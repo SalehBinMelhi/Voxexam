@@ -10,9 +10,11 @@ const pdf = require("pdf-parse");
 import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
-import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent } from "./storage";
+import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent, analyzePracticeMaterial, generatePracticeQuestions, generatePracticeProbe, generatePracticeMicroFeedback, buildPracticeReadinessReport } from "./storage";
 import { isAuthenticated } from "./replit_integrations/auth";
-import { insertExamSchema, insertExamSubmissionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
+import { objectStorageClient } from "./replit_integrations/object_storage";
+import { insertExamSchema, insertExamSubmissionSchema, insertPracticeSessionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD, type PracticeQuestion } from "@shared/schema";
+import { z } from "zod";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -20,6 +22,126 @@ const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { file
 const RECORDINGS_DIR = path.join(process.cwd(), "recordings");
 if (!fs.existsSync(RECORDINGS_DIR)) {
   fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
+}
+
+// Resolve the bucket and object name for a proctoring recording stored in
+// Replit Object Storage, under the private object dir's "recordings/" prefix.
+function getRecordingObjectLocation(fileName: string): { bucketName: string; objectName: string } {
+  const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
+  if (!privateDir) {
+    throw new Error(
+      "PRIVATE_OBJECT_DIR not set. Object Storage must be configured to store recordings."
+    );
+  }
+  const fullPath = `${privateDir.replace(/\/$/, "")}/recordings/${fileName}`;
+  const normalized = fullPath.startsWith("/") ? fullPath : `/${fullPath}`;
+  const parts = normalized.split("/");
+  const bucketName = parts[1];
+  const objectName = parts.slice(2).join("/");
+  return { bucketName, objectName };
+}
+
+// Upload a proctoring recording buffer to Object Storage. Returns the filename.
+async function uploadRecordingToObjectStorage(fileName: string, buffer: Buffer): Promise<void> {
+  const { bucketName, objectName } = getRecordingObjectLocation(fileName);
+  const file = objectStorageClient.bucket(bucketName).file(objectName);
+  await file.save(buffer, { contentType: "video/webm" });
+}
+
+// Extract readable plain text from an uploaded study-material file. Supports
+// PDF, Word (.docx), PowerPoint (.pptx), Excel, and plain-text/CSV/MD files.
+// Throws an Error with a user-friendly message when the file cannot be read.
+async function extractTextFromUpload(
+  buffer: Buffer,
+  fileName: string,
+  mimeType: string,
+): Promise<string> {
+  let content = "";
+  const lowerName = (fileName || "").toLowerCase();
+
+  if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
+    try {
+      const { extractText, getDocumentProxy } = await import("unpdf");
+      const pdfDoc = await getDocumentProxy(new Uint8Array(buffer));
+      const { text } = await extractText(pdfDoc, { mergePages: true });
+      content = text || "";
+    } catch {
+      try {
+        const pdfData = await pdf(buffer);
+        content = pdfData.text || "";
+      } catch {
+        content = "";
+      }
+    }
+    if (!content.trim()) {
+      throw new Error(
+        "Could not read this PDF. It may be scanned, image-based, or password-protected. Try a .docx or .txt file instead.",
+      );
+    }
+  } else if (
+    lowerName.endsWith(".docx") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      content = result.value;
+    } catch {
+      throw new Error("Could not parse this Word document.");
+    }
+  } else if (
+    lowerName.endsWith(".pptx") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    try {
+      const zip = await JSZip.loadAsync(buffer);
+      const slideTexts: string[] = [];
+      const slideFiles = Object.keys(zip.files)
+        .filter((f) => f.match(/^ppt\/slides\/slide\d+\.xml$/))
+        .sort();
+      for (const slideFile of slideFiles) {
+        const xmlContent = await zip.files[slideFile].async("text");
+        const textMatches = xmlContent.match(/<a:t>([^<]*)<\/a:t>/g);
+        if (textMatches) {
+          slideTexts.push(textMatches.map((m) => m.replace(/<\/?a:t>/g, "")).join(" "));
+        }
+      }
+      content = slideTexts.join("\n\n");
+    } catch {
+      throw new Error("Could not parse this PowerPoint file.");
+    }
+  } else if (
+    lowerName.endsWith(".xlsx") ||
+    lowerName.endsWith(".xls") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel"
+  ) {
+    try {
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const sheetTexts: string[] = [];
+      for (const sheetName of workbook.SheetNames) {
+        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+        if (csv.trim()) sheetTexts.push(`Sheet: ${sheetName}\n${csv}`);
+      }
+      content = sheetTexts.join("\n\n");
+    } catch {
+      throw new Error("Could not parse this Excel file.");
+    }
+  } else if (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    lowerName.endsWith(".txt") ||
+    lowerName.endsWith(".md") ||
+    lowerName.endsWith(".csv")
+  ) {
+    content = buffer.toString("utf-8");
+  } else {
+    throw new Error("Unsupported file type. Please upload a PDF, Word, PowerPoint, or TXT file.");
+  }
+
+  if (!content.trim()) {
+    throw new Error("This file has no readable text content.");
+  }
+  return content;
 }
 
 declare global {
@@ -639,6 +761,292 @@ export async function registerRoutes(
     }
   });
 
+  // =========================================================================
+  // VoxPractice — private, student-led oral self-training.
+  // Every route is scoped to the authenticated student; practice data is never
+  // exposed to professors, directors, or any other role.
+  // =========================================================================
+
+  // Resolve the OpenAI key for a practice student: prefer their university's
+  // configured key, otherwise fall back to the default integration key.
+  const resolvePracticeApiKey = async (userId: string): Promise<string | null> => {
+    const user = await storage.getUser(userId);
+    if (user?.universityId) {
+      const uni = await storage.getUniversity(user.universityId);
+      if (uni?.openaiApiKey) return uni.openaiApiKey;
+    }
+    return null;
+  };
+
+  // Load a practice session and assert the caller owns it. Returns the session
+  // or sends the appropriate error response and returns null.
+  const loadOwnedPracticeSession = async (req: Request, res: any) => {
+    const userId = req.user!.claims.sub;
+    const session = await storage.getPracticeSession(p(req.params.id));
+    if (!session) {
+      res.status(404).json({ error: "Practice session not found" });
+      return null;
+    }
+    if (session.studentId !== userId) {
+      res.status(403).json({ error: "Not authorized to access this practice session" });
+      return null;
+    }
+    return session;
+  };
+
+  // Resolve a transcript from the request body — either provided directly or by
+  // transcribing supplied audio through the existing transcription pipeline.
+  const resolvePracticeTranscript = async (body: any, questionText?: string): Promise<string> => {
+    if (typeof body?.transcript === "string" && body.transcript.trim().length > 0) {
+      return body.transcript.trim();
+    }
+    if (typeof body?.audioData === "string" && body.audioData.length > 0) {
+      const t = await transcribeAudio(body.audioData, questionText);
+      return (t || "").trim();
+    }
+    return "";
+  };
+
+  // Student-only guard: VoxPractice is a private self-training tool. Professors,
+  // directors, and admins must never access it. Runs after isAuthenticated.
+  const requireStudent: express.RequestHandler = async (req, res, next) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const user = await storage.getUser(userId);
+      if (!user || user.role !== "student") {
+        return res.status(403).json({ error: "VoxPractice is available to students only" });
+      }
+      next();
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Authorization check failed" });
+    }
+  };
+
+  // Zod request contracts for the practice routes (creation uses the shared
+  // insert schema). An answer payload must carry either a transcript or audio.
+  const analyzeMaterialBody = z.object({ content: z.string().min(1) });
+  const generateQuestionsBody = z.object({
+    materialContent: z.string().min(1),
+    count: z.number().int().positive().max(20).optional(),
+    focusConcepts: z.array(z.string()).optional(),
+  });
+  const answerBody = z
+    .object({
+      questionId: z.string().min(1),
+      transcript: z.string().optional(),
+      audioData: z.string().optional(),
+      materialContent: z.string().optional(),
+    })
+    .refine(
+      (b) => (b.transcript && b.transcript.trim().length > 0) || (b.audioData && b.audioData.length > 0),
+      { message: "A transcript or audio answer is required" }
+    );
+  const finalizeBody = z.object({}).optional();
+
+  // Analyze chosen material into a concept/topic/question summary.
+  app.post("/api/practice/analyze-material", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const parsed = analyzeMaterialBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Material content is required", details: parsed.error.errors });
+      }
+      const apiKey = await resolvePracticeApiKey(userId);
+      const summary = await analyzePracticeMaterial(parsed.data.content, apiKey);
+      res.json(summary);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to analyze material" });
+    }
+  });
+
+  // Extract plain text from an uploaded study-material file so the student can
+  // feed it into analyze-material. Stores nothing; private to the caller.
+  app.post(
+    "/api/practice/extract-material",
+    isAuthenticated,
+    requireStudent,
+    upload.single("file"),
+    async (req: any, res) => {
+      try {
+        const file = req.file;
+        if (!file) {
+          return res.status(400).json({ error: "No file uploaded" });
+        }
+        const content = await extractTextFromUpload(
+          file.buffer,
+          file.originalname || "upload",
+          file.mimetype || "",
+        );
+        res.json({ fileName: file.originalname || "upload", content });
+      } catch (error: any) {
+        res.status(400).json({ error: error.message || "Could not read this file" });
+      }
+    },
+  );
+
+  // Create a practice session (scoped to the authenticated student).
+  app.post("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const parsed = insertPracticeSessionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid practice session data", details: parsed.error.errors });
+      }
+      const session = await storage.createPracticeSession(userId, parsed.data);
+      res.status(201).json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create practice session" });
+    }
+  });
+
+  // List the authenticated student's own practice sessions.
+  app.get("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const sessions = await storage.getPracticeSessionsByStudent(userId);
+      res.json(sessions);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch practice sessions" });
+    }
+  });
+
+  // Get one practice session (must be owned by the caller).
+  app.get("/api/practice/sessions/:id", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      res.json(session);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch practice session" });
+    }
+  });
+
+  // Generate a material-grounded question set and store it on the session.
+  app.post("/api/practice/sessions/:id/generate-questions", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = generateQuestionsBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid generate-questions request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const apiKey = await resolvePracticeApiKey(session.studentId);
+      const questions = await generatePracticeQuestions(
+        parsed.data.materialContent,
+        {
+          sessionMode: session.sessionMode as any,
+          coachStyle: session.coachStyle as any,
+          count: parsed.data.count,
+          focusConcepts: parsed.data.focusConcepts,
+        },
+        apiKey
+      );
+      const updated = await storage.updatePracticeSession(session.id, { questions });
+      res.json({ questions, session: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate practice questions" });
+    }
+  });
+
+  // Produce a single follow-up probe for an answer (from the approved list only).
+  app.post("/api/practice/sessions/:id/probe", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = answerBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid probe request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const questions = (session.questions || []) as PracticeQuestion[];
+      const question = questions.find((q) => q.id === parsed.data.questionId);
+      if (!question) {
+        return res.status(400).json({ error: "questionId does not match a question in this session" });
+      }
+      const transcript = await resolvePracticeTranscript(parsed.data, question.text);
+      if (!transcript) {
+        return res.status(400).json({ error: "A transcript or audio answer is required" });
+      }
+      const apiKey = await resolvePracticeApiKey(session.studentId);
+      const { probe } = await generatePracticeProbe(
+        question.text,
+        transcript,
+        { coachStyle: session.coachStyle as any },
+        apiKey
+      );
+      const updatedQuestions = questions.map((q) =>
+        q.id === parsed.data.questionId ? { ...q, transcript, followUpProbe: probe } : q
+      );
+      await storage.updatePracticeSession(session.id, { questions: updatedQuestions });
+      res.json({ probe, transcript });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate follow-up probe" });
+    }
+  });
+
+  // Produce per-answer micro-feedback plus a 7-dimension practice VoxScore.
+  app.post("/api/practice/sessions/:id/feedback", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = answerBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid feedback request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const questions = (session.questions || []) as PracticeQuestion[];
+      const question = questions.find((q) => q.id === parsed.data.questionId);
+      if (!question) {
+        return res.status(400).json({ error: "questionId does not match a question in this session" });
+      }
+      const transcript = await resolvePracticeTranscript(parsed.data, question.text);
+      if (!transcript) {
+        return res.status(400).json({ error: "A transcript or audio answer is required" });
+      }
+      const materialContent = parsed.data.materialContent ?? null;
+      const apiKey = await resolvePracticeApiKey(session.studentId);
+      const { microFeedback, voxScoreProfile } = await generatePracticeMicroFeedback(
+        question.text,
+        transcript,
+        { coachStyle: session.coachStyle as any, materialContent, concept: question.concept ?? null },
+        apiKey
+      );
+      const updatedQuestions = questions.map((q) =>
+        q.id === parsed.data.questionId ? { ...q, transcript, microFeedback, voxScoreProfile } : q
+      );
+      await storage.updatePracticeSession(session.id, {
+        questions: updatedQuestions,
+        languageUsed: session.languageUsed || voxScoreProfile.languageDetected,
+      });
+      res.json({ microFeedback, voxScoreProfile });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to generate micro-feedback" });
+    }
+  });
+
+  // Finalize a session into a readiness report (aggregate over answered questions).
+  app.post("/api/practice/sessions/:id/finalize", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = finalizeBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid finalize request", details: parsed.error.errors });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const questions = (session.questions || []) as PracticeQuestion[];
+      const report = buildPracticeReadinessReport(questions);
+      const updated = await storage.updatePracticeSession(session.id, {
+        overallReadinessScore: report.overallReadinessScore,
+        overallVoxScoreProfile: report.overallVoxScoreProfile ?? undefined,
+        conceptCoverageMap: report.conceptCoverageMap,
+        completedQuestionCount: report.completedQuestionCount,
+        languageUsed: session.languageUsed || report.languageUsed,
+        completedAt: new Date(),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to finalize practice session" });
+    }
+  });
+
   app.get("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
       const exam = await storage.getExam(p(req.params.id));
@@ -867,6 +1275,98 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/submissions/:id/decision", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const {
+        professorDecision,
+        professorOverrideReason,
+        professorHolisticScore,
+        professorReviewDurationMinutes,
+        adjustedScores,
+        aiTotalScore,
+      } = req.body;
+
+      if (!["accepted", "adjusted", "overridden"].includes(professorDecision)) {
+        return res.status(400).json({ error: "Invalid professorDecision" });
+      }
+
+      if (
+        professorHolisticScore !== undefined &&
+        professorHolisticScore !== null &&
+        professorHolisticScore !== "" &&
+        (!Number.isFinite(Number(professorHolisticScore)) || Number(professorHolisticScore) < 0 || Number(professorHolisticScore) > 10)
+      ) {
+        return res.status(400).json({ error: "professorHolisticScore must be a number between 0 and 10" });
+      }
+
+      if (professorOverrideReason !== undefined && professorOverrideReason !== null && typeof professorOverrideReason !== "string") {
+        return res.status(400).json({ error: "professorOverrideReason must be a string" });
+      }
+
+      let submission = await storage.getSubmission(p(req.params.id));
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      const exam = await storage.getExam(submission.examId);
+      if (!exam) {
+        return res.status(404).json({ error: "Exam not found" });
+      }
+
+      if (exam.professorId !== userId) {
+        return res.status(403).json({ error: "Only the exam's professor can record a decision" });
+      }
+
+      const aiTotal = (typeof aiTotalScore === "number" && aiTotalScore >= 0 && aiTotalScore <= 1)
+        ? aiTotalScore
+        : submission.totalScore;
+
+      if (adjustedScores && typeof adjustedScores === "object") {
+        for (const [questionId, rawScore] of Object.entries(adjustedScores)) {
+          const score = Number(rawScore);
+          if (isNaN(score) || score < 0 || score > 1) continue;
+          const updated = await storage.updateSubmissionScore(submission.id, questionId, score);
+          if (updated) submission = updated;
+        }
+      }
+
+      const professorTotal = submission.totalScore;
+      const gradingGap = professorDecision === "accepted"
+        ? 0
+        : Math.round((aiTotal - professorTotal) * 100);
+
+      const lang = (submission.languageUsed || "").toLowerCase();
+      const arabicFlag = (lang === "arabic" || lang === "mixed") && gradingGap > 6;
+
+      const holistic = professorHolisticScore === undefined || professorHolisticScore === null || professorHolisticScore === ""
+        ? null
+        : Math.max(1, Math.min(10, Number(professorHolisticScore)));
+
+      const duration = professorReviewDurationMinutes === undefined || professorReviewDurationMinutes === null
+        ? null
+        : Number(professorReviewDurationMinutes);
+
+      const result = await storage.updateSubmissionDecision(submission.id, {
+        professorDecision,
+        professorOverrideReason: professorDecision === "accepted" ? null : (professorOverrideReason || null),
+        professorHolisticScore: exam.mode === "exam" ? holistic : null,
+        professorReviewDurationMinutes: duration,
+        gradingGap,
+        arabicFlag,
+      });
+
+      if (!result) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error("Failed to record decision:", error);
+      res.status(500).json({ error: "Failed to record professor decision" });
+    }
+  });
+
   app.post("/api/submissions/:id/feedback", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user!.claims.sub;
@@ -965,16 +1465,14 @@ export async function registerRoutes(
       if (req.files?.screenRecording?.[0]) {
         const file = req.files.screenRecording[0];
         const fileName = `screen_${submissionId}_${Date.now()}.webm`;
-        const filePath = path.join(RECORDINGS_DIR, fileName);
-        fs.writeFileSync(filePath, file.buffer);
+        await uploadRecordingToObjectStorage(fileName, file.buffer);
         updates.screenRecordingUrl = `/api/recordings/${fileName}`;
       }
 
       if (req.files?.webcamRecording?.[0]) {
         const file = req.files.webcamRecording[0];
         const fileName = `webcam_${submissionId}_${Date.now()}.webm`;
-        const filePath = path.join(RECORDINGS_DIR, fileName);
-        fs.writeFileSync(filePath, file.buffer);
+        await uploadRecordingToObjectStorage(fileName, file.buffer);
         updates.webcamRecordingUrl = `/api/recordings/${fileName}`;
       }
 
@@ -1010,12 +1508,37 @@ export async function registerRoutes(
       }
     }
 
+    // Legacy recordings written to the filesystem before the move to Object
+    // Storage are still served from disk so they remain accessible.
     const filePath = path.join(RECORDINGS_DIR, filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: "Recording not found" });
+    if (fs.existsSync(filePath)) {
+      res.setHeader("Content-Type", "video/webm");
+      return res.sendFile(filePath);
     }
-    res.setHeader("Content-Type", "video/webm");
-    res.sendFile(filePath);
+
+    // New recordings live in Object Storage.
+    try {
+      const { bucketName, objectName } = getRecordingObjectLocation(filename);
+      const objectFile = objectStorageClient.bucket(bucketName).file(objectName);
+      const [exists] = await objectFile.exists();
+      if (!exists) {
+        return res.status(404).json({ error: "Recording not found" });
+      }
+      res.setHeader("Content-Type", "video/webm");
+      const stream = objectFile.createReadStream();
+      stream.on("error", (err) => {
+        console.error("Error streaming recording:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Error streaming recording" });
+        }
+      });
+      stream.pipe(res);
+    } catch (error) {
+      console.error("Failed to load recording:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to load recording" });
+      }
+    }
   });
 
   app.post("/api/submissions/:id/proctoring", isAuthenticated, express.json({ limit: "50mb" }), async (req: any, res) => {

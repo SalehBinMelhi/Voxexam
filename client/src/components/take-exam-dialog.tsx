@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { StudentVoxScore } from "@/components/voxscore-breakdown";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -1020,6 +1021,10 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                 })}
               </div>
             </div>
+
+            {submissionResult.voxScoreProfile && (
+              <StudentVoxScore profile={submissionResult.voxScoreProfile} />
+            )}
 
             {submissionResult.feedback && (
               <div className="space-y-2">

@@ -1,0 +1,5 @@
+- [db:push interactive prompts](db-push-prompts.md) — drizzle db:push blocks on pre-existing unique-constraint drift prompts the sandbox can't answer; apply nullable column ALTERs via SQL instead.
+- [Submission gradingGap baseline](submission-grading-gap.md) — per-question edits overwrite totalScore immediately, so capture AI baseline before edits or gradingGap/arabicFlag break.
+- [VoxScore dimension display](voxscore-ui.md) — weightedScore is a weighted contribution (max = weight×100), not normalized; rank strongest/weakest by weightedScore/max, not raw.
+- [Auth testing via curl](auth-testing-curl.md) — session cookie is secure:true so curl over http can't authenticate; test exported server fns directly via tsx instead.
+- [VoxPractice material extraction](voxpractice-material-extraction.md) — student upload path needs its own extract endpoint; foundation only gave analyze-material (text in). Question gen caps at 10.

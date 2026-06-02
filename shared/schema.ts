@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { pgTable, varchar, timestamp, jsonb, real, text } from "drizzle-orm/pg-core";
+import { pgTable, varchar, timestamp, jsonb, real, text, boolean, integer } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -142,6 +142,149 @@ export interface ProctoringFlag {
 // Suspicious threshold for tab switches
 export const TAB_SWITCH_SUSPICIOUS_THRESHOLD = 3;
 
+// ---------------------------------------------------------------------------
+// VoxScore seven-dimension framework
+// ---------------------------------------------------------------------------
+
+// The seven VoxScore dimensions (D1–D7)
+export const voxDimensions = ["D1", "D2", "D3", "D4", "D5", "D6", "D7"] as const;
+export type VoxDimension = (typeof voxDimensions)[number];
+
+// Canonical dimension weights (sum to 1.0)
+export const VOX_DIMENSION_WEIGHTS: Record<VoxDimension, number> = {
+  D1: 0.25,
+  D2: 0.2,
+  D3: 0.15,
+  D4: 0.15,
+  D5: 0.1,
+  D6: 0.1,
+  D7: 0.05,
+};
+
+// VoxScore pass threshold (out of 100)
+export const VOX_PASS_THRESHOLD = 60;
+
+// Five bands per dimension: Inadequate (1) … Exemplary (5)
+export const voxBands = [1, 2, 3, 4, 5] as const;
+export type VoxBand = (typeof voxBands)[number];
+
+// Per-dimension scoring result
+export interface VoxDimensionScore {
+  dimension: VoxDimension;
+  band: VoxBand;
+  weightedScore: number; // contribution to the 0–100 total for this dimension
+  evidence: string;
+  conceptsPresent: string[];
+  conceptsMissing: string[];
+  conceptsIncorrect: string[];
+}
+
+// Confidence in the AI evaluation
+export type VoxConfidenceLevel = "high" | "medium" | "low";
+
+// ASR quality flag for the underlying transcript
+export type VoxAsrQualityFlag = "ok" | "low_confidence" | "needs_human_review";
+
+// Full seven-dimension VoxScore profile (0–100 scale)
+export interface VoxScoreProfile {
+  dimensions: VoxDimensionScore[];
+  totalScore: number; // 0–100
+  passFail: "pass" | "fail";
+  confidenceLevel: VoxConfidenceLevel;
+  asrQualityFlag: VoxAsrQualityFlag;
+  languageDetected: string;
+}
+
+// ---------------------------------------------------------------------------
+// VoxPractice — private, student-led oral self-training (separate from QuickVox
+// Phases 1-3 and from the professor-facing exam grading pipeline)
+// ---------------------------------------------------------------------------
+
+// Where the practice material came from
+export const practiceSourceTypes = ["upload", "subject", "topic"] as const;
+export type PracticeSourceType = (typeof practiceSourceTypes)[number];
+
+// Practice session intent / shape
+export const practiceSessionModes = ["warmup", "readiness_sprint", "weak_spot", "mock_oral"] as const;
+export type PracticeSessionMode = (typeof practiceSessionModes)[number];
+
+// How encouraging vs demanding the AI coach is
+export const practiceCoachStyles = ["gentle", "normal", "strict"] as const;
+export type PracticeCoachStyle = (typeof practiceCoachStyles)[number];
+
+// Cognitive level a practice question targets
+export const practiceCognitiveLevels = [
+  "recall",
+  "understanding",
+  "application",
+  "comparison",
+  "reasoning",
+  "defense",
+] as const;
+export type PracticeCognitiveLevel = (typeof practiceCognitiveLevels)[number];
+
+// Coverage status for a single concept/topic in a session
+export const practiceCoverageStatuses = ["strong", "developing", "weak", "not_covered"] as const;
+export type PracticeCoverageStatus = (typeof practiceCoverageStatuses)[number];
+
+// A single practice question plus everything captured while answering it
+export interface PracticeQuestion {
+  id: string;
+  text: string;
+  cognitiveLevel: PracticeCognitiveLevel;
+  concept?: string; // the material concept this question targets
+  transcript?: string; // the student's transcribed answer
+  followUpProbe?: string; // single AI probe drawn from the approved list
+  followUpTranscript?: string; // student's answer to the probe (optional)
+  microFeedback?: string; // short per-answer coaching note
+  voxScoreProfile?: VoxScoreProfile; // 7-dimension practice score for this answer
+}
+
+// Coverage map: concept/topic -> status
+export type PracticeConceptCoverageMap = Record<string, PracticeCoverageStatus>;
+
+// Practice sessions table (private to the student — never visible to professors)
+export const practiceSessions = pgTable("practice_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  studentId: varchar("student_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  sourceType: text("source_type").notNull(),
+  sourceSummary: text("source_summary"),
+  sessionMode: text("session_mode").notNull(),
+  coachStyle: text("coach_style").notNull().default("normal"),
+  questions: jsonb("questions").$type<PracticeQuestion[]>().default([]),
+  overallReadinessScore: real("overall_readiness_score"),
+  overallVoxScoreProfile: jsonb("overall_vox_score_profile").$type<VoxScoreProfile>(),
+  conceptCoverageMap: jsonb("concept_coverage_map").$type<PracticeConceptCoverageMap>(),
+  languageUsed: text("language_used"),
+  completedQuestionCount: integer("completed_question_count").default(0),
+});
+
+export type PracticeSession = typeof practiceSessions.$inferSelect;
+
+export const insertPracticeSessionSchema = createInsertSchema(practiceSessions, {
+  sourceType: z.enum(practiceSourceTypes),
+  sessionMode: z.enum(practiceSessionModes),
+  coachStyle: z.enum(practiceCoachStyles).optional(),
+}).omit({
+  id: true,
+  createdAt: true,
+  completedAt: true,
+  studentId: true,
+  questions: true,
+  overallReadinessScore: true,
+  overallVoxScoreProfile: true,
+  conceptCoverageMap: true,
+  completedQuestionCount: true,
+});
+
+export type InsertPracticeSession = z.infer<typeof insertPracticeSessionSchema>;
+
+// Professor decision on an AI-suggested VoxScore
+export const professorDecisions = ["accepted", "adjusted", "overridden"] as const;
+export type ProfessorDecision = (typeof professorDecisions)[number];
+
 // Submissions table
 export const submissions = pgTable("submissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -162,6 +305,21 @@ export const submissions = pgTable("submissions", {
   isSuspicious: varchar("is_suspicious").default("false"),
   quickvoxInsight: text("quickvox_insight"),
   quickvoxFollowUp: text("quickvox_follow_up"),
+  voxScoreProfile: jsonb("vox_score_profile").$type<VoxScoreProfile>(),
+  professorVoxScoreProfile: jsonb("professor_vox_score_profile").$type<VoxScoreProfile>(),
+  professorDecision: text("professor_decision"),
+  professorOverrideReason: text("professor_override_reason"),
+  professorHolisticScore: real("professor_holistic_score"),
+  professorReviewTimestamp: timestamp("professor_review_timestamp"),
+  professorReviewDurationMinutes: real("professor_review_duration_minutes"),
+  gradingGap: real("grading_gap"),
+  arabicFlag: boolean("arabic_flag"),
+  asrConfidenceLevel: text("asr_confidence_level"),
+  asrEstimatedWer: text("asr_estimated_wer"),
+  criticalConceptErrorFlag: boolean("critical_concept_error_flag"),
+  languageUsed: text("language_used"),
+  answerDurationSeconds: real("answer_duration_seconds"),
+  estimatedWordCount: integer("estimated_word_count"),
   submittedAt: varchar("submitted_at").notNull(),
 });
 

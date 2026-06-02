@@ -1,0 +1,110 @@
+VoxScore UI — Task #33
+
+Add the VoxScore seven-dimension breakdown to the professor and student views. The data already exists in the database (voxScoreProfile column on submissions). This is a UI-only task — no changes to the grading pipeline, evaluateWithAI, evaluateQuickVoxAnswer, or any backend grading logic.
+
+=== CONSTRAINTS ===
+- Do not modify evaluateWithAI, evaluateQuickVoxAnswer, or any grading path
+- Do not change the Professor Decision panel behavior
+- Do not change QuickVox submission display
+- Do not touch vite.config.ts, server/vite.ts, or drizzle.config.ts
+- All new UI must gracefully handle null voxScoreProfile — old submissions without VoxScore data must display exactly as they do today with no errors
+- Follow existing frontend conventions: useToast, no explicit React import, TanStack Query object form, apiRequest from @/lib/queryClient
+- Every new interactive element needs a data-testid
+
+=== PART 1 — PROFESSOR VIEW (simple-exam-tab.tsx) ===
+
+In the expanded submission view, add a new "VoxScore Breakdown" section. Place it BETWEEN the submission header row and the AI Feedback section — not inside AI Feedback, not below Per-Question Results.
+
+--- 1A. Compact summary strip (always visible) ---
+
+When voxScoreProfile is not null, show a compact strip:
+
+VoxScore [totalScore]/100 · [band label] · Strongest: [top dimension] · Weakest: [bottom dimension] · [View breakdown ▾]
+
+Band labels based on totalScore:
+- 0–39: Inadequate
+- 40–59: Limited  
+- 60–74: Developing
+- 75–89: Proficient
+- 90–100: Exemplary
+
+When voxScoreProfile is null, show nothing in this section — do not show an empty card or placeholder.
+
+--- 1B. Full breakdown table (collapsed by default) ---
+
+Clicking "View breakdown" toggles open a 7-row table. Each row contains:
+- Dimension code and name (e.g. "D1 Subject Knowledge")
+- Weight (e.g. "25%")
+- Band chip with color coding:
+  - Inadequate: red
+  - Limited: orange
+  - Developing: yellow
+  - Proficient: blue
+  - Exemplary: green
+- Weighted contribution (e.g. "20/25")
+- One-line AI rationale from voxScoreProfile.dimensions[n].evidence
+- A "View evidence" link — clicking it scrolls to and highlights the transcript in Per-Question Results
+
+Below the table show the score formula:
+"VoxScore = sum of (band score × dimension weight × 100). Pass threshold: 60/100."
+
+--- 1C. Auto-open behavior ---
+
+The breakdown table must automatically open (not require a click) when:
+- The professor clicks Adjust or Override in the Professor Decision panel
+- totalScore is between 55 and 65 (near pass/fail boundary)
+- Any dimension has band score 1 (Inadequate) or 2 (Limited)
+
+=== PART 2 — STUDENT VIEW (take-exam-dialog.tsx and student-dashboard.tsx) ===
+
+--- 2A. Result dialog (take-exam-dialog.tsx) ---
+
+In the Exam Completed result dialog, after the existing Correctness/Understanding scores and before AI Feedback, add a simplified VoxScore section when voxScoreProfile is not null.
+
+Show:
+- Overall VoxScore [totalScore]/100 · [band label]
+- "Your strongest areas:" — list the top 2 dimensions by weighted score, using plain friendly names (not D1/D2 codes)
+- "Focus next time:" — list the bottom 2 dimensions, each with a one-sentence coaching tip from the AI evidence field
+- A "View full breakdown" link that expands to show all 7 dimensions with band labels only (no weights, no math, no AI confidence)
+
+Do NOT show students:
+- Weighted contribution math
+- AI confidence levels
+- Model uncertainty
+- Internal AI rationale beyond the coaching tip
+- Professor override flags
+
+When voxScoreProfile is null, show nothing — the existing result dialog stays exactly as it is.
+
+--- 2B. Student dashboard completed exam card (student-dashboard.tsx) ---
+
+On completed exam cards in the student dashboard, when voxScoreProfile is not null, replace or supplement the existing Correctness/Understanding badges with a single "VoxScore: [totalScore]/100" badge using the band color.
+
+When voxScoreProfile is null, keep the existing Correctness/Understanding badges exactly as they are.
+
+=== PART 3 — DIMENSION DISPLAY NAMES ===
+
+Use these friendly names throughout all student-facing UI (not the D1/D2 codes):
+- D1: Subject Knowledge
+- D2: Reasoning
+- D3: Evidence & Examples
+- D4: Responsiveness
+- D5: Organization
+- D6: Communication
+- D7: Professionalism
+
+Professor-facing UI can show both code and name: "D1 Subject Knowledge"
+
+=== VERIFICATION CHECKLIST ===
+Reply confirming:
+- VoxScore compact strip appears in professor expanded submission when voxScoreProfile exists
+- Strip shows nothing when voxScoreProfile is null — no errors on old submissions
+- Full breakdown table toggles open on click
+- Breakdown auto-opens on Adjust/Override click, near-boundary score, or weak dimension
+- Each row shows dimension, weight, band chip with correct color, weighted contribution, evidence, view evidence link
+- Score formula shown below table
+- Student result dialog shows simplified VoxScore section when profile exists
+- Student view shows no weighted math, no AI confidence, no internal rationale
+- Student dashboard completed exam cards show VoxScore badge when profile exists, old badges when null
+- No changes to grading path, QuickVox, or Professor Decision panel behavior
+- No errors on submissions with null voxScoreProfile

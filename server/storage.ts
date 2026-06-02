@@ -26,6 +26,13 @@ import {
   type ExamResponse,
   type Question,
   type GradingMethod,
+  type VoxScoreProfile,
+  type VoxDimension,
+  type VoxDimensionScore,
+  type VoxBand,
+  voxDimensions,
+  VOX_DIMENSION_WEIGHTS,
+  VOX_PASS_THRESHOLD,
   type ClassMaterial,
   type InsertClassMaterial,
   type StudentPerformanceRadar,
@@ -36,6 +43,15 @@ import {
   type UserEvent,
   type SupportRequest,
   type ChatMessage,
+  type VoxConfidenceLevel,
+  practiceSessions,
+  type PracticeSession,
+  type InsertPracticeSession,
+  type PracticeQuestion,
+  type PracticeCoverageStatus,
+  type PracticeSessionMode,
+  type PracticeCoachStyle,
+  type PracticeCognitiveLevel,
 } from "@shared/schema";
 import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
 
@@ -88,6 +104,85 @@ interface EvalResult {
   understandingScore: number;
   method: GradingMethod;
   transcript?: string;
+  voxScoreProfile?: VoxScoreProfile;
+}
+
+// Clamp a number into the 1–5 band range as an integer.
+function clampBand(n: number): VoxBand {
+  const r = Math.round(n);
+  return Math.max(1, Math.min(5, r)) as VoxBand;
+}
+
+// Build a uniform VoxScoreProfile from a single 0–1 score (used on fallback paths
+// where no structured AI evaluation is available).
+function fallbackProfile(score: number, language = "unknown"): VoxScoreProfile {
+  const band = clampBand(score * 4 + 1);
+  const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => ({
+    dimension,
+    band,
+    weightedScore: (band / 5) * VOX_DIMENSION_WEIGHTS[dimension] * 100,
+    evidence: "Automatically estimated — structured AI evaluation unavailable.",
+    conceptsPresent: [],
+    conceptsMissing: [],
+    conceptsIncorrect: [],
+  }));
+  const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+  return {
+    dimensions,
+    totalScore,
+    passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+    confidenceLevel: "low",
+    asrQualityFlag: "needs_human_review",
+    languageDetected: language,
+  };
+}
+
+// Combine multiple per-question VoxScoreProfiles into one submission-level profile
+// by averaging each dimension's band and weighted score.
+function aggregateProfiles(profiles: VoxScoreProfile[]): VoxScoreProfile | undefined {
+  if (profiles.length === 0) return undefined;
+  if (profiles.length === 1) return profiles[0];
+
+  const confidenceRank: Record<string, number> = { high: 3, medium: 2, low: 1 };
+  const asrRank: Record<string, number> = { ok: 3, low_confidence: 2, needs_human_review: 1 };
+
+  const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => {
+    const perDim = profiles
+      .map((p) => p.dimensions.find((d) => d.dimension === dimension))
+      .filter((d): d is VoxDimensionScore => !!d);
+    const avgBand = clampBand(perDim.reduce((a, d) => a + d.band, 0) / perDim.length);
+    const avgWeighted = perDim.reduce((a, d) => a + d.weightedScore, 0) / perDim.length;
+    const dedupe = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+    return {
+      dimension,
+      band: avgBand,
+      weightedScore: avgWeighted,
+      evidence: perDim.map((d) => d.evidence).filter(Boolean).join(" "),
+      conceptsPresent: dedupe(perDim.flatMap((d) => d.conceptsPresent || [])),
+      conceptsMissing: dedupe(perDim.flatMap((d) => d.conceptsMissing || [])),
+      conceptsIncorrect: dedupe(perDim.flatMap((d) => d.conceptsIncorrect || [])),
+    };
+  });
+  const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+
+  const worstConfidence = profiles.reduce(
+    (acc, p) => (confidenceRank[p.confidenceLevel] < confidenceRank[acc] ? p.confidenceLevel : acc),
+    profiles[0].confidenceLevel
+  );
+  const worstAsr = profiles.reduce(
+    (acc, p) => (asrRank[p.asrQualityFlag] < asrRank[acc] ? p.asrQualityFlag : acc),
+    profiles[0].asrQualityFlag
+  );
+  const languages = Array.from(new Set(profiles.map((p) => p.languageDetected).filter(Boolean)));
+
+  return {
+    dimensions,
+    totalScore,
+    passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+    confidenceLevel: worstConfidence,
+    asrQualityFlag: worstAsr,
+    languageDetected: languages.length === 1 ? languages[0] : languages.join(", ") || "unknown",
+  };
 }
 
 async function evaluateWithAI(
@@ -101,7 +196,7 @@ async function evaluateWithAI(
       ? `\nClass Materials Context (use this to assess the answer):\n${materialContext}\n`
       : "";
 
-    const prompt = `You are a fair, experienced university professor grading a student's oral exam answer. You must provide TWO independent scores. These scores should often be DIFFERENT from each other.
+    const prompt = `You are a fair, experienced university professor grading a student's oral exam answer using the VoxScore framework. Evaluate the answer across SEVEN independent dimensions. A student can score high on some dimensions and low on others — the dimension scores should reflect genuine differences.
 ${materialSection}
 Question: ${question.text}
 
@@ -109,61 +204,106 @@ Expected Answer: ${question.correctAnswer || "No specific expected answer provid
 
 Student's Answer: ${response}
 
-Provide TWO scores from 0.0 to 1.0. These are INDEPENDENT dimensions — a student can score high on one and low on the other:
+Score the academic meaning of the answer regardless of whether it is in English, Arabic, or a mix of both. Never penalize language choice, accent, or code-switching unless meaning is materially blocked.
 
-1. CORRECTNESS SCORE — Are the specific facts, terms, and claims accurate?
-Focus ONLY on factual precision. Ask: "Did the student state things that are true?"
-- 1.0 = All facts stated are accurate and complete
-- 0.8-0.9 = Core facts are right, one or two minor inaccuracies or omissions
-- 0.6-0.7 = Main idea is right but contains a factual error or significant omission
-- 0.4-0.5 = Mix of correct and incorrect claims
-- 0.1-0.3 = Mostly incorrect facts
-- 0.0 = Completely wrong or irrelevant
+For each dimension, assign a BAND from 1 to 5:
+- 1 = Inadequate
+- 2 = Limited
+- 3 = Developing
+- 4 = Proficient
+- 5 = Exemplary
 
-2. UNDERSTANDING SCORE — Does the student genuinely grasp the underlying concept?
-Focus on conceptual comprehension, NOT polish or precision of wording. Ask: "Does this person actually understand how this works, even if they expressed it imperfectly?"
-- 0.9-1.0 = Clearly understands the concept — can explain the mechanism, give examples, show how things connect. Imprecise wording is OK if the reasoning is sound.
-- 0.7-0.8 = Good grasp of the concept with minor gaps in depth or nuance
-- 0.5-0.6 = Understands the basics but misses important aspects of why/how
-- 0.3-0.4 = Vague or superficial — seems to have heard of it but can't explain it
-- 0.0-0.2 = No demonstrated understanding
+The seven dimensions and their weights:
+- D1 Subject Knowledge and Content Accuracy (weight 25%) — factual correctness, depth, disciplinary terminology, conceptual relationships, absence of misconceptions
+- D2 Reasoning and Critical Thinking (weight 20%) — analysis, synthesis, causal explanation, evaluation, assumptions, limitations, intellectual independence
+- D3 Evidence and Justification (weight 15%) — use of examples, cases, data, or discipline-specific evidence to justify claims
+- D4 Responsiveness and Defense (weight 15%) — directly answering the question, adapting under probing, defending or revising claims, epistemic honesty
+- D5 Organization and Coherence (weight 10%) — logical sequencing, transitions, structure, topic control
+- D6 Communication Clarity (weight 10%) — comprehensibility, lexical precision, clear central message; score meaning not accent or language choice
+- D7 Professionalism and Composure (weight 5%) — academic register, respectful engagement, composure
 
-KEY RULES:
-- These two scores SHOULD often differ. A student who understands the concept but states one wrong fact should get a HIGHER understanding score than correctness score.
-- A student who memorized the right answer without understanding should get a HIGHER correctness score than understanding score.
-- For oral/spoken answers: do NOT penalize informal language, repetition, filler words, or conversational tone. Students speak differently than they write. Focus on the substance.
-- For simple factual questions: a correct concise answer proves understanding (give 0.9-1.0 for understanding).
-- Be generous with understanding when the student demonstrates they grasp the core mechanism, even if their examples or terminology are slightly off.
+Guidelines:
+- For oral/spoken answers, do NOT penalize informal language, repetition, filler words, or conversational tone. Focus on substance.
+- For each dimension provide: a band (1-5), a short evidence string citing the answer, and concept lists (conceptsPresent, conceptsMissing, conceptsIncorrect) grounded in the question and any materials. Concept lists may be empty arrays.
 
-Respond with ONLY two numbers separated by a comma, like: 0.7,0.85
-The first number is correctness, the second is understanding.`;
+Respond with ONLY a JSON object in EXACTLY this shape:
+{
+  "dimensions": [
+    {"dimension":"D1","band":4,"evidence":"...","conceptsPresent":["..."],"conceptsMissing":["..."],"conceptsIncorrect":["..."]},
+    {"dimension":"D2","band":3,"evidence":"...","conceptsPresent":[],"conceptsMissing":[],"conceptsIncorrect":[]},
+    {"dimension":"D3", ...},
+    {"dimension":"D4", ...},
+    {"dimension":"D5", ...},
+    {"dimension":"D6", ...},
+    {"dimension":"D7", ...}
+  ],
+  "confidenceLevel": "high" | "medium" | "low",
+  "languageDetected": "english" | "arabic" | "mixed" | "other"
+}
+Include all seven dimensions D1 through D7 exactly once.`;
 
     const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
 
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 20,
+      max_tokens: 1200,
       temperature: 0.1,
+      response_format: { type: "json_object" },
     });
 
-    const responseText = completion.choices[0]?.message?.content?.trim() || "0,0";
-    const parts = responseText.split(",").map(s => parseFloat(s.trim()));
-    
-    const correctness = parts[0];
-    const understanding = parts.length > 1 ? parts[1] : parts[0];
-    
-    if (isNaN(correctness) || correctness < 0 || correctness > 1 ||
-        isNaN(understanding) || understanding < 0 || understanding > 1) {
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+
+    if (!parsed || !Array.isArray(parsed.dimensions)) {
       const fb = fallbackScore(question, response);
-      return { score: fb, understandingScore: fb, method: "fallback" };
+      return { score: fb, understandingScore: fb, method: "fallback", voxScoreProfile: fallbackProfile(fb) };
     }
-    
-    return { score: correctness, understandingScore: understanding, method: "ai" };
+
+    const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => {
+      const d = parsed.dimensions.find((x: any) => x?.dimension === dimension);
+      const band = clampBand(typeof d?.band === "number" ? d.band : 3);
+      const toStrArr = (v: any): string[] =>
+        Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim().length > 0) : [];
+      return {
+        dimension,
+        band,
+        weightedScore: (band / 5) * VOX_DIMENSION_WEIGHTS[dimension] * 100,
+        evidence: typeof d?.evidence === "string" ? d.evidence : "",
+        conceptsPresent: toStrArr(d?.conceptsPresent),
+        conceptsMissing: toStrArr(d?.conceptsMissing),
+        conceptsIncorrect: toStrArr(d?.conceptsIncorrect),
+      };
+    });
+
+    const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+    const confidenceLevel =
+      parsed.confidenceLevel === "high" || parsed.confidenceLevel === "medium" || parsed.confidenceLevel === "low"
+        ? parsed.confidenceLevel
+        : "medium";
+    const languageDetected = typeof parsed.languageDetected === "string" ? parsed.languageDetected : "unknown";
+
+    const voxScoreProfile: VoxScoreProfile = {
+      dimensions,
+      totalScore,
+      passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+      confidenceLevel,
+      asrQualityFlag: "ok",
+      languageDetected,
+    };
+
+    // Legacy flat scores derived from the profile so existing aggregates keep working.
+    // Correctness maps to D1 (content accuracy); understanding maps to D2 (reasoning).
+    const d1 = dimensions.find((d) => d.dimension === "D1")!;
+    const d2 = dimensions.find((d) => d.dimension === "D2")!;
+    const score = d1.band / 5;
+    const understandingScore = d2.band / 5;
+
+    return { score, understandingScore, method: "ai", voxScoreProfile };
   } catch (error) {
     console.error("[AI-GRADING] AI grading failed, using fallback:", error);
     const fb = fallbackScore(question, response);
-    return { score: fb, understandingScore: fb, method: "fallback" };
+    return { score: fb, understandingScore: fb, method: "fallback", voxScoreProfile: fallbackProfile(fb) };
   }
 }
 
@@ -208,6 +348,390 @@ Do not include anything outside the JSON object.`;
     console.error("[QUICKVOX] evaluateQuickVoxAnswer failed:", error);
     return { insight: "", followUp: "" };
   }
+}
+
+// ===========================================================================
+// VoxPractice AI layer — private, student-led oral self-training.
+// Completely separate from evaluateWithAI and the professor grading pipeline.
+// Every VoxPractice call uses gpt-4o (not gpt-4o-mini).
+// ===========================================================================
+
+const PRACTICE_MODEL = "gpt-4o";
+
+// Bilingual scoring clause required on every VoxPractice grading prompt.
+const PRACTICE_BILINGUAL_CLAUSE =
+  "Score the academic meaning of the answer regardless of whether it is in English, Arabic, or a mix of both. Never penalize language choice, accent, or code-switching unless meaning is materially blocked.";
+
+// The only follow-up probes the AI is permitted to use. These open up thinking
+// without leading toward, completing, or confirming the answer.
+const PRACTICE_APPROVED_PROBES = [
+  "Can you give me an example?",
+  "What would happen if the opposite were true?",
+  "How does that connect to what you said earlier?",
+  "Why does that relationship hold?",
+  "What evidence supports your answer?",
+  "What assumption are you making here?",
+] as const;
+
+function practiceClient(customApiKey?: string | null): OpenAI {
+  return customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+}
+
+// Build a VoxScoreProfile from an AI dimensions array. Mirrors the parsing in
+// evaluateWithAI but lives separately so the existing grading path is untouched.
+function practiceProfileFromDimensions(parsed: any, fallbackLanguage = "unknown"): VoxScoreProfile {
+  const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => {
+    const d = Array.isArray(parsed?.dimensions)
+      ? parsed.dimensions.find((x: any) => x?.dimension === dimension)
+      : undefined;
+    const band = clampBand(typeof d?.band === "number" ? d.band : 3);
+    const toStrArr = (v: any): string[] =>
+      Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim().length > 0) : [];
+    return {
+      dimension,
+      band,
+      weightedScore: (band / 5) * VOX_DIMENSION_WEIGHTS[dimension] * 100,
+      evidence: typeof d?.evidence === "string" ? d.evidence : "",
+      conceptsPresent: toStrArr(d?.conceptsPresent),
+      conceptsMissing: toStrArr(d?.conceptsMissing),
+      conceptsIncorrect: toStrArr(d?.conceptsIncorrect),
+    };
+  });
+  const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+  const confidenceLevel: VoxConfidenceLevel =
+    parsed?.confidenceLevel === "high" || parsed?.confidenceLevel === "medium" || parsed?.confidenceLevel === "low"
+      ? parsed.confidenceLevel
+      : "medium";
+  const languageDetected =
+    typeof parsed?.languageDetected === "string" && parsed.languageDetected.trim().length > 0
+      ? parsed.languageDetected
+      : fallbackLanguage;
+  return {
+    dimensions,
+    totalScore,
+    passFail: totalScore >= VOX_PASS_THRESHOLD ? "pass" : "fail",
+    confidenceLevel,
+    asrQualityFlag: "ok",
+    languageDetected,
+  };
+}
+
+export interface PracticeMaterialSummary {
+  summary: string;
+  concepts: string[];
+  topics: string[];
+  sampleQuestions: string[];
+  detectedLanguage: string;
+}
+
+// Step 1 — analyze the student's chosen material into a concept/topic/question summary.
+export async function analyzePracticeMaterial(
+  materialContent: string,
+  customApiKey?: string | null
+): Promise<PracticeMaterialSummary> {
+  const empty: PracticeMaterialSummary = {
+    summary: "",
+    concepts: [],
+    topics: [],
+    sampleQuestions: [],
+    detectedLanguage: "unknown",
+  };
+  const trimmed = (materialContent || "").trim();
+  if (!trimmed) return empty;
+
+  const prompt = `You are helping a university student prepare for an oral exam. Analyze the study material below and extract what matters for oral practice.
+
+${PRACTICE_BILINGUAL_CLAUSE}
+
+Study material:
+${trimmed.substring(0, 12000)}
+
+Return ONLY a JSON object in exactly this shape:
+{
+  "summary": "2-3 sentence plain-language overview of what this material covers",
+  "concepts": ["key concept 1", "key concept 2", "..."],
+  "topics": ["broader topic 1", "topic 2"],
+  "sampleQuestions": ["an oral question grounded in the material", "..."],
+  "detectedLanguage": "english" | "arabic" | "mixed" | "other"
+}
+
+Rules:
+- Extract 5-10 concepts and 2-5 topics, all strictly grounded in the material — never invent content not present.
+- Provide 3-5 sample oral questions that could be asked about this material.
+- Keep everything concise.`;
+
+  try {
+    const client = practiceClient(customApiKey);
+    const completion = await client.chat.completions.create({
+      model: PRACTICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 900,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+    });
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+    const toStrArr = (v: any): string[] =>
+      Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
+    return {
+      summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+      concepts: toStrArr(parsed.concepts),
+      topics: toStrArr(parsed.topics),
+      sampleQuestions: toStrArr(parsed.sampleQuestions),
+      detectedLanguage: typeof parsed.detectedLanguage === "string" ? parsed.detectedLanguage : "unknown",
+    };
+  } catch (error) {
+    console.error("[VOXPRACTICE] analyzePracticeMaterial failed:", error);
+    return empty;
+  }
+}
+
+// Number of questions to generate per session mode.
+const PRACTICE_MODE_QUESTION_COUNT: Record<PracticeSessionMode, number> = {
+  warmup: 3,
+  readiness_sprint: 5,
+  weak_spot: 4,
+  mock_oral: 6,
+};
+
+// Step 2 — generate a material-grounded question set spanning cognitive levels.
+export async function generatePracticeQuestions(
+  materialContent: string,
+  options: { sessionMode: PracticeSessionMode; coachStyle?: PracticeCoachStyle; count?: number; focusConcepts?: string[] },
+  customApiKey?: string | null
+): Promise<PracticeQuestion[]> {
+  const trimmed = (materialContent || "").trim();
+  if (!trimmed) return [];
+
+  const count = Math.max(1, Math.min(options.count ?? PRACTICE_MODE_QUESTION_COUNT[options.sessionMode] ?? 4, 10));
+  const focusSection =
+    options.focusConcepts && options.focusConcepts.length > 0
+      ? `\nFocus especially on these concepts the student wants to strengthen: ${options.focusConcepts.join(", ")}.\n`
+      : "";
+
+  const prompt = `You are an oral-exam coach generating practice questions for a university student. Base every question STRICTLY on the study material below — never ask about anything not present in it.
+
+${PRACTICE_BILINGUAL_CLAUSE}
+${focusSection}
+Study material:
+${trimmed.substring(0, 12000)}
+
+Generate exactly ${count} oral practice questions that, taken together, span these cognitive levels: recall, understanding, application, comparison, reasoning, and defense. Each question targets ONE level and ONE concept drawn from the material.
+
+Return ONLY a JSON object in exactly this shape:
+{
+  "questions": [
+    {"text": "the oral question", "cognitiveLevel": "recall" | "understanding" | "application" | "comparison" | "reasoning" | "defense", "concept": "the material concept this targets"}
+  ]
+}
+
+Rules:
+- Every concept must be traceable to the material above.
+- Vary the cognitive levels across the set; do not make them all recall.
+- Questions must be answerable by speaking aloud in 1-2 minutes.`;
+
+  try {
+    const client = practiceClient(customApiKey);
+    const completion = await client.chat.completions.create({
+      model: PRACTICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1500,
+      temperature: 0.5,
+      response_format: { type: "json_object" },
+    });
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+    const list = Array.isArray(parsed?.questions) ? parsed.questions : [];
+    const validLevels = new Set<PracticeCognitiveLevel>([
+      "recall",
+      "understanding",
+      "application",
+      "comparison",
+      "reasoning",
+      "defense",
+    ]);
+    return list
+      .filter((q: any) => q && typeof q.text === "string" && q.text.trim().length > 0)
+      .slice(0, count)
+      .map((q: any) => ({
+        id: crypto.randomUUID(),
+        text: q.text.trim(),
+        cognitiveLevel: validLevels.has(q.cognitiveLevel) ? q.cognitiveLevel : "understanding",
+        concept: typeof q.concept === "string" && q.concept.trim().length > 0 ? q.concept.trim() : undefined,
+      }));
+  } catch (error) {
+    console.error("[VOXPRACTICE] generatePracticeQuestions failed:", error);
+    return [];
+  }
+}
+
+// Step 3 — produce a single follow-up probe, chosen ONLY from the approved list,
+// that never reveals or completes the answer.
+export async function generatePracticeProbe(
+  questionText: string,
+  transcript: string,
+  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null },
+  customApiKey?: string | null
+): Promise<{ probe: string }> {
+  const defaultProbe = PRACTICE_APPROVED_PROBES[0];
+  if (!transcript || transcript.trim().length === 0) return { probe: defaultProbe };
+
+  const probeList = PRACTICE_APPROVED_PROBES.map((p, i) => `${i + 1}. ${p}`).join("\n");
+  const prompt = `You are an oral-exam coach. The student just answered a practice question by voice. Choose the SINGLE best follow-up probe to deepen their thinking.
+
+${PRACTICE_BILINGUAL_CLAUSE}
+
+Question: ${questionText}
+Student's answer: ${transcript}
+
+You may ONLY use one of these approved probes — never invent a new one, never plant or complete the answer, never confirm whether they were right or wrong:
+${probeList}
+
+Return ONLY a JSON object in exactly this shape:
+{"probeIndex": <the number of the chosen probe, 1-${PRACTICE_APPROVED_PROBES.length}>}`;
+
+  try {
+    const client = practiceClient(customApiKey);
+    const completion = await client.chat.completions.create({
+      model: PRACTICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 60,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+    });
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+    const idx = Number(parsed?.probeIndex);
+    if (Number.isFinite(idx) && idx >= 1 && idx <= PRACTICE_APPROVED_PROBES.length) {
+      return { probe: PRACTICE_APPROVED_PROBES[idx - 1] };
+    }
+    return { probe: defaultProbe };
+  } catch (error) {
+    console.error("[VOXPRACTICE] generatePracticeProbe failed:", error);
+    return { probe: defaultProbe };
+  }
+}
+
+// Step 4 — per-answer micro-feedback plus a 7-dimension practice VoxScore.
+export async function generatePracticeMicroFeedback(
+  questionText: string,
+  transcript: string,
+  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null; concept?: string | null },
+  customApiKey?: string | null
+): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile }> {
+  if (!transcript || transcript.trim().length === 0) {
+    return { microFeedback: "", voxScoreProfile: fallbackProfile(0) };
+  }
+
+  const coachStyle = options?.coachStyle ?? "normal";
+  const styleNote =
+    coachStyle === "gentle"
+      ? "Be warm and encouraging; lead with what worked."
+      : coachStyle === "strict"
+        ? "Be direct and rigorous; hold the student to a high bar."
+        : "Be balanced — honest but supportive.";
+  const materialSection = options?.materialContent
+    ? `\nStudy material (use to judge accuracy and grounding):\n${options.materialContent.substring(0, 8000)}\n`
+    : "";
+
+  const prompt = `You are an oral-exam coach giving a university student private practice feedback on one spoken answer. Score the answer on the VoxScore seven-dimension framework and write one short coaching note.
+
+${PRACTICE_BILINGUAL_CLAUSE}
+${materialSection}
+Question: ${questionText}
+${options?.concept ? `Concept being practiced: ${options.concept}\n` : ""}Student's spoken answer: ${transcript}
+
+Coaching tone: ${styleNote}
+
+For each dimension assign a BAND from 1 (Inadequate) to 5 (Exemplary):
+- D1 Subject Knowledge and Content Accuracy (25%)
+- D2 Reasoning and Critical Thinking (20%)
+- D3 Evidence and Justification (15%)
+- D4 Responsiveness and Defense (15%)
+- D5 Organization and Coherence (10%)
+- D6 Communication Clarity (10%)
+- D7 Professionalism and Composure (5%)
+
+Do NOT penalize informal language, filler words, or conversational tone — focus on substance. Concept lists may be empty arrays.
+
+Return ONLY a JSON object in exactly this shape:
+{
+  "microFeedback": "2-3 sentence coaching note: one strength, one concrete thing to improve",
+  "dimensions": [
+    {"dimension":"D1","band":4,"evidence":"...","conceptsPresent":["..."],"conceptsMissing":["..."],"conceptsIncorrect":["..."]},
+    {"dimension":"D2", ...}, {"dimension":"D3", ...}, {"dimension":"D4", ...},
+    {"dimension":"D5", ...}, {"dimension":"D6", ...}, {"dimension":"D7", ...}
+  ],
+  "confidenceLevel": "high" | "medium" | "low",
+  "languageDetected": "english" | "arabic" | "mixed" | "other"
+}
+Include all seven dimensions D1 through D7 exactly once.`;
+
+  try {
+    const client = practiceClient(customApiKey);
+    const completion = await client.chat.completions.create({
+      model: PRACTICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1400,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+    });
+    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const parsed = JSON.parse(raw);
+    const microFeedback = typeof parsed?.microFeedback === "string" ? parsed.microFeedback.trim() : "";
+    const voxScoreProfile = practiceProfileFromDimensions(parsed);
+    return { microFeedback, voxScoreProfile };
+  } catch (error) {
+    console.error("[VOXPRACTICE] generatePracticeMicroFeedback failed:", error);
+    return { microFeedback: "", voxScoreProfile: fallbackProfile(0) };
+  }
+}
+
+export interface PracticeReadinessReport {
+  overallReadinessScore: number;
+  overallVoxScoreProfile: VoxScoreProfile | null;
+  conceptCoverageMap: Record<string, PracticeCoverageStatus>;
+  completedQuestionCount: number;
+  languageUsed: string;
+}
+
+// Step 5 — finalize a session into a readiness report by aggregating the answered
+// questions' profiles. Pure computation (no extra AI call) over captured answers.
+export function buildPracticeReadinessReport(questions: PracticeQuestion[]): PracticeReadinessReport {
+  const answered = (questions || []).filter((q) => q.voxScoreProfile);
+  const profiles = answered.map((q) => q.voxScoreProfile!).filter(Boolean);
+  const overallVoxScoreProfile = aggregateProfiles(profiles) ?? null;
+  const overallReadinessScore = overallVoxScoreProfile ? overallVoxScoreProfile.totalScore : 0;
+
+  // Concept coverage: rank each concept by the bands of the questions that targeted it.
+  const conceptBands: Record<string, number[]> = {};
+  for (const q of answered) {
+    const concept = (q.concept || "").trim();
+    if (!concept) continue;
+    const profile = q.voxScoreProfile!;
+    // Use D1 (subject knowledge) band as the coverage signal for the concept.
+    const d1 = profile.dimensions.find((d) => d.dimension === "D1");
+    if (d1) {
+      (conceptBands[concept] = conceptBands[concept] || []).push(d1.band);
+    }
+  }
+  const conceptCoverageMap: Record<string, PracticeCoverageStatus> = {};
+  for (const [concept, bands] of Object.entries(conceptBands)) {
+    const avg = bands.reduce((a, b) => a + b, 0) / bands.length;
+    conceptCoverageMap[concept] =
+      avg >= 4 ? "strong" : avg >= 3 ? "developing" : "weak";
+  }
+
+  const languages = Array.from(new Set(profiles.map((p) => p.languageDetected).filter(Boolean)));
+  const languageUsed = languages.length === 1 ? languages[0] : languages.join(", ") || "unknown";
+
+  return {
+    overallReadinessScore,
+    overallVoxScoreProfile,
+    conceptCoverageMap,
+    completedQuestionCount: answered.length,
+    languageUsed,
+  };
 }
 
 function fallbackScore(question: Question, response: string): number {
@@ -649,6 +1173,20 @@ export interface IStorage {
   getAllSubmissions(): Promise<ExamSubmission[]>;
   createSubmission(studentId: string, examId: string, responses: ExamResponse[], isPreview?: boolean): Promise<ExamSubmission>;
   updateSubmissionScore(submissionId: string, questionId: string, newScore: number): Promise<ExamSubmission | undefined>;
+  updateSubmissionDecision(submissionId: string, data: {
+    professorDecision: string;
+    professorOverrideReason?: string | null;
+    professorHolisticScore?: number | null;
+    professorReviewDurationMinutes?: number | null;
+    gradingGap: number;
+    arabicFlag: boolean;
+  }): Promise<ExamSubmission | undefined>;
+
+  // Practice sessions (VoxPractice — private to the student)
+  createPracticeSession(studentId: string, data: InsertPracticeSession): Promise<PracticeSession>;
+  getPracticeSession(id: string): Promise<PracticeSession | undefined>;
+  getPracticeSessionsByStudent(studentId: string): Promise<PracticeSession[]>;
+  updatePracticeSession(id: string, updates: Partial<PracticeSession>): Promise<PracticeSession | undefined>;
 
   // Support
   createSupportRequest(data: { userId: string; userName?: string; userRole?: string; message?: string; pageUrl?: string }): Promise<SupportRequest>;
@@ -950,6 +1488,7 @@ export class DatabaseStorage implements IStorage {
     const scores: Record<string, number> = {};
     const understandingScoresMap: Record<string, number> = {};
     const gradingMethodsMap: Record<string, GradingMethod> = {};
+    const questionProfiles: VoxScoreProfile[] = [];
 
     for (const response of responses) {
       const question = exam.questions.find((q) => q.id === response.questionId);
@@ -958,6 +1497,9 @@ export class DatabaseStorage implements IStorage {
         scores[response.questionId] = result.score;
         understandingScoresMap[response.questionId] = result.understandingScore;
         gradingMethodsMap[response.questionId] = result.method;
+        if (result.voxScoreProfile) {
+          questionProfiles.push(result.voxScoreProfile);
+        }
         if (result.transcript) {
           response.transcript = result.transcript;
         }
@@ -974,6 +1516,12 @@ export class DatabaseStorage implements IStorage {
       ? understandingValues.reduce((a, b) => a + b, 0) / understandingValues.length
       : 0;
 
+    // Submission-level VoxScore profile (0–100). The legacy totalScore column stays
+    // on its 0–1 scale for backwards compatibility, so when a profile exists we set it
+    // from voxScoreProfile.totalScore / 100.
+    const voxScoreProfile = aggregateProfiles(questionProfiles) ?? null;
+    const legacyTotalScore = voxScoreProfile ? voxScoreProfile.totalScore / 100 : totalScore;
+
     let feedback: { strengths: string; weakPoints: string; recommendations: string } | null = null;
     try {
       feedback = await generateFeedback(exam, responses, scores, understandingScoresMap, materialContext || undefined, customApiKey);
@@ -988,9 +1536,10 @@ export class DatabaseStorage implements IStorage {
       scores,
       understandingScores: understandingScoresMap,
       gradingMethods: gradingMethodsMap,
-      totalScore,
+      totalScore: legacyTotalScore,
       totalUnderstandingScore,
       feedback,
+      voxScoreProfile,
       isPreview: isPreview ? "true" : "false",
       submittedAt: new Date().toISOString(),
     }).returning();
@@ -1035,6 +1584,65 @@ export class DatabaseStorage implements IStorage {
     }).where(eq(submissions.id, submissionId)).returning();
 
     return updated || undefined;
+  }
+
+  async updateSubmissionDecision(submissionId: string, data: {
+    professorDecision: string;
+    professorOverrideReason?: string | null;
+    professorHolisticScore?: number | null;
+    professorReviewDurationMinutes?: number | null;
+    gradingGap: number;
+    arabicFlag: boolean;
+  }): Promise<ExamSubmission | undefined> {
+    const [updated] = await db.update(submissions).set({
+      professorDecision: data.professorDecision,
+      professorOverrideReason: data.professorOverrideReason ?? null,
+      professorHolisticScore: data.professorHolisticScore ?? null,
+      professorReviewDurationMinutes: data.professorReviewDurationMinutes ?? null,
+      professorReviewTimestamp: new Date(),
+      gradingGap: data.gradingGap,
+      arabicFlag: data.arabicFlag,
+    }).where(eq(submissions.id, submissionId)).returning();
+
+    return updated || undefined;
+  }
+
+  // Practice session methods (VoxPractice — private to the student)
+  async createPracticeSession(studentId: string, data: InsertPracticeSession): Promise<PracticeSession> {
+    const [session] = await db.insert(practiceSessions).values({
+      studentId,
+      sourceType: data.sourceType,
+      sourceSummary: data.sourceSummary ?? null,
+      sessionMode: data.sessionMode,
+      coachStyle: data.coachStyle ?? "normal",
+      languageUsed: data.languageUsed ?? null,
+      questions: [],
+    }).returning();
+    return session;
+  }
+
+  async getPracticeSession(id: string): Promise<PracticeSession | undefined> {
+    const [session] = await db.select().from(practiceSessions).where(eq(practiceSessions.id, id));
+    return session || undefined;
+  }
+
+  async getPracticeSessionsByStudent(studentId: string): Promise<PracticeSession[]> {
+    return db.select().from(practiceSessions).where(eq(practiceSessions.studentId, studentId));
+  }
+
+  async updatePracticeSession(id: string, updates: Partial<PracticeSession>): Promise<PracticeSession | undefined> {
+    const updateData: any = {};
+    if (updates.sourceSummary !== undefined) updateData.sourceSummary = updates.sourceSummary;
+    if (updates.questions !== undefined) updateData.questions = updates.questions;
+    if (updates.overallReadinessScore !== undefined) updateData.overallReadinessScore = updates.overallReadinessScore;
+    if (updates.overallVoxScoreProfile !== undefined) updateData.overallVoxScoreProfile = updates.overallVoxScoreProfile;
+    if (updates.conceptCoverageMap !== undefined) updateData.conceptCoverageMap = updates.conceptCoverageMap;
+    if (updates.languageUsed !== undefined) updateData.languageUsed = updates.languageUsed;
+    if (updates.completedQuestionCount !== undefined) updateData.completedQuestionCount = updates.completedQuestionCount;
+    if (updates.completedAt !== undefined) updateData.completedAt = updates.completedAt;
+    if (Object.keys(updateData).length === 0) return this.getPracticeSession(id);
+    const [session] = await db.update(practiceSessions).set(updateData).where(eq(practiceSessions.id, id)).returning();
+    return session || undefined;
   }
 
   // Support request methods
