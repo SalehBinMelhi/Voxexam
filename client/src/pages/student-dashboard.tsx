@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TakeExamDialog } from "@/components/take-exam-dialog";
+import { VoxPracticeDialog } from "@/components/voxpractice-dialog";
 import { HelpSupportPopover } from "@/components/help-support-popover";
 import { 
   LogOut, 
@@ -18,6 +19,8 @@ import {
   AlertCircle,
   Trophy,
   GraduationCap,
+  Mic,
+  Lock,
 } from "lucide-react";
 import type { Exam, ExamSubmission } from "@shared/schema";
 import { voxTotalBandColor } from "@/lib/voxscore";
@@ -43,6 +46,7 @@ function getExamStatus(exam: Exam): { label: string; variant: "default" | "secon
 export default function StudentDashboard() {
   const { user, logoutUrl } = useAuth();
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
+  const [practiceOpen, setPracticeOpen] = useState(false);
 
   const { data: exams = [], isLoading: examsLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
@@ -116,6 +120,34 @@ export default function StudentDashboard() {
           <h2 className="text-2xl font-bold">My Exams</h2>
           <p className="text-muted-foreground">View and take your assigned exams</p>
         </div>
+
+        <Card className="border-primary/30 bg-primary/5" data-testid="card-voxpractice-entry">
+          <CardContent className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-md bg-primary/15 flex items-center justify-center flex-shrink-0">
+                <Mic className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold">VoxPractice</h3>
+                  <span className="inline-flex items-center gap-1 text-[11px] text-primary">
+                    <Lock className="h-3 w-3" /> Private
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Practice oral answers privately and get a readiness estimate. Not sent to your professor.
+                </p>
+                <p className="text-xs text-muted-foreground" dir="rtl">
+                  تدرّب على الإجابات الشفهية بخصوصية واحصل على تقدير جاهزيتك — لا يُرسل إلى أستاذك.
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => setPracticeOpen(true)} data-testid="button-open-voxpractice" className="flex-shrink-0">
+              <Mic className="h-4 w-4 mr-2" />
+              Start practicing
+            </Button>
+          </CardContent>
+        </Card>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
@@ -348,6 +380,7 @@ export default function StudentDashboard() {
           onOpenChange={(open) => !open && setSelectedExam(null)}
         />
       )}
+      <VoxPracticeDialog open={practiceOpen} onOpenChange={setPracticeOpen} />
     </div>
   );
 }

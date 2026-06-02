@@ -48,6 +48,102 @@ async function uploadRecordingToObjectStorage(fileName: string, buffer: Buffer):
   await file.save(buffer, { contentType: "video/webm" });
 }
 
+// Extract readable plain text from an uploaded study-material file. Supports
+// PDF, Word (.docx), PowerPoint (.pptx), Excel, and plain-text/CSV/MD files.
+// Throws an Error with a user-friendly message when the file cannot be read.
+async function extractTextFromUpload(
+  buffer: Buffer,
+  fileName: string,
+  mimeType: string,
+): Promise<string> {
+  let content = "";
+  const lowerName = (fileName || "").toLowerCase();
+
+  if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
+    try {
+      const { extractText, getDocumentProxy } = await import("unpdf");
+      const pdfDoc = await getDocumentProxy(new Uint8Array(buffer));
+      const { text } = await extractText(pdfDoc, { mergePages: true });
+      content = text || "";
+    } catch {
+      try {
+        const pdfData = await pdf(buffer);
+        content = pdfData.text || "";
+      } catch {
+        content = "";
+      }
+    }
+    if (!content.trim()) {
+      throw new Error(
+        "Could not read this PDF. It may be scanned, image-based, or password-protected. Try a .docx or .txt file instead.",
+      );
+    }
+  } else if (
+    lowerName.endsWith(".docx") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    try {
+      const result = await mammoth.extractRawText({ buffer });
+      content = result.value;
+    } catch {
+      throw new Error("Could not parse this Word document.");
+    }
+  } else if (
+    lowerName.endsWith(".pptx") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    try {
+      const zip = await JSZip.loadAsync(buffer);
+      const slideTexts: string[] = [];
+      const slideFiles = Object.keys(zip.files)
+        .filter((f) => f.match(/^ppt\/slides\/slide\d+\.xml$/))
+        .sort();
+      for (const slideFile of slideFiles) {
+        const xmlContent = await zip.files[slideFile].async("text");
+        const textMatches = xmlContent.match(/<a:t>([^<]*)<\/a:t>/g);
+        if (textMatches) {
+          slideTexts.push(textMatches.map((m) => m.replace(/<\/?a:t>/g, "")).join(" "));
+        }
+      }
+      content = slideTexts.join("\n\n");
+    } catch {
+      throw new Error("Could not parse this PowerPoint file.");
+    }
+  } else if (
+    lowerName.endsWith(".xlsx") ||
+    lowerName.endsWith(".xls") ||
+    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel"
+  ) {
+    try {
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const sheetTexts: string[] = [];
+      for (const sheetName of workbook.SheetNames) {
+        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+        if (csv.trim()) sheetTexts.push(`Sheet: ${sheetName}\n${csv}`);
+      }
+      content = sheetTexts.join("\n\n");
+    } catch {
+      throw new Error("Could not parse this Excel file.");
+    }
+  } else if (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    lowerName.endsWith(".txt") ||
+    lowerName.endsWith(".md") ||
+    lowerName.endsWith(".csv")
+  ) {
+    content = buffer.toString("utf-8");
+  } else {
+    throw new Error("Unsupported file type. Please upload a PDF, Word, PowerPoint, or TXT file.");
+  }
+
+  if (!content.trim()) {
+    throw new Error("This file has no readable text content.");
+  }
+  return content;
+}
+
 declare global {
   namespace Express {
     interface User {
@@ -762,6 +858,31 @@ export async function registerRoutes(
       res.status(500).json({ error: error.message || "Failed to analyze material" });
     }
   });
+
+  // Extract plain text from an uploaded study-material file so the student can
+  // feed it into analyze-material. Stores nothing; private to the caller.
+  app.post(
+    "/api/practice/extract-material",
+    isAuthenticated,
+    requireStudent,
+    upload.single("file"),
+    async (req: any, res) => {
+      try {
+        const file = req.file;
+        if (!file) {
+          return res.status(400).json({ error: "No file uploaded" });
+        }
+        const content = await extractTextFromUpload(
+          file.buffer,
+          file.originalname || "upload",
+          file.mimetype || "",
+        );
+        res.json({ fileName: file.originalname || "upload", content });
+      } catch (error: any) {
+        res.status(400).json({ error: error.message || "Could not read this file" });
+      }
+    },
+  );
 
   // Create a practice session (scoped to the authenticated student).
   app.post("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
