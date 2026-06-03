@@ -357,6 +357,7 @@ Do not include anything outside the JSON object.`;
 // ===========================================================================
 
 const PRACTICE_MODEL = "gpt-4o";
+const MIN_PRACTICE_TRANSCRIPT_CHARS = 15;
 
 // Bilingual scoring clause required on every VoxPractice grading prompt.
 const PRACTICE_BILINGUAL_CLAUSE =
@@ -379,14 +380,29 @@ function practiceClient(customApiKey?: string | null): OpenAI {
 
 // Build a VoxScoreProfile from an AI dimensions array. Mirrors the parsing in
 // evaluateWithAI but lives separately so the existing grading path is untouched.
-function practiceProfileFromDimensions(parsed: any, fallbackLanguage = "unknown"): VoxScoreProfile {
+function practiceProfileFromDimensions(
+  parsed: any,
+  fallbackLanguage = "unknown",
+  unscoredDimensions = new Set<string>(),
+): VoxScoreProfile {
   const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => {
     const d = Array.isArray(parsed?.dimensions)
       ? parsed.dimensions.find((x: any) => x?.dimension === dimension)
       : undefined;
-    const band = clampBand(typeof d?.band === "number" ? d.band : 3);
     const toStrArr = (v: any): string[] =>
       Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim().length > 0) : [];
+    if (unscoredDimensions.has(dimension) || d?.band === null) {
+      return {
+        dimension,
+        band: null,
+        weightedScore: null,
+        evidence: typeof d?.evidence === "string" ? d.evidence : "Not evaluated.",
+        conceptsPresent: toStrArr(d?.conceptsPresent),
+        conceptsMissing: toStrArr(d?.conceptsMissing),
+        conceptsIncorrect: toStrArr(d?.conceptsIncorrect),
+      } as unknown as VoxDimensionScore;
+    }
+    const band = clampBand(typeof d?.band === "number" ? d.band : 3);
     return {
       dimension,
       band,
@@ -397,7 +413,12 @@ function practiceProfileFromDimensions(parsed: any, fallbackLanguage = "unknown"
       conceptsIncorrect: toStrArr(d?.conceptsIncorrect),
     };
   });
-  const totalScore = dimensions.reduce((a, d) => a + d.weightedScore, 0);
+  const scoredDimensions = dimensions.filter(
+    (d) => typeof d.band === "number" && typeof d.weightedScore === "number",
+  );
+  const scoredWeight = scoredDimensions.reduce((a, d) => a + VOX_DIMENSION_WEIGHTS[d.dimension], 0);
+  const rawScore = scoredDimensions.reduce((a, d) => a + d.weightedScore, 0);
+  const totalScore = scoredWeight > 0 ? Math.min(100, rawScore / scoredWeight) : 0;
   const confidenceLevel: VoxConfidenceLevel =
     parsed?.confidenceLevel === "high" || parsed?.confidenceLevel === "medium" || parsed?.confidenceLevel === "low"
       ? parsed.confidenceLevel
@@ -413,6 +434,26 @@ function practiceProfileFromDimensions(parsed: any, fallbackLanguage = "unknown"
     confidenceLevel,
     asrQualityFlag: "ok",
     languageDetected,
+  };
+}
+
+function unscoredPracticeProfile(message: string, language = "unknown"): VoxScoreProfile {
+  const dimensions: VoxDimensionScore[] = voxDimensions.map((dimension) => ({
+    dimension,
+    band: null,
+    weightedScore: null,
+    evidence: message,
+    conceptsPresent: [],
+    conceptsMissing: [],
+    conceptsIncorrect: [],
+  })) as unknown as VoxDimensionScore[];
+  return {
+    dimensions,
+    totalScore: 0,
+    passFail: "fail",
+    confidenceLevel: "low",
+    asrQualityFlag: "low_confidence",
+    languageDetected: language,
   };
 }
 
@@ -587,6 +628,8 @@ Student's answer: ${transcript}
 You may ONLY use one of these approved probes — never invent a new one, never plant or complete the answer, never confirm whether they were right or wrong:
 ${probeList}
 
+Read the student's transcript carefully. Select the probe index that is most directly relevant to what the student actually said or failed to say. The approved probe list is locked; only choose the best matching index.
+
 Return ONLY a JSON object in exactly this shape:
 {"probeIndex": <the number of the chosen probe, 1-${PRACTICE_APPROVED_PROBES.length}>}`;
 
@@ -616,14 +659,17 @@ Return ONLY a JSON object in exactly this shape:
 export async function generatePracticeMicroFeedback(
   questionText: string,
   transcript: string,
-  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null; concept?: string | null },
+  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null; concept?: string | null; skippedProbe?: boolean },
   customApiKey?: string | null
 ): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile }> {
-  if (!transcript || transcript.trim().length === 0) {
-    return { microFeedback: "", voxScoreProfile: fallbackProfile(0) };
+  const trimmedTranscript = (transcript || "").trim();
+  if (trimmedTranscript.length < MIN_PRACTICE_TRANSCRIPT_CHARS) {
+    const message = "Answer was too short to evaluate. Please try again.";
+    return { microFeedback: message, voxScoreProfile: unscoredPracticeProfile(message) };
   }
 
   const coachStyle = options?.coachStyle ?? "normal";
+  const skippedProbe = options?.skippedProbe === true;
   const styleNote =
     coachStyle === "gentle"
       ? "Be warm and encouraging; lead with what worked."
@@ -642,6 +688,7 @@ Question: ${questionText}
 ${options?.concept ? `Concept being practiced: ${options.concept}\n` : ""}Student's spoken answer: ${transcript}
 
 Coaching tone: ${styleNote}
+${skippedProbe ? "\nThe follow-up probe was not attempted. Do not score D4 Responsiveness and Defense; set D4 band to null and explain that the follow-up was not attempted.\n" : ""}
 
 For each dimension assign a BAND from 1 (Inadequate) to 5 (Exemplary):
 - D1 Subject Knowledge and Content Accuracy (25%)
@@ -653,6 +700,7 @@ For each dimension assign a BAND from 1 (Inadequate) to 5 (Exemplary):
 - D7 Professionalism and Composure (5%)
 
 Do NOT penalize informal language, filler words, or conversational tone — focus on substance. Concept lists may be empty arrays.
+If the transcript does not contain substantive academic content, do not generate positive feedback or fabricate strengths. Only report what is genuinely present in the transcript. If the answer is too vague or short to evaluate a dimension, set that dimension score to null.
 
 Return ONLY a JSON object in exactly this shape:
 {
@@ -665,7 +713,7 @@ Return ONLY a JSON object in exactly this shape:
   "confidenceLevel": "high" | "medium" | "low",
   "languageDetected": "english" | "arabic" | "mixed" | "other"
 }
-Include all seven dimensions D1 through D7 exactly once.`;
+Use null for a dimension band when that dimension cannot be evaluated from the transcript. Include all seven dimensions D1 through D7 exactly once.`;
 
   try {
     const client = practiceClient(customApiKey);
@@ -678,8 +726,16 @@ Include all seven dimensions D1 through D7 exactly once.`;
     });
     const raw = completion.choices[0]?.message?.content?.trim() || "{}";
     const parsed = JSON.parse(raw);
-    const microFeedback = typeof parsed?.microFeedback === "string" ? parsed.microFeedback.trim() : "";
-    const voxScoreProfile = practiceProfileFromDimensions(parsed);
+    let microFeedback = typeof parsed?.microFeedback === "string" ? parsed.microFeedback.trim() : "";
+    if (skippedProbe) {
+      const skippedNote = "Follow-up was not attempted, so responsiveness was not scored.";
+      microFeedback = microFeedback ? `${microFeedback} ${skippedNote}` : skippedNote;
+    }
+    const voxScoreProfile = practiceProfileFromDimensions(
+      parsed,
+      "unknown",
+      skippedProbe ? new Set(["D4"]) : new Set(),
+    );
     return { microFeedback, voxScoreProfile };
   } catch (error) {
     console.error("[VOXPRACTICE] generatePracticeMicroFeedback failed:", error);
