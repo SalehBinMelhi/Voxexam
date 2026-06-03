@@ -9,6 +9,8 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "typecheck": "tsc",
     "check": "tsc",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
