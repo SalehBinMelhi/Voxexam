@@ -49,6 +49,9 @@ import {
 const CONSENT_KEY = "voxpractice_consent_v1";
 const PREP_SECONDS = 15;
 const MIN_CLEAR_ANSWER_CHARS = 15;
+const MIN_RECORDING_DURATION_MS = 1500;
+const MIN_RECORDING_RMS_DBFS = -45;
+const UNCLEAR_AUDIO_MESSAGE = "We could not detect a clear answer. Please try recording again.";
 
 interface MaterialSummary {
   summary: string;
@@ -147,6 +150,39 @@ function PrivacyBanner() {
   );
 }
 
+async function measureAudioEnergy(blob: Blob): Promise<{ durationMs: number; rmsDbfs: number }> {
+  const AudioContextCtor =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextCtor) {
+    return { durationMs: 0, rmsDbfs: -Infinity };
+  }
+
+  const context = new AudioContextCtor();
+  try {
+    const buffer = await blob.arrayBuffer();
+    const audioBuffer = await context.decodeAudioData(buffer);
+    let sumSquares = 0;
+    let sampleCount = 0;
+
+    for (let channel = 0; channel < audioBuffer.numberOfChannels; channel += 1) {
+      const samples = audioBuffer.getChannelData(channel);
+      sampleCount += samples.length;
+      for (let i = 0; i < samples.length; i += 1) {
+        sumSquares += samples[i] * samples[i];
+      }
+    }
+
+    const rms = sampleCount > 0 ? Math.sqrt(sumSquares / sampleCount) : 0;
+    return {
+      durationMs: audioBuffer.duration * 1000,
+      rmsDbfs: rms > 0 ? 20 * Math.log10(rms) : -Infinity,
+    };
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 // Self-contained voice recorder. Auto-starts on mount; reports base64 audio on stop.
 function VoiceRecorder({
   maxSeconds,
@@ -155,7 +191,7 @@ function VoiceRecorder({
 }: {
   maxSeconds: number;
   onRecorded: (base64: string) => void;
-  onError: () => void;
+  onError: (message?: string) => void;
 }) {
   const [isRecording, setIsRecording] = useState(false);
   const [time, setTime] = useState(0);
@@ -220,8 +256,17 @@ function VoiceRecorder({
         recorder.onstop = async () => {
           stream.getTracks().forEach((t) => t.stop());
           const blob = new Blob(chunksRef.current, { type: mimeRef.current });
-          const base64 = await blobToBase64(blob);
-          onRecorded(base64);
+          try {
+            const { durationMs, rmsDbfs } = await measureAudioEnergy(blob);
+            if (durationMs < MIN_RECORDING_DURATION_MS || rmsDbfs < MIN_RECORDING_RMS_DBFS) {
+              onError(UNCLEAR_AUDIO_MESSAGE);
+              return;
+            }
+            const base64 = await blobToBase64(blob);
+            onRecorded(base64);
+          } catch {
+            onError(UNCLEAR_AUDIO_MESSAGE);
+          }
         };
         recorder.start();
         setIsRecording(true);
@@ -557,6 +602,12 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
 
   const currentQuestion = questions[qIndex];
 
+  const retryMainRecording = () => {
+    setLoopStep("record_main");
+    setRecorderKey((k) => k + 1);
+    setShowRecorder(true);
+  };
+
   const handleMainRecorded = async (base64: string) => {
     setShowRecorder(false);
     setLoopStep("processing");
@@ -564,14 +615,12 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
     const t = await transcribe(base64, currentQuestion?.text || "");
     if (!t.trim()) {
       toast({ title: "No speech detected", description: "Please record again or type your answer.", variant: "destructive" });
-      setLoopStep("record_main");
-      setShowRecorder(false);
+      retryMainRecording();
       return;
     }
     if (t.trim().length < MIN_CLEAR_ANSWER_CHARS) {
-      toast({ title: "We could not detect a clear answer. Please try recording again.", variant: "destructive" });
-      setLoopStep("record_main");
-      setShowRecorder(false);
+      toast({ title: UNCLEAR_AUDIO_MESSAGE, variant: "destructive" });
+      retryMainRecording();
       return;
     }
     await submitMainAnswer(t);
@@ -1005,7 +1054,14 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
                 key={`main-${recorderKey}`}
                 maxSeconds={answerSeconds}
                 onRecorded={handleMainRecorded}
-                onError={() => setShowRecorder(false)}
+                onError={(message) => {
+                  if (message) {
+                    toast({ title: message, variant: "destructive" });
+                    retryMainRecording();
+                    return;
+                  }
+                  setShowRecorder(false);
+                }}
               />
             )}
             <div className="space-y-2">
@@ -1050,7 +1106,10 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
                 key={`probe-${recorderKey}`}
                 maxSeconds={answerSeconds}
                 onRecorded={handleProbeRecorded}
-                onError={() => setShowRecorder(false)}
+                onError={(message) => {
+                  setShowRecorder(false);
+                  if (message) toast({ title: message, variant: "destructive" });
+                }}
               />
             ) : (
               <Button className="w-full" onClick={() => setShowRecorder(true)} data-testid="button-record-probe">

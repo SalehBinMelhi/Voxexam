@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from "openai";
+import { createHash } from "crypto";
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "./db";
 import { pool } from "./db";
@@ -53,14 +54,77 @@ import {
   type PracticeCoachStyle,
   type PracticeCognitiveLevel,
 } from "@shared/schema";
-import { ensureCompatibleFormat, speechToText } from "./replit_integrations/audio/client";
+import {
+  ensureCompatibleFormat,
+  speechToText,
+  type SpeechToTextLogprob,
+} from "./replit_integrations/audio/client";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
 
-export async function transcribeAudio(audioDataUrl: string, questionContext?: string): Promise<string> {
+export interface AudioTranscriptionResult {
+  text: string;
+  logprobs?: SpeechToTextLogprob[];
+}
+
+const TRANSCRIPTION_LOGPROB_CACHE_TTL_MS = 5 * 60 * 1000;
+const recentTranscriptionLogprobs = new Map<string, { logprobs: SpeechToTextLogprob[]; createdAt: number }>();
+
+function emptyTranscriptionResult(includeLogprobs?: boolean): string | AudioTranscriptionResult {
+  return includeLogprobs ? { text: "", logprobs: [] } : "";
+}
+
+function transcriptCacheKey(transcript: string): string {
+  const normalized = transcript.trim().toLowerCase();
+  return normalized ? createHash("sha256").update(normalized).digest("hex") : "";
+}
+
+function rememberTranscriptionLogprobs(transcript: string, logprobs?: SpeechToTextLogprob[]): void {
+  if (!logprobs || logprobs.length === 0) return;
+  const key = transcriptCacheKey(transcript);
+  if (!key) return;
+  const now = Date.now();
+  for (const [cachedKey, cached] of Array.from(recentTranscriptionLogprobs.entries())) {
+    if (now - cached.createdAt > TRANSCRIPTION_LOGPROB_CACHE_TTL_MS) {
+      recentTranscriptionLogprobs.delete(cachedKey);
+    }
+  }
+  recentTranscriptionLogprobs.set(key, { logprobs, createdAt: now });
+}
+
+function recentLogprobsForTranscript(transcript: string): SpeechToTextLogprob[] | undefined {
+  const candidates = [
+    transcript,
+    transcript.split(/\n\s*\nFollow-up answer:/i)[0] || "",
+  ];
+  const now = Date.now();
+  for (const candidate of candidates) {
+    const key = transcriptCacheKey(candidate);
+    const cached = key ? recentTranscriptionLogprobs.get(key) : undefined;
+    if (!cached) continue;
+    if (now - cached.createdAt > TRANSCRIPTION_LOGPROB_CACHE_TTL_MS) {
+      recentTranscriptionLogprobs.delete(key);
+      continue;
+    }
+    return cached.logprobs;
+  }
+  return undefined;
+}
+
+export async function transcribeAudio(audioDataUrl: string, questionContext?: string): Promise<string>;
+export async function transcribeAudio(
+  audioDataUrl: string,
+  questionContext: string | undefined,
+  options: { includeLogprobs: true }
+): Promise<AudioTranscriptionResult>;
+export async function transcribeAudio(
+  audioDataUrl: string,
+  questionContext?: string,
+  options?: { includeLogprobs?: boolean }
+): Promise<string | AudioTranscriptionResult> {
   try {
     console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
     
@@ -69,7 +133,7 @@ export async function transcribeAudio(audioDataUrl: string, questionContext?: st
     
     if (separatorIndex === -1) {
       console.error("[AUDIO] Invalid audio data URL format - no ;base64, separator found");
-      return "";
+      return emptyTranscriptionResult(options?.includeLogprobs);
     }
     
     const metadataPart = audioDataUrl.substring(0, separatorIndex);
@@ -82,20 +146,21 @@ export async function transcribeAudio(audioDataUrl: string, questionContext?: st
 
     if (audioBuffer.length < 1000) {
       console.error("[AUDIO] Audio buffer too small, likely invalid recording");
-      return "";
+      return emptyTranscriptionResult(options?.includeLogprobs);
     }
 
     const { buffer: compatibleBuffer, format: compatibleFormat } = await ensureCompatibleFormat(audioBuffer);
     console.log("[AUDIO] Converted to compatible format:", compatibleFormat);
 
     const prompt = questionContext ? `The student is answering: "${questionContext}". Transcribe their spoken response accurately, using numbers and symbols where appropriate.` : undefined;
-    const transcription = await speechToText(compatibleBuffer, compatibleFormat, prompt);
+    const transcription = await speechToText(compatibleBuffer, compatibleFormat, prompt, { includeLogprobs: true });
 
-    console.log("[AUDIO] Transcription result:", transcription);
-    return transcription || "";
+    rememberTranscriptionLogprobs(transcription.text, transcription.logprobs);
+    console.log("[AUDIO] Transcription result length:", transcription.text.length);
+    return options?.includeLogprobs ? transcription : transcription.text || "";
   } catch (error: any) {
     console.error("[AUDIO] Transcription failed:", error?.message || error);
-    return "";
+    return emptyTranscriptionResult(options?.includeLogprobs);
   }
 }
 
@@ -357,7 +422,11 @@ Do not include anything outside the JSON object.`;
 // ===========================================================================
 
 const PRACTICE_MODEL = "gpt-4o";
-const MIN_PRACTICE_TRANSCRIPT_CHARS = 15;
+const MIN_CLEAR_PRACTICE_WORDS = 2;
+const MIN_CLEAR_PRACTICE_CHARS = 8;
+const MIN_TRANSCRIPTION_AVG_LOGPROB = -1.2;
+const NO_CLEAR_ANSWER_MESSAGE = "We could not detect a clear answer. Please try recording again.";
+const PRACTICE_FILLER_WORDS = new Set(["um", "uh", "hmm", "ah", "mm", "er", "erm"]);
 
 // Bilingual scoring clause required on every VoxPractice grading prompt.
 const PRACTICE_BILINGUAL_CLAUSE =
@@ -454,6 +523,36 @@ function unscoredPracticeProfile(message: string, language = "unknown"): VoxScor
     confidenceLevel: "low",
     asrQualityFlag: "low_confidence",
     languageDetected: language,
+  };
+}
+
+function cleanPracticeTranscript(transcript: string): string {
+  return transcript
+    .toLowerCase()
+    .replace(/[^A-Za-z0-9\u0600-\u06FF\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isFillerOnlyTranscript(cleanedTranscript: string): boolean {
+  const words = cleanedTranscript.split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((word) => PRACTICE_FILLER_WORDS.has(word));
+}
+
+function averageTranscriptionLogprob(logprobs?: SpeechToTextLogprob[] | null): number | undefined {
+  const values = (logprobs || [])
+    .map((entry) => entry.logprob)
+    .filter((logprob): logprob is number => typeof logprob === "number" && Number.isFinite(logprob));
+  if (values.length === 0) return undefined;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function noClearPracticeAnswer() {
+  return {
+    microFeedback: NO_CLEAR_ANSWER_MESSAGE,
+    voxScoreProfile: unscoredPracticeProfile(NO_CLEAR_ANSWER_MESSAGE),
+    allDimensionScores: null,
+    shouldGrade: false,
   };
 }
 
@@ -659,13 +758,33 @@ Return ONLY a JSON object in exactly this shape:
 export async function generatePracticeMicroFeedback(
   questionText: string,
   transcript: string,
-  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null; concept?: string | null; skippedProbe?: boolean },
+  options?: {
+    coachStyle?: PracticeCoachStyle;
+    materialContent?: string | null;
+    concept?: string | null;
+    skippedProbe?: boolean;
+    transcriptionLogprobs?: SpeechToTextLogprob[] | null;
+  },
   customApiKey?: string | null
-): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile }> {
+): Promise<{
+  microFeedback: string;
+  voxScoreProfile: VoxScoreProfile;
+  allDimensionScores?: null;
+  shouldGrade?: boolean;
+}> {
   const trimmedTranscript = (transcript || "").trim();
-  if (trimmedTranscript.length < MIN_PRACTICE_TRANSCRIPT_CHARS) {
-    const message = "Answer was too short to evaluate. Please try again.";
-    return { microFeedback: message, voxScoreProfile: unscoredPracticeProfile(message) };
+  const cleanedTranscript = cleanPracticeTranscript(trimmedTranscript);
+  const cleanedWords = cleanedTranscript.split(/\s+/).filter(Boolean);
+  const logprobs = options?.transcriptionLogprobs ?? recentLogprobsForTranscript(trimmedTranscript);
+  const averageLogprob = averageTranscriptionLogprob(logprobs);
+
+  if (
+    isFillerOnlyTranscript(cleanedTranscript) ||
+    (typeof averageLogprob === "number" && averageLogprob < MIN_TRANSCRIPTION_AVG_LOGPROB) ||
+    cleanedWords.length < MIN_CLEAR_PRACTICE_WORDS ||
+    cleanedTranscript.length < MIN_CLEAR_PRACTICE_CHARS
+  ) {
+    return noClearPracticeAnswer();
   }
 
   const coachStyle = options?.coachStyle ?? "normal";
