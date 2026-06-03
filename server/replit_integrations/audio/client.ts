@@ -13,6 +13,17 @@ export const openai = new OpenAI({
 
 export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "ogg" | "unknown";
 
+export interface SpeechToTextLogprob {
+  token?: string;
+  bytes?: number[];
+  logprob?: number;
+}
+
+export interface SpeechToTextResult {
+  text: string;
+  logprobs?: SpeechToTextLogprob[];
+}
+
 /**
  * Detect audio format from buffer magic bytes.
  * Supports: WAV, MP3, WebM (Chrome/Firefox), MP4/M4A/MOV (Safari/iOS), OGG
@@ -239,16 +250,35 @@ export async function textToSpeechStream(
  */
 export async function speechToText(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm" = "wav",
+  format?: "wav" | "mp3" | "webm",
   prompt?: string
-): Promise<string> {
+): Promise<string>;
+export async function speechToText(
+  audioBuffer: Buffer,
+  format: "wav" | "mp3" | "webm",
+  prompt: string | undefined,
+  options: { includeLogprobs: true }
+): Promise<SpeechToTextResult>;
+export async function speechToText(
+  audioBuffer: Buffer,
+  format: "wav" | "mp3" | "webm" = "wav",
+  prompt?: string,
+  options?: { includeLogprobs?: boolean }
+): Promise<string | SpeechToTextResult> {
   const file = await toFile(audioBuffer, `audio.${format}`);
   const response = await openai.audio.transcriptions.create({
     file,
     model: "gpt-4o-mini-transcribe",
+    temperature: 0,
+    include: ["logprobs"],
+    response_format: "json",
     ...(prompt ? { prompt } : {}),
   });
-  return response.text;
+  const result = {
+    text: response.text || "",
+    logprobs: response.logprobs,
+  };
+  return options?.includeLogprobs ? result : result.text;
 }
 
 /**
