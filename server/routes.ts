@@ -830,17 +830,24 @@ export async function registerRoutes(
     count: z.number().int().positive().max(20).optional(),
     focusConcepts: z.array(z.string()).optional(),
   });
-  const answerBody = z
-    .object({
-      questionId: z.string().min(1),
-      transcript: z.string().optional(),
-      audioData: z.string().optional(),
-      materialContent: z.string().optional(),
+  const answerPayloadBody = z.object({
+    questionId: z.string().min(1),
+    transcript: z.string().optional(),
+    audioData: z.string().optional(),
+    materialContent: z.string().optional(),
+  });
+  const requireTranscriptOrAudio = (b: { transcript?: string; audioData?: string }) =>
+    (b.transcript && b.transcript.trim().length > 0) || (b.audioData && b.audioData.length > 0);
+  const answerBody = answerPayloadBody.refine(requireTranscriptOrAudio, {
+    message: "A transcript or audio answer is required",
+  });
+  const feedbackBody = answerPayloadBody
+    .extend({
+      skippedProbe: z.boolean().optional(),
     })
-    .refine(
-      (b) => (b.transcript && b.transcript.trim().length > 0) || (b.audioData && b.audioData.length > 0),
-      { message: "A transcript or audio answer is required" }
-    );
+    .refine(requireTranscriptOrAudio, {
+      message: "A transcript or audio answer is required",
+    });
   const finalizeBody = z.object({}).optional();
 
   // Analyze chosen material into a concept/topic/question summary.
@@ -986,7 +993,7 @@ export async function registerRoutes(
   // Produce per-answer micro-feedback plus a 7-dimension practice VoxScore.
   app.post("/api/practice/sessions/:id/feedback", isAuthenticated, requireStudent, async (req, res) => {
     try {
-      const parsed = answerBody.safeParse(req.body);
+      const parsed = feedbackBody.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid feedback request", details: parsed.error.errors });
       }
@@ -1006,7 +1013,7 @@ export async function registerRoutes(
       const { microFeedback, voxScoreProfile } = await generatePracticeMicroFeedback(
         question.text,
         transcript,
-        { coachStyle: session.coachStyle as any, materialContent, concept: question.concept ?? null },
+        { coachStyle: session.coachStyle as any, materialContent, concept: question.concept ?? null, skippedProbe: parsed.data.skippedProbe === true },
         apiKey
       );
       const updatedQuestions = questions.map((q) =>

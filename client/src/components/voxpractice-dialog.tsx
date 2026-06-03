@@ -48,6 +48,7 @@ import {
 
 const CONSENT_KEY = "voxpractice_consent_v1";
 const PREP_SECONDS = 15;
+const MIN_CLEAR_ANSWER_CHARS = 15;
 
 interface MaterialSummary {
   summary: string;
@@ -567,6 +568,12 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
       setShowRecorder(false);
       return;
     }
+    if (t.trim().length < MIN_CLEAR_ANSWER_CHARS) {
+      toast({ title: "We could not detect a clear answer. Please try recording again.", variant: "destructive" });
+      setLoopStep("record_main");
+      setShowRecorder(false);
+      return;
+    }
     await submitMainAnswer(t);
   };
 
@@ -607,12 +614,13 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
     setLoopStep("processing");
     setProcessingLabel("Scoring your answer privately…");
     const combined = probeAnswer.trim() ? `${main}\n\nFollow-up answer: ${probeAnswer.trim()}` : main;
+    const skippedProbe = !probeAnswer.trim();
     try {
       const res = await fetch(`/api/practice/sessions/${session.id}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ questionId: currentQuestion.id, transcript: combined, materialContent }),
+        body: JSON.stringify({ questionId: currentQuestion.id, transcript: combined, materialContent, skippedProbe }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Could not score this answer.");
@@ -1281,8 +1289,9 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
 function MicroFeedbackCard({ feedback }: { feedback: CurrentFeedback }) {
   const { microFeedback, voxScoreProfile } = feedback;
   const dims = voxScoreProfile?.dimensions || [];
-  const strongest = [...dims].sort((a, b) => b.band - a.band)[0];
-  const weakest = [...dims].sort((a, b) => a.band - b.band)[0];
+  const scoredDims = dims.filter((d) => typeof d.band === "number" && typeof d.weightedScore === "number");
+  const strongest = [...scoredDims].sort((a, b) => b.band - a.band)[0];
+  const weakest = [...scoredDims].sort((a, b) => a.band - b.band)[0];
   const missingConcept = dims.flatMap((d) => d.conceptsMissing || [])[0];
   const total = Math.round(voxScoreProfile?.totalScore ?? 0);
   const lowScore = total < 50;
