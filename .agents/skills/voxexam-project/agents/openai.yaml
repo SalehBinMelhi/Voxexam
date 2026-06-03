@@ -1,0 +1,7 @@
+interface:
+  display_name: "VoxExam Project"
+  short_description: "Project-specific Codex workflow and safety rules for VoxExam — UAE university oral examination platform."
+  default_prompt: "Use the VoxExam Project skill to plan and implement this change safely."
+
+policy:
+  allow_implicit_invocation: true
