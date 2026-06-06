@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: voxexam
+    env: node
+    branch: main
+    autoDeploy: true
+    buildCommand: npm run build
+    startCommand: npm run start
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: AZURE_STORAGE_ACCOUNT
+        sync: false
+      - key: AZURE_STORAGE_CONTAINER_RECORDINGS
+        sync: false
+      - key: AZURE_STORAGE_SAS_CONFIG
+        sync: false
+      - key: NODE_ENV
+        value: production
