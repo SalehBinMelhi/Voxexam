@@ -621,9 +621,10 @@ export function SimpleExamTab() {
                 const feedback = sub.feedback as { strengths: string; weakPoints: string; recommendations: string } | null;
                 const proctoringFlags = (sub.proctoringFlags as ProctoringFlag[] | null) || [];
                 const hasProctoringIssues = proctoringFlags.length > 0;
+                const recordingUploadFailed = sub.proctoringUploadStatus === "upload_failed";
 
                 return (
-                  <Card key={sub.id} data-testid={`submission-card-${sub.id}`} className={hasProctoringIssues ? "border-amber-400 dark:border-amber-600" : ""}>
+                  <Card key={sub.id} data-testid={`submission-card-${sub.id}`} className={recordingUploadFailed ? "border-red-500 dark:border-red-600" : hasProctoringIssues ? "border-amber-400 dark:border-amber-600" : ""}>
                     <CardContent className="p-0">
                       <button
                         className="w-full p-4 flex items-center justify-between gap-2 hover:bg-muted/50 transition-colors rounded-t-lg"
@@ -641,6 +642,12 @@ export function SimpleExamTab() {
                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 text-[10px] font-medium" data-testid={`badge-proctoring-${sub.id}`}>
                                   <AlertTriangle className="h-3 w-3" />
                                   {proctoringFlags.length} flag{proctoringFlags.length !== 1 ? "s" : ""}
+                                </span>
+                              )}
+                              {recordingUploadFailed && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400 text-[10px] font-medium" data-testid={`badge-recording-upload-failed-${sub.id}`}>
+                                  <AlertTriangle className="h-3 w-3" />
+                                  Recording upload failed / فشل رفع التسجيل
                                 </span>
                               )}
                             </div>

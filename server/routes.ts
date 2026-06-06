@@ -1530,6 +1530,8 @@ export async function registerRoutes(
       }
 
       if (Object.keys(updates).length > 0) {
+        updates.proctoringUploadStatus = "upload_saved";
+        updates.proctoringUploadError = null;
         await db.update(submissionsTable).set(updates).where(drizzleOrm.eq(submissionsTable.id, submissionId));
       }
 
@@ -1537,6 +1539,47 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Failed to upload recordings:", error);
       res.status(500).json({ error: "Failed to upload recordings" });
+    }
+  });
+
+  app.post("/api/submissions/:id/proctoring-status", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user!.claims.sub;
+      const submissionId = p(req.params.id);
+      const submission = await storage.getSubmission(submissionId);
+      if (!submission) {
+        return res.status(404).json({ error: "Submission not found" });
+      }
+
+      if (submission.studentId !== userId) {
+        const exam = await storage.getExam(submission.examId);
+        if (!exam || exam.professorId !== userId) {
+          return res.status(403).json({ error: "Not authorized to update proctoring status" });
+        }
+      }
+
+      const statusSchema = z.object({
+        status: z.enum(["upload_failed", "upload_saved"]),
+        error: z.string().max(1000).optional(),
+      });
+      const statusResult = statusSchema.safeParse(req.body);
+      if (!statusResult.success) {
+        return res.status(400).json({ error: "Invalid proctoring upload status" });
+      }
+
+      const { submissions: submissionsTable } = await import("@shared/schema");
+      const drizzleOrm = await import("drizzle-orm");
+      const { db } = await import("./db");
+
+      await db.update(submissionsTable).set({
+        proctoringUploadStatus: statusResult.data.status,
+        proctoringUploadError: statusResult.data.status === "upload_failed" ? statusResult.data.error || "Recording upload failed" : null,
+      }).where(drizzleOrm.eq(submissionsTable.id, submissionId));
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Failed to update proctoring upload status:", error);
+      res.status(500).json({ error: "Failed to update proctoring upload status" });
     }
   });
 
