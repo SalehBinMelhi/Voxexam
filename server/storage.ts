@@ -58,6 +58,7 @@ import {
   ensureCompatibleFormat,
   speechToText,
   type SpeechToTextLogprob,
+  type SpeechToTextQuality,
 } from "./replit_integrations/audio/client";
 
 const openai = new OpenAI({
@@ -69,6 +70,14 @@ export interface AudioTranscriptionResult {
   text: string;
   logprobs?: SpeechToTextLogprob[];
 }
+
+interface AudioTranscriptionOptions {
+  includeLogprobs?: boolean;
+  quality?: SpeechToTextQuality;
+}
+
+const OFFICIAL_EXAM_TRANSCRIPTION_PROMPT =
+  "Transcribe exactly what the student says. The answer may contain both Arabic and English academic terminology. Preserve the original language. Do not translate. Do not add words that are not spoken.";
 
 const TRANSCRIPTION_LOGPROB_CACHE_TTL_MS = 5 * 60 * 1000;
 const recentTranscriptionLogprobs = new Map<string, { logprobs: SpeechToTextLogprob[]; createdAt: number }>();
@@ -114,16 +123,20 @@ function recentLogprobsForTranscript(transcript: string): SpeechToTextLogprob[] 
   return undefined;
 }
 
-export async function transcribeAudio(audioDataUrl: string, questionContext?: string): Promise<string>;
+export async function transcribeAudio(
+  audioDataUrl: string,
+  questionContext?: string,
+  options?: AudioTranscriptionOptions & { includeLogprobs?: false }
+): Promise<string>;
 export async function transcribeAudio(
   audioDataUrl: string,
   questionContext: string | undefined,
-  options: { includeLogprobs: true }
+  options: AudioTranscriptionOptions & { includeLogprobs: true }
 ): Promise<AudioTranscriptionResult>;
 export async function transcribeAudio(
   audioDataUrl: string,
   questionContext?: string,
-  options?: { includeLogprobs?: boolean }
+  options?: AudioTranscriptionOptions
 ): Promise<string | AudioTranscriptionResult> {
   try {
     console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
@@ -152,8 +165,15 @@ export async function transcribeAudio(
     const { buffer: compatibleBuffer, format: compatibleFormat } = await ensureCompatibleFormat(audioBuffer);
     console.log("[AUDIO] Converted to compatible format:", compatibleFormat);
 
-    const prompt = questionContext ? `The student is answering: "${questionContext}". Transcribe their spoken response accurately, using numbers and symbols where appropriate.` : undefined;
-    const transcription = await speechToText(compatibleBuffer, compatibleFormat, prompt, { includeLogprobs: true });
+    const prompt = options?.quality === "high"
+      ? OFFICIAL_EXAM_TRANSCRIPTION_PROMPT
+      : questionContext
+        ? `The student is answering: "${questionContext}". Transcribe their spoken response accurately, using numbers and symbols where appropriate.`
+        : undefined;
+    const transcription = await speechToText(compatibleBuffer, compatibleFormat, prompt, {
+      includeLogprobs: true,
+      quality: options?.quality ?? "standard",
+    });
 
     rememberTranscriptionLogprobs(transcription.text, transcription.logprobs);
     console.log("[AUDIO] Transcription result length:", transcription.text.length);
@@ -930,7 +950,7 @@ async function evaluateResponse(
   }
 
   if (question.type === "audio" && audioData && audioData.length > 0) {
-    const transcription = await transcribeAudio(audioData, question.text);
+    const transcription = await transcribeAudio(audioData, question.text, { quality: "high" });
     if (transcription) {
       const result = await evaluateWithAI(question, transcription, materialContext, customApiKey);
       return { ...result, transcript: transcription };
@@ -1346,7 +1366,13 @@ export interface IStorage {
   getSubmissionsByExam(examId: string): Promise<ExamSubmission[]>;
   getSubmissionsByStudent(studentId: string): Promise<ExamSubmission[]>;
   getAllSubmissions(): Promise<ExamSubmission[]>;
-  createSubmission(studentId: string, examId: string, responses: ExamResponse[], isPreview?: boolean): Promise<ExamSubmission>;
+  createSubmission(
+    studentId: string,
+    examId: string,
+    responses: ExamResponse[],
+    isPreview?: boolean,
+    consent?: { consentGiven: boolean; consentTimestamp: Date },
+  ): Promise<ExamSubmission>;
   updateSubmissionScore(submissionId: string, questionId: string, newScore: number): Promise<ExamSubmission | undefined>;
   updateSubmissionDecision(submissionId: string, data: {
     professorDecision: string;
@@ -1597,7 +1623,8 @@ export class DatabaseStorage implements IStorage {
     studentId: string,
     examId: string,
     responses: ExamResponse[],
-    isPreview: boolean = false
+    isPreview: boolean = false,
+    consent?: { consentGiven: boolean; consentTimestamp: Date }
   ): Promise<ExamSubmission> {
     const exam = await this.getExam(examId);
     if (!exam) throw new Error("Exam not found");
@@ -1654,6 +1681,8 @@ export class DatabaseStorage implements IStorage {
         quickvoxInsight,
         quickvoxFollowUp,
         isPreview: isPreview ? "true" : "false",
+        consentGiven: consent?.consentGiven ?? false,
+        consentTimestamp: consent?.consentTimestamp ?? null,
         submittedAt: new Date().toISOString(),
       }).returning();
 
@@ -1716,6 +1745,8 @@ export class DatabaseStorage implements IStorage {
       feedback,
       voxScoreProfile,
       isPreview: isPreview ? "true" : "false",
+      consentGiven: consent?.consentGiven ?? false,
+      consentTimestamp: consent?.consentTimestamp ?? null,
       submittedAt: new Date().toISOString(),
     }).returning();
 
@@ -1814,6 +1845,8 @@ export class DatabaseStorage implements IStorage {
     if (updates.conceptCoverageMap !== undefined) updateData.conceptCoverageMap = updates.conceptCoverageMap;
     if (updates.languageUsed !== undefined) updateData.languageUsed = updates.languageUsed;
     if (updates.completedQuestionCount !== undefined) updateData.completedQuestionCount = updates.completedQuestionCount;
+    if (updates.consentGiven !== undefined) updateData.consentGiven = updates.consentGiven;
+    if (updates.consentTimestamp !== undefined) updateData.consentTimestamp = updates.consentTimestamp;
     if (updates.completedAt !== undefined) updateData.completedAt = updates.completedAt;
     if (Object.keys(updateData).length === 0) return this.getPracticeSession(id);
     const [session] = await db.update(practiceSessions).set(updateData).where(eq(practiceSessions.id, id)).returning();

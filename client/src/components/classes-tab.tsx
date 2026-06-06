@@ -442,7 +442,7 @@ export function ClassesTab() {
             </div>
           )}
           {(!selectedClass.roster || selectedClass.roster.length === 0) && classEnrollments.length === 0 && (
-            <p className="text-sm text-muted-foreground">No students added yet. Type a name above to add students to this class.</p>
+            <p className="text-sm text-muted-foreground">No students have joined yet.</p>
           )}
         </div>
 
@@ -491,7 +491,7 @@ export function ClassesTab() {
           {classExams.length === 0 ? (
             <Card>
               <CardContent className="py-6 text-center">
-                <p className="text-sm text-muted-foreground mb-3">No exams created for this class yet</p>
+                <p className="text-sm text-muted-foreground mb-3">No exams yet. Create your first exam above.</p>
                 <Button onClick={() => setCreateExamOpen(true)} data-testid="button-create-first-class-exam">
                   <Plus className="h-4 w-4 mr-2" /> Create Exam
                 </Button>
@@ -642,7 +642,7 @@ export function ClassesTab() {
               <Layers className="h-8 w-8 text-muted-foreground" />
             </div>
             <h3 className="font-semibold mb-1">No classes yet</h3>
-            <p className="text-muted-foreground text-sm mb-4">Create a class to organize students, materials, and exams</p>
+            <p className="text-muted-foreground text-sm mb-4">No classes yet. Create your first class.</p>
             <Button onClick={() => setCreateClassOpen(true)} data-testid="button-create-first-class">
               <Plus className="h-4 w-4 mr-2" /> Create Your First Class
             </Button>

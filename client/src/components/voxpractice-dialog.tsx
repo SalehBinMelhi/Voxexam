@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { StudentVoxScore } from "@/components/voxscore-breakdown";
+import { VoiceConsentDialog } from "@/components/voice-consent-dialog";
 import { voxWeakest, voxFriendlyName } from "@/lib/voxscore";
 import { useToast } from "@/hooks/use-toast";
 import type {
@@ -30,7 +31,6 @@ import {
   Mic,
   Square,
   Clock,
-  ShieldCheck,
   Lock,
   ChevronRight,
   ChevronLeft,
@@ -46,7 +46,6 @@ import {
   ThumbsUp,
 } from "lucide-react";
 
-const CONSENT_KEY = "voxpractice_consent_v1";
 const PREP_SECONDS = 15;
 const MIN_CLEAR_ANSWER_CHARS = 15;
 const MIN_RECORDING_DURATION_MS = 1500;
@@ -146,6 +145,44 @@ function PrivacyBanner() {
       <Lock className="h-3.5 w-3.5 text-primary flex-shrink-0" />
       <span className="text-primary font-medium">Private practice — not sent to your professor</span>
       <span className="text-muted-foreground" dir="rtl">تدريب خاص — لا يُرسل إلى أستاذك</span>
+    </div>
+  );
+}
+
+function HeardTranscriptCard({
+  transcript,
+  isOpen,
+  onToggle,
+}: {
+  transcript: string;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const heard = transcript.trim();
+  if (!heard) return null;
+
+  return (
+    <div
+      className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+      data-testid="card-main-transcript"
+    >
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-2 text-left"
+        aria-expanded={isOpen}
+        onClick={onToggle}
+        data-testid="button-toggle-main-transcript"
+      >
+        <FileText className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
+        <span className="flex-shrink-0 font-medium text-foreground/80">What we heard:</span>
+        {!isOpen && <span className="min-w-0 flex-1 truncate">{heard}</span>}
+        <ChevronRight className={`ml-auto h-4 w-4 flex-shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+      </button>
+      {isOpen && (
+        <p className="mt-2 pl-6 leading-relaxed" data-testid="text-main-transcript">
+          {heard}
+        </p>
+      )}
     </div>
   );
 }
@@ -359,6 +396,7 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
   const [typedAnswer, setTypedAnswer] = useState("");
   const [processingLabel, setProcessingLabel] = useState("");
   const [mainTranscript, setMainTranscript] = useState("");
+  const [isTranscriptOpen, setIsTranscriptOpen] = useState(true);
   const [probe, setProbe] = useState("");
   const [probeTyped, setProbeTyped] = useState("");
   const [feedback, setFeedback] = useState<CurrentFeedback | null>(null);
@@ -391,6 +429,7 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
     setShowRecorder(false);
     setTypedAnswer("");
     setMainTranscript("");
+    setIsTranscriptOpen(true);
     setProbe("");
     setProbeTyped("");
     setFeedback(null);
@@ -563,14 +602,7 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
       setQIndex(0);
       resetQuestionState();
 
-      const consented = (() => {
-        try {
-          return localStorage.getItem(CONSENT_KEY) === "1";
-        } catch {
-          return false;
-        }
-      })();
-      setPhase(consented ? "loop" : "consent");
+      setPhase("consent");
       setLoopStep("prep");
     } catch (e: any) {
       toast({ title: "Could not start", description: e.message || "Please try again.", variant: "destructive" });
@@ -579,12 +611,26 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
     }
   };
 
-  const acceptConsent = () => {
+  const acceptConsent = async () => {
+    if (!session) {
+      setPhase("session");
+      return;
+    }
     try {
-      localStorage.setItem(CONSENT_KEY, "1");
-    } catch {}
-    setPhase("loop");
-    setLoopStep("prep");
+      const res = await fetch(`/api/practice/sessions/${session.id}/consent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ consentGiven: true, consentTimestamp: new Date().toISOString() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Could not record consent.");
+      setSession(data.session || data);
+      setPhase("loop");
+      setLoopStep("prep");
+    } catch (e: any) {
+      toast({ title: "Consent not recorded", description: e.message || "Please try again.", variant: "destructive" });
+    }
   };
 
   // ---- Loop helpers ----
@@ -629,6 +675,7 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
   const submitMainAnswer = async (transcript: string) => {
     if (!session || !currentQuestion) return;
     setMainTranscript(transcript);
+    setIsTranscriptOpen(true);
     setLoopStep("processing");
     setProcessingLabel("Thinking of a follow-up…");
     try {
@@ -975,36 +1022,6 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
     </div>
   );
 
-  const renderConsent = () => (
-    <div className="space-y-4" data-testid="phase-consent">
-      <div className="flex items-center gap-2">
-        <ShieldCheck className="h-6 w-6 text-primary" />
-        <h3 className="font-semibold text-lg">Before you start</h3>
-      </div>
-      <Card>
-        <CardContent className="p-4 space-y-3 text-sm">
-          <p>VoxPractice records your voice so the AI can transcribe and coach your answers.</p>
-          <ul className="list-disc pl-5 space-y-1 text-muted-foreground">
-            <li>This practice is <strong className="text-foreground">completely private</strong> — your professor never sees it.</li>
-            <li>Any score you receive is a <strong className="text-foreground">practice estimate only</strong>, not an official grade.</li>
-            <li>There is <strong className="text-foreground">no proctoring</strong> — no camera, no screen recording.</li>
-          </ul>
-          <p className="text-muted-foreground" dir="rtl">
-            هذا التدريب خاص تمامًا — لن يراه أستاذك. أي درجة هي تقدير تدريبي فقط وليست درجة رسمية. لا توجد مراقبة.
-          </p>
-        </CardContent>
-      </Card>
-      <div className="flex items-center justify-end gap-2">
-        <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-consent-cancel">
-          Cancel
-        </Button>
-        <Button onClick={acceptConsent} data-testid="button-consent-accept">
-          I understand — start
-        </Button>
-      </div>
-    </div>
-  );
-
   const renderLoop = () => {
     const total = questions.length;
     const q = currentQuestion;
@@ -1026,6 +1043,14 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
             <p className="font-medium" data-testid="text-current-question">{q.text}</p>
           </CardContent>
         </Card>
+
+        {mainTranscript.trim() && (loopStep === "processing" || loopStep === "probe") && (
+          <HeardTranscriptCard
+            transcript={mainTranscript}
+            isOpen={isTranscriptOpen}
+            onToggle={() => setIsTranscriptOpen((open) => !open)}
+          />
+        )}
 
         {loopStep === "prep" && (
           <div className="rounded-md border p-6 text-center space-y-3" data-testid="step-prep">
@@ -1320,6 +1345,16 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
     );
   };
 
+  if (phase === "consent") {
+    return (
+      <VoiceConsentDialog
+        open={open}
+        onConsent={acceptConsent}
+        onDecline={() => onOpenChange(false)}
+      />
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="dialog-voxpractice">
@@ -1336,7 +1371,6 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
 
         {phase === "material" && renderMaterial()}
         {phase === "session" && renderSession()}
-        {phase === "consent" && renderConsent()}
         {phase === "loop" && renderLoop()}
         {phase === "report" && renderReport()}
       </DialogContent>

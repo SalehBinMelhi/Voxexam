@@ -279,7 +279,7 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
         {studentSubs.length === 0 ? (
           <Card>
             <CardContent className="py-6 text-center">
-              <p className="text-sm text-muted-foreground">No submissions yet</p>
+              <p className="text-sm text-muted-foreground">No submissions yet.</p>
             </CardContent>
           </Card>
         ) : (
