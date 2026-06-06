@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { VoxScoreRadarChart, type VoxScoreRadarPoint } from "@/components/voxscore-radar-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -38,6 +39,12 @@ import { TAB_SWITCH_SUSPICIOUS_THRESHOLD } from "@shared/schema";
 import { format, parseISO } from "date-fns";
 
 type GraphMode = "both" | "correctness" | "understanding";
+
+interface StudentPerformanceRadarResponse {
+  studentId: string;
+  totalSubmissions: number;
+  voxScoreDimensions: VoxScoreRadarPoint[];
+}
 
 interface StudentDetailPanelProps {
   studentId: string;
@@ -83,6 +90,10 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
   const [graphMode, setGraphMode] = useState<GraphMode>("both");
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
   const [proctoringAnalysis, setProctoringAnalysis] = useState<Record<string, string>>({});
+  const { data: performanceRadar, isLoading: isRadarLoading } = useQuery<StudentPerformanceRadarResponse>({
+    queryKey: ["/api/students", studentId, "performance-radar"],
+    retry: false,
+  });
 
   const analyzeProctoring = useMutation({
     mutationFn: async (submissionId: string) => {
@@ -267,6 +278,14 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
           </CardContent>
         </Card>
       )}
+
+      <VoxScoreRadarChart
+        title="VoxScore Dimension Balance"
+        description="Knowledge / المعرفة · Reasoning / التفكير · Evidence / الأدلة"
+        data={performanceRadar?.voxScoreDimensions ?? []}
+        isLoading={isRadarLoading}
+        testId="card-student-voxscore-radar"
+      />
 
       <Separator />
 

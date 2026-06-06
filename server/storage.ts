@@ -192,6 +192,38 @@ interface EvalResult {
   voxScoreProfile?: VoxScoreProfile;
 }
 
+interface RadarDimensionPoint {
+  dimension: VoxDimension;
+  label: string;
+  score: number;
+}
+
+export interface StudentPerformanceRadarResponse extends StudentPerformanceRadar {
+  voxScoreDimensions: RadarDimensionPoint[];
+}
+
+const VOX_RADAR_LABELS: Record<VoxDimension, string> = {
+  D1: "Knowledge / المعرفة",
+  D2: "Reasoning / التفكير",
+  D3: "Evidence / الأدلة",
+  D4: "Responsiveness / الاستجابة",
+  D5: "Organization / التنظيم",
+  D6: "Communication / الوضوح",
+  D7: "Professionalism / الاحترافية",
+};
+
+function profileToRadarDimensions(profile?: VoxScoreProfile | null): RadarDimensionPoint[] {
+  if (!profile) return [];
+  return voxDimensions.map((dimension) => {
+    const dimensionScore = profile.dimensions.find((item) => item.dimension === dimension);
+    return {
+      dimension,
+      label: VOX_RADAR_LABELS[dimension],
+      score: dimensionScore ? (dimensionScore.band / 5) * 100 : 0,
+    };
+  });
+}
+
 // Clamp a number into the 1–5 band range as an integer.
 function clampBand(n: number): VoxBand {
   const r = Math.round(n);
@@ -1549,7 +1581,7 @@ export async function logUserEvent(userId: string, eventType: string, metadata?:
   }
 }
 
-export async function computeStudentRadar(studentId: string, filterExamIds?: string[]): Promise<StudentPerformanceRadar> {
+export async function computeStudentRadar(studentId: string, filterExamIds?: string[]): Promise<StudentPerformanceRadarResponse> {
   const examFilter = filterExamIds && filterExamIds.length > 0
     ? `AND s.exam_id = ANY($2)`
     : "";
@@ -1582,6 +1614,8 @@ export async function computeStudentRadar(studentId: string, filterExamIds?: str
       s.scores,
       s.understanding_scores,
       s.grading_methods,
+      s.vox_score_profile,
+      s.professor_vox_score_profile,
       e.questions
     FROM submissions s
     JOIN exams e ON e.id = s.exam_id
@@ -1621,6 +1655,7 @@ export async function computeStudentRadar(studentId: string, filterExamIds?: str
       suspiciousSubmissionCount: 0,
       avgTabSwitchCount: 0,
       submissionTimeline: [],
+      voxScoreDimensions: [],
     };
   }
 
@@ -1636,12 +1671,17 @@ export async function computeStudentRadar(studentId: string, filterExamIds?: str
   const typeAccum: Record<string, { totalC: number; totalU: number; count: number }> = {};
   const methodAccum: Record<string, number> = { ai: 0, exact: 0, fallback: 0, manual: 0 };
   let totalGradedQuestions = 0;
+  const aggregatedProfiles: VoxScoreProfile[] = [];
 
   for (const row of timelineResult.rows) {
     const questions: any[] = row.questions || [];
     const scores: Record<string, number> = row.scores || {};
     const uScores: Record<string, number> = row.understanding_scores || {};
     const methods: Record<string, string> = row.grading_methods || {};
+    const profile = row.professor_vox_score_profile || row.vox_score_profile;
+    if (profile) {
+      aggregatedProfiles.push(profile);
+    }
 
     for (const q of questions) {
       const qId = q.id;
@@ -1726,6 +1766,7 @@ export async function computeStudentRadar(studentId: string, filterExamIds?: str
   const suspiciousRatio = totalSubmissions > 0 ? suspiciousCount / totalSubmissions : 0;
   const integrityRiskLevel: StudentPerformanceRadar["integrityRiskLevel"] =
     suspiciousRatio >= 0.5 ? "high" : suspiciousRatio >= 0.2 ? "moderate" : "low";
+  const aggregateProfile = aggregateProfiles(aggregatedProfiles);
 
   return {
     studentId,
@@ -1741,6 +1782,7 @@ export async function computeStudentRadar(studentId: string, filterExamIds?: str
     suspiciousSubmissionCount: suspiciousCount,
     avgTabSwitchCount: parseFloat(summary.avg_tab_switches) || 0,
     submissionTimeline: timeline,
+    voxScoreDimensions: profileToRadarDimensions(aggregateProfile),
   };
 }
 
