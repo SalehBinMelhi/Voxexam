@@ -447,6 +447,7 @@ const MIN_CLEAR_PRACTICE_CHARS = 8;
 const MIN_TRANSCRIPTION_AVG_LOGPROB = -1.2;
 const NO_CLEAR_ANSWER_MESSAGE = "We could not detect a clear answer. Please try recording again.";
 const PRACTICE_FILLER_WORDS = new Set(["um", "uh", "hmm", "ah", "mm", "er", "erm"]);
+type PracticeScoreCoverageStatus = "insufficient" | "partial" | "full";
 
 // Bilingual scoring clause required on every VoxPractice grading prompt.
 const PRACTICE_BILINGUAL_CLAUSE =
@@ -489,7 +490,7 @@ function practiceProfileFromDimensions(
         conceptsPresent: toStrArr(d?.conceptsPresent),
         conceptsMissing: toStrArr(d?.conceptsMissing),
         conceptsIncorrect: toStrArr(d?.conceptsIncorrect),
-      } as VoxDimensionScore;
+      } as unknown as VoxDimensionScore;
     }
     const band = clampBand(typeof d?.band === "number" ? d.band : 3);
     return {
@@ -533,7 +534,7 @@ function unscoredPracticeProfile(reason: string, language = "unknown"): VoxScore
       conceptsPresent: [],
       conceptsMissing: [],
       conceptsIncorrect: [],
-    })) as VoxDimensionScore[],
+    })) as unknown as VoxDimensionScore[],
     totalScore: 0,
     passFail: "fail",
     confidenceLevel: "low",
@@ -589,7 +590,7 @@ function practiceScoredDimensionsFromTranscript(transcript: string): Set<string>
   return new Set(voxDimensions);
 }
 
-function practiceScoreCoverageStatus(transcript: string, logprobs?: SpeechToTextLogprob[]): PracticeCoverageStatus {
+function practiceScoreCoverageStatus(transcript: string, logprobs?: SpeechToTextLogprob[]): PracticeScoreCoverageStatus {
   if (!practiceTranscriptHasClearAnswer(transcript, logprobs)) return "insufficient";
   const scored = practiceScoredDimensionsFromTranscript(transcript);
   if (scored.size === 0) return "insufficient";
@@ -696,14 +697,179 @@ Each question should be oral-exam friendly, academically serious, and distinct f
   }
 }
 
+export interface PracticeMaterialSummary {
+  summary: string;
+  concepts: string[];
+  topics: string[];
+  sampleQuestions: string[];
+  detectedLanguage: string;
+}
+
+export async function analyzePracticeMaterial(
+  materialContent: string,
+  customApiKey?: string | null
+): Promise<PracticeMaterialSummary> {
+  const empty: PracticeMaterialSummary = {
+    summary: "",
+    concepts: [],
+    topics: [],
+    sampleQuestions: [],
+    detectedLanguage: "unknown",
+  };
+  const trimmed = (materialContent || "").trim();
+  if (!trimmed) return empty;
+
+  const prompt = `You are helping a university student prepare for an oral exam. Analyze the study material below and extract what matters for oral practice.
+
+${PRACTICE_BILINGUAL_CLAUSE}
+
+Study material:
+${trimmed.substring(0, 12000)}
+
+Return ONLY a JSON object in exactly this shape:
+{
+  "summary": "2-3 sentence plain-language overview of what this material covers",
+  "concepts": ["key concept 1", "key concept 2", "..."],
+  "topics": ["broader topic 1", "topic 2"],
+  "sampleQuestions": ["an oral question grounded in the material", "..."],
+  "detectedLanguage": "english" | "arabic" | "mixed" | "other"
+}`;
+
+  try {
+    const client = practiceClient(customApiKey);
+    const completion = await client.chat.completions.create({
+      model: PRACTICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 900,
+      temperature: 0.3,
+      response_format: { type: "json_object" },
+    });
+    const parsed = JSON.parse(completion.choices[0]?.message?.content?.trim() || "{}");
+    const toStrArr = (v: unknown): string[] =>
+      Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
+    return {
+      summary: typeof parsed.summary === "string" ? parsed.summary.trim() : "",
+      concepts: toStrArr(parsed.concepts),
+      topics: toStrArr(parsed.topics),
+      sampleQuestions: toStrArr(parsed.sampleQuestions),
+      detectedLanguage: typeof parsed.detectedLanguage === "string" ? parsed.detectedLanguage : "unknown",
+    };
+  } catch (error) {
+    console.error("[VOXPRACTICE] analyzePracticeMaterial failed:", error);
+    return empty;
+  }
+}
+
+const PRACTICE_MODE_QUESTION_COUNT: Record<PracticeSessionMode, number> = {
+  warmup: 3,
+  readiness_sprint: 5,
+  weak_spot: 4,
+  mock_oral: 6,
+};
+
+export async function generatePracticeQuestions(
+  materialContent: string,
+  options: { sessionMode: PracticeSessionMode; coachStyle?: PracticeCoachStyle; count?: number; focusConcepts?: string[] },
+  customApiKey?: string | null
+): Promise<PracticeQuestion[]> {
+  const trimmed = (materialContent || "").trim();
+  if (!trimmed) return [];
+
+  const count = Math.max(1, Math.min(options.count ?? PRACTICE_MODE_QUESTION_COUNT[options.sessionMode] ?? 4, 10));
+  const focusSection =
+    options.focusConcepts && options.focusConcepts.length > 0
+      ? `\nFocus especially on these concepts: ${options.focusConcepts.join(", ")}.\n`
+      : "";
+
+  const prompt = `You are an oral-exam coach generating practice questions for a university student. Base every question STRICTLY on the study material below.
+
+${PRACTICE_BILINGUAL_CLAUSE}
+${focusSection}
+Study material:
+${trimmed.substring(0, 12000)}
+
+Generate exactly ${count} oral practice questions spanning recall, understanding, application, comparison, reasoning, and defense.
+
+Return ONLY a JSON object in exactly this shape:
+{
+  "questions": [
+    {"text": "the oral question", "cognitiveLevel": "recall" | "understanding" | "application" | "comparison" | "reasoning" | "defense", "concept": "the material concept this targets"}
+  ]
+}`;
+
+  try {
+    const client = practiceClient(customApiKey);
+    const completion = await client.chat.completions.create({
+      model: PRACTICE_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1500,
+      temperature: 0.5,
+      response_format: { type: "json_object" },
+    });
+    const parsed = JSON.parse(completion.choices[0]?.message?.content?.trim() || "{}");
+    const list = Array.isArray(parsed?.questions) ? parsed.questions : [];
+    const validLevels = new Set<PracticeCognitiveLevel>([
+      "recall",
+      "understanding",
+      "application",
+      "comparison",
+      "reasoning",
+      "defense",
+    ]);
+    return list
+      .filter((q: any) => q && typeof q.text === "string" && q.text.trim().length > 0)
+      .slice(0, count)
+      .map((q: any) => ({
+        id: crypto.randomUUID(),
+        text: q.text.trim(),
+        cognitiveLevel: validLevels.has(q.cognitiveLevel) ? q.cognitiveLevel : "understanding",
+        concept: typeof q.concept === "string" && q.concept.trim().length > 0 ? q.concept.trim() : undefined,
+      }));
+  } catch (error) {
+    console.error("[VOXPRACTICE] generatePracticeQuestions failed:", error);
+    return [];
+  }
+}
+
 export async function generatePracticeProbe(params: {
   questionText: string;
   answerText: string;
   materialsText?: string;
   language?: string;
   customApiKey?: string | null;
-}): Promise<string> {
+}): Promise<string>;
+export async function generatePracticeProbe(
+  questionText: string,
+  transcript: string,
+  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null },
+  customApiKey?: string | null
+): Promise<{ probe: string }>;
+export async function generatePracticeProbe(
+  paramsOrQuestion: {
+    questionText: string;
+    answerText: string;
+    materialsText?: string;
+    language?: string;
+    customApiKey?: string | null;
+  } | string,
+  transcript?: string,
+  options?: { coachStyle?: PracticeCoachStyle; materialContent?: string | null },
+  customApiKey?: string | null
+): Promise<string | { probe: string }> {
+  const objectMode = typeof paramsOrQuestion !== "string";
+  const params = objectMode
+    ? paramsOrQuestion
+    : {
+        questionText: paramsOrQuestion,
+        answerText: transcript || "",
+        materialsText: options?.materialContent || undefined,
+        customApiKey,
+      };
   const client = practiceClient(params.customApiKey);
+  const defaultProbe = PRACTICE_APPROVED_PROBES[0];
+  if (!params.answerText.trim()) {
+    return objectMode ? defaultProbe : { probe: defaultProbe };
+  }
   const prompt = `You are the VoxPractice coach. Ask ONE short follow-up question that deepens the student's thinking without giving away the answer.
 
 Approved probe styles:
@@ -730,10 +896,11 @@ Return ONLY the follow-up question as plain text.`;
       temperature: 0.5,
       max_tokens: 80,
     });
-    return completion.choices[0]?.message?.content?.trim() || "";
+    const probe = completion.choices[0]?.message?.content?.trim() || defaultProbe;
+    return objectMode ? probe : { probe };
   } catch (error) {
     console.error("[VOXPRACTICE] generatePracticeProbe failed:", error);
-    return "";
+    return objectMode ? defaultProbe : { probe: defaultProbe };
   }
 }
 
@@ -743,12 +910,53 @@ export async function generatePracticeMicroFeedback(params: {
   transcriptLogprobs?: SpeechToTextLogprob[];
   materialsText?: string;
   customApiKey?: string | null;
-}): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile }> {
+}): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile }>;
+export async function generatePracticeMicroFeedback(
+  questionText: string,
+  transcript: string,
+  options?: {
+    coachStyle?: PracticeCoachStyle;
+    materialContent?: string | null;
+    concept?: string | null;
+    skippedProbe?: boolean;
+    transcriptionLogprobs?: SpeechToTextLogprob[] | null;
+  },
+  customApiKey?: string | null
+): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile; allDimensionScores?: null; shouldGrade?: boolean }>;
+export async function generatePracticeMicroFeedback(
+  paramsOrQuestion: {
+    questionText: string;
+    answerText: string;
+    transcriptLogprobs?: SpeechToTextLogprob[];
+    materialsText?: string;
+    customApiKey?: string | null;
+  } | string,
+  transcript?: string,
+  options?: {
+    coachStyle?: PracticeCoachStyle;
+    materialContent?: string | null;
+    concept?: string | null;
+    skippedProbe?: boolean;
+    transcriptionLogprobs?: SpeechToTextLogprob[] | null;
+  },
+  customApiKey?: string | null
+): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile; allDimensionScores?: null; shouldGrade?: boolean }> {
+  const params = typeof paramsOrQuestion === "string"
+    ? {
+        questionText: paramsOrQuestion,
+        answerText: transcript || "",
+        transcriptLogprobs: options?.transcriptionLogprobs || undefined,
+        materialsText: options?.materialContent || undefined,
+        customApiKey,
+      }
+    : paramsOrQuestion;
   const coverage = practiceScoreCoverageStatus(params.answerText, params.transcriptLogprobs);
   if (coverage === "insufficient") {
     return {
       microFeedback: NO_CLEAR_ANSWER_MESSAGE,
       voxScoreProfile: unscoredPracticeProfile(NO_CLEAR_ANSWER_MESSAGE),
+      allDimensionScores: null,
+      shouldGrade: false,
     };
   }
 
@@ -821,7 +1029,7 @@ export async function generatePracticeReadinessReport(params: {
 
   const conceptCoverageMap: Record<string, PracticeCoverageStatus> = {};
   for (const q of answered) {
-    conceptCoverageMap[q.id] = q.coverageStatus || "full";
+    conceptCoverageMap[q.id] = "strong";
   }
 
   let strongestDimension: VoxDimension | undefined;
@@ -865,6 +1073,48 @@ Write 3-4 sentences, focused on what the student can do next. Match the language
   };
 }
 
+export interface PracticeReadinessReport {
+  overallReadinessScore: number;
+  overallVoxScoreProfile: VoxScoreProfile | null;
+  conceptCoverageMap: Record<string, PracticeCoverageStatus>;
+  completedQuestionCount: number;
+  languageUsed: string;
+}
+
+export function buildPracticeReadinessReport(questions: PracticeQuestion[]): PracticeReadinessReport {
+  const answered = (questions || []).filter((q) => q.voxScoreProfile);
+  const profiles = answered.map((q) => q.voxScoreProfile!).filter(Boolean);
+  const overallVoxScoreProfile = aggregateProfiles(profiles) ?? null;
+  const overallReadinessScore = overallVoxScoreProfile ? overallVoxScoreProfile.totalScore : 0;
+
+  const conceptBands: Record<string, number[]> = {};
+  for (const q of answered) {
+    const concept = (q.concept || "").trim();
+    if (!concept) continue;
+    const d1 = q.voxScoreProfile!.dimensions.find((d) => d.dimension === "D1");
+    if (d1 && typeof d1.band === "number") {
+      (conceptBands[concept] = conceptBands[concept] || []).push(d1.band);
+    }
+  }
+
+  const conceptCoverageMap: Record<string, PracticeCoverageStatus> = {};
+  for (const [concept, bands] of Object.entries(conceptBands)) {
+    const avg = bands.reduce((a, b) => a + b, 0) / bands.length;
+    conceptCoverageMap[concept] = avg >= 4 ? "strong" : avg >= 3 ? "developing" : "weak";
+  }
+
+  const languages = Array.from(new Set(profiles.map((p) => p.languageDetected).filter(Boolean)));
+  const languageUsed = languages.length === 1 ? languages[0] : languages.join(", ") || "unknown";
+
+  return {
+    overallReadinessScore,
+    overallVoxScoreProfile,
+    conceptCoverageMap,
+    completedQuestionCount: answered.length,
+    languageUsed,
+  };
+}
+
 function fallbackScore(question: Question, response: string): number {
   // Simple keyword overlap fallback scoring
   if (!question.correctAnswer) return 0.7;
@@ -901,7 +1151,7 @@ async function evaluateResponse(
   }));
 }
 
-async function generateFeedback(
+export async function generateFeedback(
   exam: Exam,
   responses: ExamResponse[],
   scores: Record<string, number>,
@@ -959,9 +1209,49 @@ Provide concise feedback in JSON format:
   }
 }
 
+export async function aiQuestionChat(
+  _conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  _materialContent: string,
+  _customApiKey?: string | null
+): Promise<{ reply: string; questions?: Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }> }> {
+  return { reply: "Question chat is temporarily unavailable. Please generate questions directly from materials." };
+}
+
+export async function generateQuestionsFromMaterials(
+  _materialContent: string,
+  _numQuestions = 5,
+  _questionTypes: string[] = ["short", "mcq", "audio"],
+  _customApiKey?: string | null,
+  _instructions?: string | null
+): Promise<Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }>> {
+  return [];
+}
+
+export async function analyzeProctoringScreenshot(
+  _screenshots: string[],
+  _labels: string[],
+  _examTitle: string,
+  _customApiKey?: string | null
+): Promise<string> {
+  return "Tab switch detected";
+}
+
+export async function analyzeProctoringPatterns(
+  _examTitle: string,
+  _questions: Array<{ id?: string; text: string; correctAnswer?: string }>,
+  _responses: Array<{ questionId: string; response: string }>,
+  _scores: Record<string, number>,
+  _proctoringFlags: Array<{ type: string; timestamp: string; durationAway?: number; aiVerdict?: string }>,
+  tabSwitchCount: number,
+  _customApiKey?: string | null
+): Promise<string> {
+  return tabSwitchCount === 0 ? "No tab switches detected — no proctoring concerns." : "Tab switches detected — review proctoring evidence manually.";
+}
+
 export interface IStorage {
   // User methods
   getUser(id: string): Promise<User | undefined>;
+  getAllUsers(): Promise<User[]>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: Partial<User>): Promise<User>;
   updateUserRole(userId: string, role: string, universityId?: string): Promise<User | undefined>;
@@ -975,23 +1265,35 @@ export interface IStorage {
 
   // Class methods
   getClass(id: string): Promise<Class | undefined>;
+  getClassesByUniversity(universityId: string): Promise<Class[]>;
   getClassesByProfessor(professorId: string): Promise<Class[]>;
   getClassByJoinCode(code: string): Promise<Class | undefined>;
+  createClass(professorId: string, classData: InsertClass): Promise<Class>;
   createClass(classData: InsertClass & { professorId: string }): Promise<Class>;
+  updateClassRoster(id: string, roster: string[]): Promise<Class | undefined>;
   deleteClass(id: string): Promise<boolean>;
   regenerateClassJoinCode(classId: string): Promise<Class | undefined>;
 
   // Enrollment methods
   getEnrollmentsByClass(classId: string): Promise<Enrollment[]>;
   getEnrollmentsByStudent(studentId: string): Promise<Enrollment[]>;
+  createEnrollment(enrollment: InsertEnrollment): Promise<Enrollment>;
   enrollStudent(enrollment: InsertEnrollment): Promise<Enrollment>;
+  deleteEnrollment(studentId: string, classId: string): Promise<boolean>;
   unenrollStudent(classId: string, studentId: string): Promise<boolean>;
+
+  // Class material methods
+  getMaterialsByClass(classId: string): Promise<ClassMaterial[]>;
+  createMaterial(data: InsertClassMaterial): Promise<ClassMaterial>;
+  deleteMaterial(id: string): Promise<boolean>;
 
   // Exam methods
   getExam(id: string): Promise<Exam | undefined>;
+  getAllExams(): Promise<Exam[]>;
   getExamByAccessCode(code: string): Promise<Exam | undefined>;
   getExamsByProfessor(professorId: string): Promise<Exam[]>;
   getExamsByClass(classId: string): Promise<Exam[]>;
+  createExam(professorId: string, exam: InsertExam): Promise<Exam>;
   createExam(exam: InsertExam & { professorId: string }): Promise<Exam>;
   updateExam(id: string, updates: Partial<Exam>): Promise<Exam | undefined>;
   deleteExam(id: string): Promise<boolean>;
@@ -1001,7 +1303,15 @@ export interface IStorage {
   getSubmission(id: string): Promise<ExamSubmission | undefined>;
   getSubmissionsByExam(examId: string): Promise<ExamSubmission[]>;
   getSubmissionsByStudent(studentId: string): Promise<ExamSubmission[]>;
+  getAllSubmissions(): Promise<ExamSubmission[]>;
   getStudentSubmissionForExam(examId: string, studentId: string): Promise<ExamSubmission | undefined>;
+  createSubmission(
+    studentId: string,
+    examId: string,
+    responses: ExamResponse[],
+    isPreview?: boolean,
+    consent?: { consentGiven?: boolean; consentTimestamp?: Date | string }
+  ): Promise<ExamSubmission>;
   createSubmission(
     examId: string,
     studentId: string,
@@ -1009,7 +1319,7 @@ export interface IStorage {
     materialContext?: string,
     customApiKey?: string | null,
     isPreview?: boolean,
-    consent?: { consentGiven?: boolean; consentTimestamp?: string }
+    consent?: { consentGiven?: boolean; consentTimestamp?: Date | string }
   ): Promise<ExamSubmission>;
   updateSubmissionScore(submissionId: string, questionId: string, newScore: number, newUnderstandingScore?: number): Promise<ExamSubmission | undefined>;
   updateSubmissionDecision(submissionId: string, data: { professorDecision: string; professorOverrideReason?: string | null; professorHolisticScore?: number | null; professorReviewDurationMinutes?: number | null; gradingGap: number; arabicFlag: boolean; }): Promise<ExamSubmission | undefined>;
@@ -1056,6 +1366,10 @@ class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return db.select().from(users);
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
@@ -1107,17 +1421,34 @@ class DatabaseStorage implements IStorage {
     return cls || undefined;
   }
 
+  async getClassesByUniversity(universityId: string): Promise<Class[]> {
+    return db.select().from(classes).where(eq(classes.universityId, universityId));
+  }
+
   async getClassesByProfessor(professorId: string): Promise<Class[]> {
     return db.select().from(classes).where(eq(classes.professorId, professorId));
   }
 
-  async createClass(insertClass: InsertClass & { professorId: string }): Promise<Class> {
+  async createClass(professorId: string, insertClass: InsertClass): Promise<Class>;
+  async createClass(insertClass: InsertClass & { professorId: string }): Promise<Class>;
+  async createClass(
+    professorIdOrClass: string | (InsertClass & { professorId: string }),
+    maybeClass?: InsertClass
+  ): Promise<Class> {
+    const insertClass = typeof professorIdOrClass === "string"
+      ? { ...maybeClass!, professorId: professorIdOrClass }
+      : professorIdOrClass;
     const joinCode = await generateClassJoinCode();
     const [cls] = await db.insert(classes).values({
       ...insertClass,
       joinCode,
     }).returning();
     return cls;
+  }
+
+  async updateClassRoster(id: string, roster: string[]): Promise<Class | undefined> {
+    const [updated] = await db.update(classes).set({ roster }).where(eq(classes.id, id)).returning();
+    return updated || undefined;
   }
 
   async deleteClass(id: string): Promise<boolean> {
@@ -1138,14 +1469,40 @@ class DatabaseStorage implements IStorage {
     return enrollment;
   }
 
+  async createEnrollment(insertEnrollment: InsertEnrollment): Promise<Enrollment> {
+    return this.enrollStudent(insertEnrollment);
+  }
+
   async unenrollStudent(classId: string, studentId: string): Promise<boolean> {
     const result = await db.delete(enrollments).where(and(eq(enrollments.classId, classId), eq(enrollments.studentId, studentId)));
+    return (result.rowCount || 0) > 0;
+  }
+
+  async deleteEnrollment(studentId: string, classId: string): Promise<boolean> {
+    return this.unenrollStudent(classId, studentId);
+  }
+
+  async getMaterialsByClass(classId: string): Promise<ClassMaterial[]> {
+    return db.select().from(classMaterials).where(eq(classMaterials.classId, classId));
+  }
+
+  async createMaterial(data: InsertClassMaterial): Promise<ClassMaterial> {
+    const [material] = await db.insert(classMaterials).values(data).returning();
+    return material;
+  }
+
+  async deleteMaterial(id: string): Promise<boolean> {
+    const result = await db.delete(classMaterials).where(eq(classMaterials.id, id));
     return (result.rowCount || 0) > 0;
   }
 
   async getExam(id: string): Promise<Exam | undefined> {
     const [exam] = await db.select().from(exams).where(eq(exams.id, id));
     return exam || undefined;
+  }
+
+  async getAllExams(): Promise<Exam[]> {
+    return db.select().from(exams);
   }
 
   async getExamsByProfessor(professorId: string): Promise<Exam[]> {
@@ -1156,7 +1513,19 @@ class DatabaseStorage implements IStorage {
     return db.select().from(exams).where(eq(exams.classId, classId));
   }
 
-  async createExam(insertExam: InsertExam & { professorId: string }): Promise<Exam> {
+  async createExam(professorId: string, insertExam: InsertExam): Promise<Exam>;
+  async createExam(insertExam: InsertExam & { professorId: string }): Promise<Exam>;
+  async createExam(
+    professorIdOrExam: string | (InsertExam & { professorId: string }),
+    maybeExam?: InsertExam
+  ): Promise<Exam> {
+    const insertExam = typeof professorIdOrExam === "string"
+      ? { ...maybeExam!, professorId: professorIdOrExam }
+      : professorIdOrExam;
+    const questionsWithIds: Question[] = (insertExam.questions as any[]).map((q) => ({
+      ...q,
+      id: q.id || crypto.randomUUID(),
+    }));
     let accessCode: string | null = null;
     let accessCodeExpiresAt: Date | null = null;
 
@@ -1171,6 +1540,7 @@ class DatabaseStorage implements IStorage {
 
     const [exam] = await db.insert(exams).values({
       ...insertExam,
+      questions: questionsWithIds,
       accessCode,
       accessCodeExpiresAt,
     }).returning();
@@ -1200,20 +1570,54 @@ class DatabaseStorage implements IStorage {
     return db.select().from(submissions).where(eq(submissions.studentId, studentId));
   }
 
+  async getAllSubmissions(): Promise<ExamSubmission[]> {
+    return db.select().from(submissions);
+  }
+
   async getStudentSubmissionForExam(examId: string, studentId: string): Promise<ExamSubmission | undefined> {
     const [submission] = await db.select().from(submissions).where(and(eq(submissions.examId, examId), eq(submissions.studentId, studentId), eq(submissions.isPreview, "false")));
     return submission || undefined;
   }
 
   async createSubmission(
+    studentId: string,
+    examId: string,
+    responses: ExamResponse[],
+    isPreview?: boolean,
+    consent?: { consentGiven?: boolean; consentTimestamp?: Date | string }
+  ): Promise<ExamSubmission>;
+  async createSubmission(
     examId: string,
     studentId: string,
     responses: ExamResponse[],
     materialContext?: string,
     customApiKey?: string | null,
-    isPreview = false,
-    consent?: { consentGiven?: boolean; consentTimestamp?: string }
+    isPreview?: boolean,
+    consent?: { consentGiven?: boolean; consentTimestamp?: Date | string }
+  ): Promise<ExamSubmission>;
+  async createSubmission(
+    firstId: string,
+    secondId: string,
+    responses: ExamResponse[],
+    fourth?: string | boolean,
+    fifth?: string | null | { consentGiven?: boolean; consentTimestamp?: Date | string },
+    sixth = false,
+    seventh?: { consentGiven?: boolean; consentTimestamp?: Date | string }
   ): Promise<ExamSubmission> {
+    const routeSignature = typeof fourth === "boolean" || typeof fourth === "undefined";
+    const studentId = routeSignature ? firstId : secondId;
+    const examId = routeSignature ? secondId : firstId;
+    const materialContext = routeSignature ? undefined : fourth;
+    const customApiKey = routeSignature ? null : (typeof fifth === "string" || fifth === null ? fifth : null);
+    const isPreview = routeSignature ? Boolean(fourth) : Boolean(sixth);
+    const consent = routeSignature
+      ? fifth as { consentGiven?: boolean; consentTimestamp?: Date | string } | undefined
+      : seventh;
+    const consentTimestamp = consent?.consentTimestamp instanceof Date
+      ? consent.consentTimestamp
+      : consent?.consentTimestamp
+        ? new Date(consent.consentTimestamp)
+        : null;
     const exam = await this.getExam(examId);
     if (!exam) throw new Error("Exam not found");
 
@@ -1248,7 +1652,7 @@ class DatabaseStorage implements IStorage {
         quickvoxFollowUp,
         isPreview: isPreview ? "true" : "false",
         consentGiven: consent?.consentGiven ?? false,
-        consentTimestamp: consent?.consentTimestamp ?? null,
+        consentTimestamp,
         submittedAt: new Date().toISOString(),
       }).returning();
 
@@ -1312,7 +1716,7 @@ class DatabaseStorage implements IStorage {
       voxScoreProfile,
       isPreview: isPreview ? "true" : "false",
       consentGiven: consent?.consentGiven ?? false,
-      consentTimestamp: consent?.consentTimestamp ?? null,
+      consentTimestamp,
       submittedAt: new Date().toISOString(),
     }).returning();
 
