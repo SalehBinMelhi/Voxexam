@@ -200,7 +200,7 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
 
   return (
     <div className="space-y-4">
-      <div className="p-6 rounded-md bg-muted/50 text-center space-y-4">
+      <div className="rounded-md bg-muted/50 p-4 text-center space-y-4 sm:p-6">
         {browserUnsupported ? (
           <>
             <MicOff className="h-8 w-8 mx-auto text-muted-foreground" />
@@ -220,8 +220,8 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
         ) : isRecording ? (
           <>
             <div className="relative">
-              <div className="w-20 h-20 mx-auto rounded-full bg-destructive/20 flex items-center justify-center animate-pulse">
-                <Mic className="h-10 w-10 text-destructive" />
+              <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-destructive/20 animate-pulse sm:h-20 sm:w-20">
+                <Mic className="h-12 w-12 text-destructive sm:h-10 sm:w-10" />
               </div>
             </div>
             <p className="text-2xl font-mono font-medium">{formatTime(recordingTime)}</p>
@@ -229,6 +229,7 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
             <Button 
               variant="destructive" 
               size="lg"
+              className="mx-auto min-h-12 w-full sm:w-auto sm:min-w-[220px]"
               onClick={stopRecording}
               data-testid="button-stop-recording"
             >
@@ -238,8 +239,8 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
           </>
         ) : hasRecording ? (
           <>
-            <div className="w-20 h-20 mx-auto rounded-full bg-chart-2/20 flex items-center justify-center">
-              <CheckCircle2 className="h-10 w-10 text-chart-2" />
+            <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-chart-2/20 sm:h-20 sm:w-20">
+              <CheckCircle2 className="h-12 w-12 text-chart-2 sm:h-10 sm:w-10" />
             </div>
             <p className="text-sm font-medium">Recording saved</p>
             <audio 
@@ -265,6 +266,7 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
             )}
             <Button 
               variant="outline"
+              className="mx-auto min-h-11 w-full sm:w-auto"
               onClick={deleteRecording}
               data-testid="button-delete-recording"
             >
@@ -274,18 +276,19 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
           </>
         ) : (
           <>
-            <div className="w-20 h-20 mx-auto rounded-full bg-primary/10 flex items-center justify-center">
-              <Mic className="h-10 w-10 text-primary" />
+            <div className="mx-auto flex h-24 w-24 items-center justify-center rounded-full bg-primary/10 sm:h-20 sm:w-20">
+              <Mic className="h-12 w-12 text-primary sm:h-10 sm:w-10" />
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="mx-auto max-w-sm text-sm text-muted-foreground">
               Click to record your verbal answer, or type below
             </p>
             <Button 
               size="lg"
+              className="mx-auto min-h-14 w-full text-base sm:min-h-12 sm:w-auto sm:min-w-[240px] sm:text-sm"
               onClick={startRecording}
               data-testid="button-start-recording"
             >
-              <Mic className="h-4 w-4 mr-2" />
+              <Mic className="mr-2 h-5 w-5" />
               Start Recording
             </Button>
           </>
@@ -1155,24 +1158,24 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
+      <DialogContent className="max-w-2xl max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden px-4 sm:px-6">
         <DialogHeader className="flex-shrink-0">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
               <div>
-                <DialogTitle className="flex items-center gap-2">
+                <DialogTitle className="flex flex-wrap items-center gap-2 text-lg sm:text-xl">
                   {exam.title}
                   {previewMode && (
                     <Badge variant="secondary" className="text-xs font-normal">Preview</Badge>
                   )}
                 </DialogTitle>
-                <DialogDescription className="flex items-center gap-2 mt-1">
+                <DialogDescription className="mt-1 flex items-center gap-2 text-xs sm:text-sm">
                   <FileQuestion className="h-4 w-4" />
                   Question {currentQuestionIndex + 1} of {totalQuestions}
                 </DialogDescription>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex flex-wrap items-center gap-2 sm:flex-shrink-0 sm:justify-end">
               {!isQuickVox && tabSwitchCount > 0 && (
                 <Badge variant="destructive" className="flex items-center gap-1" data-testid="badge-tab-switch-count">
                   <ShieldAlert className="h-3 w-3" />
@@ -1203,11 +1206,19 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               )}
             </div>
           </div>
-          <Progress value={progress} className="mt-4" />
+          <div className="mt-3 rounded-md bg-muted/50 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3 text-xs sm:text-sm">
+              <span className="font-medium text-foreground">Question progress</span>
+              <span className="text-muted-foreground">
+                {currentQuestionIndex + 1} of {totalQuestions}
+              </span>
+            </div>
+            <Progress value={progress} />
+          </div>
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto overscroll-contain pr-2 -mr-2" style={{ WebkitOverflowScrolling: 'touch' }}>
-          <div className="py-6">
+          <div className="py-4 sm:py-6">
             {!isQuickVox && tabSwitchCount > 0 && (
               <div className="mb-4 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3 flex items-center gap-2" data-testid="tab-switch-warning">
                 <AlertTriangle className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" />
@@ -1223,13 +1234,13 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               </div>
             )}
             <Card>
-              <CardContent className="p-6 space-y-6">
-                <div className="flex items-start gap-4">
-                  <div className="w-10 h-10 rounded-md bg-primary/10 flex items-center justify-center text-lg font-semibold text-primary">
+              <CardContent className="space-y-5 p-4 sm:p-6 sm:space-y-6">
+                <div className="flex items-start gap-3 sm:gap-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-base font-semibold text-primary sm:text-lg">
                     {currentQuestionIndex + 1}
                   </div>
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
                       <Badge variant="secondary">
                         {getQuestionIcon(currentQuestion.type)}
                         <span className="ml-1">
@@ -1243,7 +1254,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                         </Badge>
                       )}
                     </div>
-                    <p className="text-lg font-medium">{currentQuestion.text}</p>
+                    <p className="text-base font-medium leading-7 sm:text-lg">{currentQuestion.text}</p>
                   </div>
                 </div>
 
@@ -1302,7 +1313,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                   key={q.id}
                   variant={(responses.has(q.id) || audioResponses.has(q.id)) ? "default" : "outline"}
                   size="sm"
-                  className={`w-9 h-9 p-0 ${
+                  className={`h-10 w-10 p-0 sm:h-9 sm:w-9 ${
                     i === currentQuestionIndex ? "ring-2 ring-primary ring-offset-2" : ""
                   }`}
                   onClick={() => setCurrentQuestionIndex(i)}
@@ -1315,15 +1326,16 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
           </div>
         </div>
 
-        <DialogFooter className="flex-shrink-0 flex-col sm:flex-row gap-2">
-          <div className="flex items-center gap-2 flex-1">
+        <DialogFooter className="flex-shrink-0 flex-col gap-2 sm:flex-row">
+          <div className="flex flex-1 items-center gap-2">
             <p className="text-sm text-muted-foreground">
               {answeredCount} of {totalQuestions} answered
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
             <Button
               variant="outline"
+              className="w-full sm:w-auto"
               onClick={goToPrevious}
               disabled={currentQuestionIndex === 0}
               data-testid="button-previous-question"
@@ -1332,12 +1344,13 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               Previous
             </Button>
             {currentQuestionIndex < totalQuestions - 1 && (
-              <Button variant="outline" onClick={goToNext} data-testid="button-next-question">
+              <Button variant="outline" className="w-full sm:w-auto" onClick={goToNext} data-testid="button-next-question">
                 Next
                 <ChevronRight className="h-4 w-4 ml-1" />
               </Button>
             )}
             <Button
+              className="w-full sm:w-auto"
               onClick={handleSubmit}
               disabled={submitMutation.isPending || answeredCount === 0}
               data-testid="button-submit-exam"
