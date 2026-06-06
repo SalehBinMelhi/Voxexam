@@ -199,10 +199,11 @@ export function ProfessorDecisionPanel({
         <ProfessorReviewIndicators submission={submission} />
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Button
           size="sm"
           variant={decisionChoice === "accepted" ? "default" : "outline"}
+          className="w-full sm:w-auto"
           onClick={() => setDecision("accepted")}
           data-testid={`button-decision-accept-${submission.id}`}
         >
@@ -211,6 +212,7 @@ export function ProfessorDecisionPanel({
         <Button
           size="sm"
           variant={decisionChoice === "adjusted" ? "default" : "outline"}
+          className="w-full sm:w-auto"
           onClick={() => setDecision("adjusted")}
           data-testid={`button-decision-adjust-${submission.id}`}
         >
@@ -219,6 +221,7 @@ export function ProfessorDecisionPanel({
         <Button
           size="sm"
           variant={decisionChoice === "overridden" ? "default" : "outline"}
+          className="w-full sm:w-auto"
           onClick={() => setDecision("overridden")}
           data-testid={`button-decision-override-${submission.id}`}
         >
