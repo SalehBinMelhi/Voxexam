@@ -1,5 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { ProfessorVoxScore } from "@/components/voxscore-breakdown";
+import { ProfessorDecisionPanel } from "@/components/professor-decision-panel";
 import {
   Dialog,
   DialogContent,
@@ -12,7 +14,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import {
   Calendar,
@@ -25,9 +26,6 @@ import {
   Clock,
   Trophy,
   User,
-  Edit2,
-  Check,
-  X,
   Sparkles,
   TrendingUp,
   TrendingDown,
@@ -143,7 +141,7 @@ function AnalyticsSection({ examId, examTitle }: { examId: string; examTitle: st
           <BarChart3 className="h-4 w-4" />
           Analytics
         </h4>
-        <p className="text-xs text-muted-foreground">No student submissions yet.</p>
+        <p className="text-xs text-muted-foreground">No submissions to analyze yet.</p>
       </div>
     );
   }
@@ -229,6 +227,7 @@ export function ExamDetailsDialog({
 }: ExamDetailsDialogProps) {
   const { toast } = useToast();
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
+  const [openVoxBreakdowns, setOpenVoxBreakdowns] = useState<Record<string, boolean>>({});
 
   const { data: submissions = [] } = useQuery<ExamSubmission[]>({
     queryKey: ["/api/submissions"],
@@ -279,28 +278,6 @@ export function ExamDetailsDialog({
     },
   });
 
-  const [editingScore, setEditingScore] = useState<{
-    submissionId: string;
-    questionId: string;
-    currentScore: number;
-  } | null>(null);
-  const [newScoreValue, setNewScoreValue] = useState("");
-
-  const updateScoreMutation = useMutation({
-    mutationFn: async ({ submissionId, questionId, score }: { submissionId: string; questionId: string; score: number }) => {
-      await apiRequest("PATCH", `/api/submissions/${submissionId}/score`, { questionId, score });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
-      toast({ title: "Score updated", description: "The grade has been manually updated." });
-      setEditingScore(null);
-      setNewScoreValue("");
-    },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to update score.", variant: "destructive" });
-    },
-  });
-
   const regenerateCodeMutation = useMutation({
     mutationFn: async () => {
       const response = await apiRequest("POST", `/api/exams/${exam.id}/regenerate-code`);
@@ -343,30 +320,6 @@ export function ExamDetailsDialog({
       return { active: true, label: "Active", timeRemaining };
     }
     return { active: false, label: "Expired" };
-  };
-
-  const startEditing = (submissionId: string, questionId: string, currentScore: number) => {
-    setEditingScore({ submissionId, questionId, currentScore });
-    setNewScoreValue(Math.round(currentScore * 100).toString());
-  };
-
-  const cancelEditing = () => {
-    setEditingScore(null);
-    setNewScoreValue("");
-  };
-
-  const saveScore = () => {
-    if (!editingScore) return;
-    const scorePercent = parseInt(newScoreValue, 10);
-    if (isNaN(scorePercent) || scorePercent < 0 || scorePercent > 100) {
-      toast({ title: "Invalid score", description: "Please enter a number between 0 and 100.", variant: "destructive" });
-      return;
-    }
-    updateScoreMutation.mutate({
-      submissionId: editingScore.submissionId,
-      questionId: editingScore.questionId,
-      score: scorePercent / 100,
-    });
   };
 
   const status = getExamStatus(exam);
@@ -579,6 +532,15 @@ export function ExamDetailsDialog({
               </div>
             </div>
 
+            {examSubmissions.length === 0 && (
+              <>
+                <Separator />
+                <div className="rounded-md border border-dashed p-6 text-center" data-testid="empty-submissions">
+                  <p className="text-sm text-muted-foreground">No submissions yet.</p>
+                </div>
+              </>
+            )}
+
             {examSubmissions.length > 0 && (
               <>
                 <Separator />
@@ -699,6 +661,27 @@ export function ExamDetailsDialog({
                                     )}
                                   </div>
                                 )}
+
+                                {exam.mode !== "quickvox" && sub.voxScoreProfile && (
+                                  <ProfessorVoxScore
+                                    profile={sub.voxScoreProfile}
+                                    open={openVoxBreakdowns[sub.id] ?? true}
+                                    onToggle={() =>
+                                      setOpenVoxBreakdowns((prev) => ({
+                                        ...prev,
+                                        [sub.id]: !(prev[sub.id] ?? true),
+                                      }))
+                                    }
+                                    onViewEvidence={() =>
+                                      setOpenVoxBreakdowns((prev) => ({
+                                        ...prev,
+                                        [sub.id]: true,
+                                      }))
+                                    }
+                                    testId={sub.id}
+                                  />
+                                )}
+
                                 {exam.mode !== "quickvox" && feedback && (
                                   <div className="mt-4 space-y-3" data-testid={`feedback-section-${sub.id}`}>
                                     <h5 className="text-xs font-semibold flex items-center gap-1.5 text-primary">
@@ -760,7 +743,6 @@ export function ExamDetailsDialog({
                                     const score = sub.scores[resp.questionId] || 0;
                                     const understandingScore = sub.understandingScores?.[resp.questionId];
                                     const gradingMethod = sub.gradingMethods?.[resp.questionId];
-                                    const isEditing = editingScore?.submissionId === sub.id && editingScore?.questionId === resp.questionId;
                                     const methodLabel = gradingMethod === "ai" ? "AI" : gradingMethod === "manual" ? "Manual" : gradingMethod === "exact" ? "Auto" : gradingMethod === "fallback" ? "Fallback" : "";
                                     const methodColor = gradingMethod === "ai" ? "text-blue-500" : gradingMethod === "manual" ? "text-orange-500" : gradingMethod === "exact" ? "text-green-500" : "text-yellow-500";
 
@@ -774,26 +756,7 @@ export function ExamDetailsDialog({
                                             </p>
                                           </div>
                                           <div className="flex items-center gap-1 flex-shrink-0">
-                                            {exam.mode === "quickvox" ? null : isEditing ? (
-                                              <div className="flex items-center gap-1">
-                                                <Input
-                                                  type="number"
-                                                  min="0"
-                                                  max="100"
-                                                  value={newScoreValue}
-                                                  onChange={(e) => setNewScoreValue(e.target.value)}
-                                                  className="w-14 h-6 text-[10px]"
-                                                  data-testid={`input-score-${resp.questionId}`}
-                                                />
-                                                <span className="text-[10px] text-muted-foreground">%</span>
-                                                <Button size="icon" variant="ghost" className="h-5 w-5" onClick={saveScore} disabled={updateScoreMutation.isPending} data-testid={`button-save-score-${resp.questionId}`}>
-                                                  <Check className="h-3 w-3 text-green-600" />
-                                                </Button>
-                                                <Button size="icon" variant="ghost" className="h-5 w-5" onClick={cancelEditing} data-testid={`button-cancel-score-${resp.questionId}`}>
-                                                  <X className="h-3 w-3 text-red-600" />
-                                                </Button>
-                                              </div>
-                                            ) : (
+                                            {exam.mode === "quickvox" ? null : (
                                               <div className="flex items-center gap-1.5">
                                                 <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${getScoreBg(score)} ${getScoreColor(score)}`} data-testid={`score-correctness-${resp.questionId}`}>
                                                   {(score * 100).toFixed(0)}%
@@ -808,9 +771,6 @@ export function ExamDetailsDialog({
                                                     {methodLabel}
                                                   </span>
                                                 )}
-                                                <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => startEditing(sub.id, resp.questionId, score)} title="Edit score" data-testid={`button-edit-score-${resp.questionId}`}>
-                                                  <Edit2 className="h-3 w-3" />
-                                                </Button>
                                               </div>
                                             )}
                                           </div>
@@ -840,6 +800,19 @@ export function ExamDetailsDialog({
                                     );
                                   })}
                                 </div>
+
+                                {exam.mode !== "quickvox" && (
+                                  <ProfessorDecisionPanel
+                                    exam={exam}
+                                    submission={sub}
+                                    onViewEvidence={() =>
+                                      setOpenVoxBreakdowns((prev) => ({
+                                        ...prev,
+                                        [sub.id]: true,
+                                      }))
+                                    }
+                                  />
+                                )}
 
                                 {hasProctoringIssues && (
                                   <div className="space-y-2 mt-3" data-testid={`proctoring-section-${sub.id}`}>

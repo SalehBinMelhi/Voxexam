@@ -849,6 +849,10 @@ export async function registerRoutes(
       message: "A transcript or audio answer is required",
     });
   const finalizeBody = z.object({}).optional();
+  const consentBody = z.object({
+    consentGiven: z.literal(true),
+    consentTimestamp: z.string().optional(),
+  });
 
   // Analyze chosen material into a concept/topic/question summary.
   app.post("/api/practice/analyze-material", isAuthenticated, requireStudent, async (req, res) => {
@@ -903,6 +907,30 @@ export async function registerRoutes(
       res.status(201).json(session);
     } catch (error: any) {
       res.status(500).json({ error: error.message || "Failed to create practice session" });
+    }
+  });
+
+  app.post("/api/practice/sessions/:id/consent", isAuthenticated, requireStudent, async (req, res) => {
+    try {
+      const parsed = consentBody.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Consent is required before recording starts" });
+      }
+      const session = await loadOwnedPracticeSession(req, res);
+      if (!session) return;
+      const consentTimestamp = parsed.data.consentTimestamp
+        ? new Date(parsed.data.consentTimestamp)
+        : new Date();
+      if (Number.isNaN(consentTimestamp.getTime())) {
+        return res.status(400).json({ error: "Invalid consent timestamp" });
+      }
+      const updated = await storage.updatePracticeSession(session.id, {
+        consentGiven: true,
+        consentTimestamp,
+      });
+      res.json({ session: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to record consent" });
     }
   });
 
@@ -964,6 +992,9 @@ export async function registerRoutes(
       }
       const session = await loadOwnedPracticeSession(req, res);
       if (!session) return;
+      if (session.consentGiven !== true) {
+        return res.status(400).json({ error: "Consent is required before recording starts" });
+      }
       const questions = (session.questions || []) as PracticeQuestion[];
       const question = questions.find((q) => q.id === parsed.data.questionId);
       if (!question) {
@@ -999,6 +1030,9 @@ export async function registerRoutes(
       }
       const session = await loadOwnedPracticeSession(req, res);
       if (!session) return;
+      if (session.consentGiven !== true) {
+        return res.status(400).json({ error: "Consent is required before recording starts" });
+      }
       const questions = (session.questions || []) as PracticeQuestion[];
       const question = questions.find((q) => q.id === parsed.data.questionId);
       if (!question) {
@@ -1213,12 +1247,21 @@ export async function registerRoutes(
         });
       }
 
-      const { examId, responses, isPreview } = parseResult.data;
+      const { examId, responses, isPreview, consentGiven, consentTimestamp } = parseResult.data;
       const studentId = req.user!.claims.sub;
 
       const exam = await storage.getExam(examId);
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
+      }
+
+      if (consentGiven !== true) {
+        return res.status(400).json({ error: "Consent is required before recording starts" });
+      }
+
+      const consentDate = consentTimestamp ? new Date(consentTimestamp) : new Date();
+      if (Number.isNaN(consentDate.getTime())) {
+        return res.status(400).json({ error: "Invalid consent timestamp" });
       }
 
       if (!isPreview) {
@@ -1239,7 +1282,10 @@ export async function registerRoutes(
         }
       }
 
-      const submission = await storage.createSubmission(studentId, examId, responses, !!isPreview);
+      const submission = await storage.createSubmission(studentId, examId, responses, !!isPreview, {
+        consentGiven: true,
+        consentTimestamp: consentDate,
+      });
       if (!isPreview) {
         logUserEvent(studentId, "exam_submitted", { examId, submissionId: submission.id });
       }

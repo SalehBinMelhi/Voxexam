@@ -76,8 +76,13 @@ export default function StudentDashboard() {
   const completedExams = exams.filter((e) => submittedExamIds.has(e.id));
   const upcomingExams = exams.filter((e) => getExamStatus(e).label === "Upcoming");
 
-  const averageScore = submissions.length > 0
-    ? submissions.reduce((sum, s) => sum + s.totalScore, 0) / submissions.length
+  const releasedScoreSubmissions = submissions.filter((submission) => {
+    const exam = exams.find((e) => e.id === submission.examId);
+    return exam?.mode === "exam" && !!submission.professorDecision;
+  });
+
+  const averageScore = releasedScoreSubmissions.length > 0
+    ? releasedScoreSubmissions.reduce((sum, s) => sum + s.totalScore, 0) / releasedScoreSubmissions.length
     : 0;
 
   const displayName = user?.firstName
@@ -190,7 +195,7 @@ export default function StudentDashboard() {
               </div>
               <div>
                 <p className="text-2xl font-bold">{(averageScore * 100).toFixed(0)}%</p>
-                <p className="text-xs text-muted-foreground">Avg Score</p>
+                <p className="text-xs text-muted-foreground">Released Avg</p>
               </div>
             </CardContent>
           </Card>
@@ -293,6 +298,14 @@ export default function StudentDashboard() {
                             >
                               QuickVox
                             </Badge>
+                          ) : submission && !submission.professorDecision ? (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300"
+                              data-testid={`badge-pending-review-${exam.id}`}
+                            >
+                              Pending professor review
+                            </Badge>
                           ) : submission && submission.voxScoreProfile ? (
                             (() => {
                               const c = voxTotalBandColor(submission.voxScoreProfile.totalScore);
@@ -332,9 +345,16 @@ export default function StudentDashboard() {
                     </CardHeader>
                     <CardContent>
                       {submission && (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <CheckCircle2 className="h-4 w-4" />
-                          <span>Submitted {format(parseISO(submission.submittedAt), "MMM d, yyyy h:mm a")}</span>
+                        <div className="space-y-1 text-sm text-muted-foreground">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>Submitted {format(parseISO(submission.submittedAt), "MMM d, yyyy h:mm a")}</span>
+                          </div>
+                          {exam.mode === "exam" && !submission.professorDecision && (
+                            <p className="text-xs text-amber-700 dark:text-amber-300" dir="rtl">
+                              تم تقديم إجابتك. سيقوم أستاذك بمراجعة نتائجك وإصدارها.
+                            </p>
+                          )}
                         </div>
                       )}
                     </CardContent>

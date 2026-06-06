@@ -24,6 +24,13 @@ export interface SpeechToTextResult {
   logprobs?: SpeechToTextLogprob[];
 }
 
+export type SpeechToTextQuality = "standard" | "high";
+
+interface SpeechToTextOptions {
+  includeLogprobs?: boolean;
+  quality?: SpeechToTextQuality;
+}
+
 /**
  * Detect audio format from buffer magic bytes.
  * Supports: WAV, MP3, WebM (Chrome/Firefox), MP4/M4A/MOV (Safari/iOS), OGG
@@ -246,7 +253,7 @@ export async function textToSpeechStream(
 
 /**
  * Speech-to-Text: Transcribes audio using dedicated transcription model.
- * Uses gpt-4o-mini-transcribe for accurate transcription.
+ * Defaults to gpt-4o-mini-transcribe; high quality uses gpt-4o-transcribe.
  */
 export async function speechToText(
   audioBuffer: Buffer,
@@ -257,18 +264,25 @@ export async function speechToText(
   audioBuffer: Buffer,
   format: "wav" | "mp3" | "webm",
   prompt: string | undefined,
-  options: { includeLogprobs: true }
+  options?: SpeechToTextOptions & { includeLogprobs?: false }
+): Promise<string>;
+export async function speechToText(
+  audioBuffer: Buffer,
+  format: "wav" | "mp3" | "webm",
+  prompt: string | undefined,
+  options: SpeechToTextOptions & { includeLogprobs: true }
 ): Promise<SpeechToTextResult>;
 export async function speechToText(
   audioBuffer: Buffer,
   format: "wav" | "mp3" | "webm" = "wav",
   prompt?: string,
-  options?: { includeLogprobs?: boolean }
+  options?: SpeechToTextOptions
 ): Promise<string | SpeechToTextResult> {
   const file = await toFile(audioBuffer, `audio.${format}`);
+  const model = options?.quality === "high" ? "gpt-4o-transcribe" : "gpt-4o-mini-transcribe";
   const response = await openai.audio.transcriptions.create({
     file,
-    model: "gpt-4o-mini-transcribe",
+    model,
     temperature: 0,
     include: ["logprobs"],
     response_format: "json",

@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { ProfessorVoxScore } from "@/components/voxscore-breakdown";
+import { ProfessorDecisionPanel } from "@/components/professor-decision-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -40,8 +41,6 @@ import {
   Clock,
   Trophy,
   User,
-  Check,
-  Edit2,
   TrendingUp,
   TrendingDown,
   BookOpen,
@@ -319,16 +318,6 @@ export function SimpleExamTab() {
     }
   };
 
-  const [editingScore, setEditingScore] = useState<{ submissionId: string; questionId: string; currentScore: number } | null>(null);
-  const [newScoreValue, setNewScoreValue] = useState("");
-
-  const [decisionChoice, setDecisionChoice] = useState<"accepted" | "adjusted" | "overridden" | null>(null);
-  const [decisionReason, setDecisionReason] = useState("");
-  const [holisticScore, setHolisticScore] = useState("");
-  const [showReasonPrompt, setShowReasonPrompt] = useState(false);
-  const [promptedIds, setPromptedIds] = useState<Set<string>>(new Set());
-  const [expandedAt, setExpandedAt] = useState<number | null>(null);
-  const [aiBaselineTotal, setAiBaselineTotal] = useState<number | null>(null);
   const [voxBreakdownOpen, setVoxBreakdownOpen] = useState(false);
   const [highlightTranscript, setHighlightTranscript] = useState(false);
   const perQuestionRef = useRef<HTMLDivElement>(null);
@@ -341,18 +330,6 @@ export function SimpleExamTab() {
     highlightTimerRef.current = setTimeout(() => setHighlightTranscript(false), 2000);
   };
 
-  const updateScoreMutation = useMutation({
-    mutationFn: async ({ submissionId, questionId, score }: { submissionId: string; questionId: string; score: number }) => {
-      await apiRequest("PATCH", `/api/submissions/${submissionId}/score`, { questionId, score });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
-      toast({ title: "Score updated" });
-      setEditingScore(null);
-      setNewScoreValue("");
-    },
-  });
-
   const generateFeedbackMutation = useMutation({
     mutationFn: async (submissionId: string) => {
       const response = await apiRequest("POST", `/api/submissions/${submissionId}/feedback`);
@@ -364,41 +341,8 @@ export function SimpleExamTab() {
     },
   });
 
-  const saveDecisionMutation = useMutation({
-    mutationFn: async (vars: {
-      submissionId: string;
-      professorDecision: "accepted" | "adjusted" | "overridden";
-      professorOverrideReason?: string;
-      professorHolisticScore?: number;
-      professorReviewDurationMinutes?: number;
-      aiTotalScore?: number;
-    }) => {
-      const response = await apiRequest("PATCH", `/api/submissions/${vars.submissionId}/decision`, {
-        professorDecision: vars.professorDecision,
-        professorOverrideReason: vars.professorOverrideReason,
-        professorHolisticScore: vars.professorHolisticScore,
-        professorReviewDurationMinutes: vars.professorReviewDurationMinutes,
-        aiTotalScore: vars.aiTotalScore,
-      });
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
-      toast({ title: "Decision saved", description: "Your review has been recorded." });
-    },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to save decision.", variant: "destructive" });
-    },
-  });
-
   const openSubmission = (sub: ExamSubmission) => {
     setExpandedSubmission(sub.id);
-    setExpandedAt(Date.now());
-    setAiBaselineTotal(sub.totalScore);
-    setDecisionChoice((sub.professorDecision as "accepted" | "adjusted" | "overridden" | null) || null);
-    setDecisionReason(sub.professorOverrideReason || "");
-    setHolisticScore(sub.professorHolisticScore != null ? String(sub.professorHolisticScore) : "");
-    setShowReasonPrompt(false);
     setHighlightTranscript(false);
 
     const profile = sub.voxScoreProfile;
@@ -414,51 +358,6 @@ export function SimpleExamTab() {
 
   const closeSubmission = () => {
     setExpandedSubmission(null);
-    setExpandedAt(null);
-    setAiBaselineTotal(null);
-    setDecisionChoice(null);
-    setDecisionReason("");
-    setHolisticScore("");
-    setShowReasonPrompt(false);
-  };
-
-  const persistDecision = (sub: ExamSubmission) => {
-    if (!decisionChoice) return;
-    setShowReasonPrompt(false);
-    const durationMinutes = expandedAt != null
-      ? Math.max(0, Math.round(((Date.now() - expandedAt) / 60000) * 10) / 10)
-      : undefined;
-    const isOfficialExam = selectedExam?.mode === "exam";
-    saveDecisionMutation.mutate({
-      submissionId: sub.id,
-      professorDecision: decisionChoice,
-      professorOverrideReason: decisionChoice === "accepted" ? undefined : (decisionReason.trim() || undefined),
-      professorHolisticScore: isOfficialExam && holisticScore.trim() !== "" ? Number(holisticScore) : undefined,
-      professorReviewDurationMinutes: durationMinutes,
-      aiTotalScore: aiBaselineTotal ?? undefined,
-    });
-  };
-
-  const handleSaveDecision = (sub: ExamSubmission) => {
-    const needsReason = decisionChoice === "adjusted" || decisionChoice === "overridden";
-    if (needsReason && decisionReason.trim() === "" && !promptedIds.has(sub.id)) {
-      setPromptedIds((prev) => new Set(prev).add(sub.id));
-      setShowReasonPrompt(true);
-      return;
-    }
-    persistDecision(sub);
-  };
-
-  const startEditing = (submissionId: string, questionId: string, currentScore: number) => {
-    setEditingScore({ submissionId, questionId, currentScore });
-    setNewScoreValue(Math.round(currentScore * 100).toString());
-  };
-
-  const saveScore = () => {
-    if (!editingScore) return;
-    const scorePercent = parseInt(newScoreValue, 10);
-    if (isNaN(scorePercent) || scorePercent < 0 || scorePercent > 100) return;
-    updateScoreMutation.mutate({ submissionId: editingScore.submissionId, questionId: editingScore.questionId, score: scorePercent / 100 });
   };
 
   const publishExamMutation = useMutation({
@@ -869,7 +768,6 @@ export function SimpleExamTab() {
                               const question = selectedExam.questions.find(q => q.id === resp.questionId);
                               const score = sub.scores[resp.questionId] || 0;
                               const gradingMethod = sub.gradingMethods?.[resp.questionId];
-                              const isEditingThis = editingScore?.submissionId === sub.id && editingScore?.questionId === resp.questionId;
                               const methodLabel = gradingMethod === "ai" ? "AI" : gradingMethod === "manual" ? "Manual" : gradingMethod === "exact" ? "Auto" : "Fallback";
 
                               return (
@@ -879,26 +777,12 @@ export function SimpleExamTab() {
                                       <span className="text-muted-foreground">Q{idx + 1}:</span> {question?.text || "Unknown question"}
                                     </p>
                                     <div className="flex items-center gap-1 flex-shrink-0">
-                                      {selectedExam.mode === "quickvox" ? null : isEditingThis ? (
-                                        <div className="flex items-center gap-1">
-                                          <Input type="number" min="0" max="100" value={newScoreValue} onChange={(e) => setNewScoreValue(e.target.value)} className="w-14 h-6 text-[10px]" />
-                                          <span className="text-[10px] text-muted-foreground">%</span>
-                                          <Button size="icon" variant="ghost" className="h-5 w-5" onClick={saveScore}>
-                                            <Check className="h-3 w-3 text-green-600" />
-                                          </Button>
-                                          <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => setEditingScore(null)}>
-                                            <X className="h-3 w-3" />
-                                          </Button>
-                                        </div>
-                                      ) : (
+                                      {selectedExam.mode === "quickvox" ? null : (
                                         <>
                                           <div className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getScoreBg(score)} ${getScoreColor(score)}`}>
                                             {(score * 100).toFixed(0)}%
                                           </div>
                                           {gradingMethod && <span className="text-[10px] text-muted-foreground">{methodLabel}</span>}
-                                          <Button size="icon" variant="ghost" className="h-5 w-5" onClick={() => startEditing(sub.id, resp.questionId, score)}>
-                                            <Edit2 className="h-3 w-3" />
-                                          </Button>
                                         </>
                                       )}
                                     </div>
@@ -916,131 +800,14 @@ export function SimpleExamTab() {
                           </div>
 
                           {selectedExam.mode !== "quickvox" && (
-                            <div className="space-y-3 mt-3 rounded-md border p-3" data-testid={`decision-panel-${sub.id}`}>
-                              <h5 className="text-xs font-semibold flex items-center gap-1.5">
-                                <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
-                                Your Decision
-                              </h5>
-                              <p className="text-[10px] text-muted-foreground">
-                                Record your judgment of the AI-suggested score. Nothing goes on the official transcript until you approve.
-                              </p>
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
-                                  variant={decisionChoice === "accepted" ? "default" : "outline"}
-                                  onClick={() => { setDecisionChoice("accepted"); setShowReasonPrompt(false); }}
-                                  data-testid={`button-decision-accept-${sub.id}`}
-                                >
-                                  Accept
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant={decisionChoice === "adjusted" ? "default" : "outline"}
-                                  onClick={() => { setDecisionChoice("adjusted"); setShowReasonPrompt(false); if (sub.voxScoreProfile) setVoxBreakdownOpen(true); }}
-                                  data-testid={`button-decision-adjust-${sub.id}`}
-                                >
-                                  Adjust
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant={decisionChoice === "overridden" ? "default" : "outline"}
-                                  onClick={() => { setDecisionChoice("overridden"); setShowReasonPrompt(false); if (sub.voxScoreProfile) setVoxBreakdownOpen(true); }}
-                                  data-testid={`button-decision-override-${sub.id}`}
-                                >
-                                  Override
-                                </Button>
-                              </div>
-
-                              {decisionChoice === "accepted" && (
-                                <p className="text-[10px] text-muted-foreground" data-testid={`text-decision-accept-hint-${sub.id}`}>
-                                  Records agreement with the AI score — no changes.
-                                </p>
-                              )}
-
-                              {(decisionChoice === "adjusted" || decisionChoice === "overridden") && (
-                                <p className="text-[10px] text-muted-foreground" data-testid={`text-decision-edit-hint-${sub.id}`}>
-                                  {decisionChoice === "adjusted"
-                                    ? "Edit individual question scores above using the pencil icon. The AI assessment stays as the base."
-                                    : "Replace the AI score by editing each question score above using the pencil icon."}
-                                </p>
-                              )}
-
-                              {(decisionChoice === "adjusted" || decisionChoice === "overridden") && (
-                                <div className="space-y-1">
-                                  <Label htmlFor={`reason-${sub.id}`} className="text-[10px]">
-                                    Reason for adjustment (optional but encouraged)
-                                  </Label>
-                                  <Textarea
-                                    id={`reason-${sub.id}`}
-                                    value={decisionReason}
-                                    onChange={(e) => setDecisionReason(e.target.value)}
-                                    placeholder="Explain why you changed the AI score — this helps improve AI accuracy over time."
-                                    className="text-xs min-h-[60px]"
-                                    data-testid={`textarea-decision-reason-${sub.id}`}
-                                  />
-                                </div>
-                              )}
-
-                              {selectedExam.mode === "exam" && (
-                                <div className="space-y-1">
-                                  <Label htmlFor={`holistic-${sub.id}`} className="text-[10px]">
-                                    Holistic impression (1–10) — not part of the official score
-                                  </Label>
-                                  <Input
-                                    id={`holistic-${sub.id}`}
-                                    type="number"
-                                    min="1"
-                                    max="10"
-                                    value={holisticScore}
-                                    onChange={(e) => setHolisticScore(e.target.value)}
-                                    className="w-20 h-7 text-xs"
-                                    data-testid={`input-holistic-${sub.id}`}
-                                  />
-                                </div>
-                              )}
-
-                              {showReasonPrompt && decisionReason.trim() === "" && (decisionChoice === "adjusted" || decisionChoice === "overridden") && (
-                                <div className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-2 space-y-2" data-testid={`prompt-reason-${sub.id}`}>
-                                  <p className="text-[10px] text-amber-800 dark:text-amber-300">
-                                    Adding a reason helps improve AI accuracy over time. Skip anyway?
-                                  </p>
-                                  <div className="flex gap-2">
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => setShowReasonPrompt(false)}
-                                      data-testid={`button-add-reason-${sub.id}`}
-                                    >
-                                      Add reason
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      onClick={() => persistDecision(sub)}
-                                      disabled={saveDecisionMutation.isPending}
-                                      data-testid={`button-skip-reason-${sub.id}`}
-                                    >
-                                      Skip
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
-
-                              <Button
-                                size="sm"
-                                onClick={() => handleSaveDecision(sub)}
-                                disabled={!decisionChoice || saveDecisionMutation.isPending}
-                                data-testid={`button-save-decision-${sub.id}`}
-                              >
-                                {saveDecisionMutation.isPending ? "Saving..." : "Save Decision"}
-                              </Button>
-
-                              {sub.professorReviewTimestamp && (
-                                <p className="text-[10px] text-muted-foreground" data-testid={`text-decision-saved-${sub.id}`}>
-                                  Last reviewed {format(new Date(sub.professorReviewTimestamp), "MMM d, yyyy h:mm a")}
-                                  {sub.professorDecision ? ` — ${sub.professorDecision}` : ""}
-                                </p>
-                              )}
-                            </div>
+                            <ProfessorDecisionPanel
+                              exam={selectedExam}
+                              submission={sub}
+                              onViewEvidence={() => {
+                                if (sub.voxScoreProfile) setVoxBreakdownOpen(true);
+                                scrollToEvidence();
+                              }}
+                            />
                           )}
 
                           {hasProctoringIssues && (
@@ -1076,7 +843,7 @@ export function SimpleExamTab() {
                 );
               })}
               {examSubmissions.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">No submissions yet</p>
+                <p className="text-sm text-muted-foreground text-center py-4">No submissions yet.</p>
               )}
             </div>
           </>
@@ -1368,7 +1135,7 @@ export function SimpleExamTab() {
         ) : simpleExams.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center">
-              <p className="text-muted-foreground text-sm">No quick exams created yet. Use the form above to get started.</p>
+              <p className="text-muted-foreground text-sm">No exams yet. Create your first exam above.</p>
             </CardContent>
           </Card>
         ) : (

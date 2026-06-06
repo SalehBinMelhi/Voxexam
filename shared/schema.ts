@@ -259,6 +259,8 @@ export const practiceSessions = pgTable("practice_sessions", {
   conceptCoverageMap: jsonb("concept_coverage_map").$type<PracticeConceptCoverageMap>(),
   languageUsed: text("language_used"),
   completedQuestionCount: integer("completed_question_count").default(0),
+  consentGiven: boolean("consent_given").default(false),
+  consentTimestamp: timestamp("consent_timestamp"),
 });
 
 export type PracticeSession = typeof practiceSessions.$inferSelect;
@@ -277,6 +279,8 @@ export const insertPracticeSessionSchema = createInsertSchema(practiceSessions, 
   overallVoxScoreProfile: true,
   conceptCoverageMap: true,
   completedQuestionCount: true,
+  consentGiven: true,
+  consentTimestamp: true,
 });
 
 export type InsertPracticeSession = z.infer<typeof insertPracticeSessionSchema>;
@@ -314,6 +318,8 @@ export const submissions = pgTable("submissions", {
   professorReviewDurationMinutes: real("professor_review_duration_minutes"),
   gradingGap: real("grading_gap"),
   arabicFlag: boolean("arabic_flag"),
+  consentGiven: boolean("consent_given").default(false),
+  consentTimestamp: timestamp("consent_timestamp"),
   asrConfidenceLevel: text("asr_confidence_level"),
   asrEstimatedWer: text("asr_estimated_wer"),
   criticalConceptErrorFlag: boolean("critical_concept_error_flag"),
@@ -330,6 +336,8 @@ export const insertExamSubmissionSchema = z.object({
   responses: z.array(examResponseSchema),
   studentId: z.string().optional(),
   isPreview: z.boolean().optional(),
+  consentGiven: z.boolean().optional(),
+  consentTimestamp: z.string().optional(),
 });
 
 export type InsertExamSubmission = z.infer<typeof insertExamSubmissionSchema>;

@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { StudentVoxScore } from "@/components/voxscore-breakdown";
+import { VoiceConsentDialog } from "@/components/voice-consent-dialog";
 import { Progress } from "@/components/ui/progress";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
@@ -314,7 +315,7 @@ interface TakeExamDialogProps {
   previewMode?: boolean;
 }
 
-type ExamPhase = "setup" | "exam" | "results";
+type ExamPhase = "setup" | "consent" | "exam" | "results";
 
 export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }: TakeExamDialogProps) {
   const { user } = useAuth();
@@ -325,6 +326,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   const [audioResponses, setAudioResponses] = useState<Map<string, string>>(new Map());
   const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map());
   const [submissionResult, setSubmissionResult] = useState<ExamSubmission | null>(null);
+  const [consentGiven, setConsentGiven] = useState(false);
+  const [consentTimestamp, setConsentTimestamp] = useState<string | null>(null);
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
   const [showTabWarning, setShowTabWarning] = useState(false);
   const tabSwitchLeftAtRef = useRef<number | null>(null);
@@ -357,6 +360,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       setScreenError("");
       setTabSwitchCount(0);
       setShowTabWarning(false);
+      setConsentGiven(false);
+      setConsentTimestamp(null);
     }
     return () => {
       stopAllStreams();
@@ -419,7 +424,15 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     }
   };
 
-  const startRecordings = () => {
+  const startRecordings = (confirmedConsent = consentGiven) => {
+    if (!confirmedConsent) {
+      toast({
+        title: "Consent required",
+        description: "You must consent before any recording starts.",
+        variant: "destructive",
+      });
+      return false;
+    }
     if (screenStream) {
       screenChunksRef.current = [];
       const recorder = new MediaRecorder(screenStream, { mimeType: "video/webm" });
@@ -434,6 +447,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       recorder.start(1000);
       webcamRecorderRef.current = recorder;
     }
+    return true;
   };
 
   const stopRecordings = (): Promise<{ screenBlob: Blob | null; webcamBlob: Blob | null }> => {
@@ -588,17 +602,39 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   }, [phase, toast]);
 
   const isQuickVox = exam.mode === "quickvox";
+  const isOfficialExam = exam.mode === "exam";
 
   const handleStartExam = () => {
+    setPhase("consent");
+  };
+
+  const handleConsentAccepted = () => {
+    const timestamp = new Date().toISOString();
+    setConsentGiven(true);
+    setConsentTimestamp(timestamp);
     if (!isQuickVox) {
-      startRecordings();
+      const started = startRecordings(true);
+      if (!started) return;
       startScreenshotCapture();
     }
     setPhase("exam");
   };
 
+  const handleConsentDeclined = () => {
+    setConsentGiven(false);
+    setConsentTimestamp(null);
+    handleClose();
+  };
+
   const submitMutation = useMutation({
-    mutationFn: async (data: { examId: string; responses: ExamResponse[]; studentId: string; isPreview?: boolean }) => {
+    mutationFn: async (data: {
+      examId: string;
+      responses: ExamResponse[];
+      studentId: string;
+      isPreview?: boolean;
+      consentGiven: boolean;
+      consentTimestamp: string;
+    }) => {
       const response = await apiRequest("POST", "/api/submissions", data);
       const submission = await response.json();
       return submission as ExamSubmission;
@@ -646,7 +682,9 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
         title: previewMode ? "Preview graded" : "Exam submitted",
         description: previewMode
           ? "Your preview has been graded by AI. This is a test run."
-          : "Your answers have been submitted and graded.",
+          : isOfficialExam
+            ? "Your response has been submitted. Your professor will review and release your results."
+            : "Your answers have been submitted and graded.",
       });
     },
     onError: () => {
@@ -709,6 +747,16 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   };
 
   const handleSubmit = () => {
+    if (!consentGiven) {
+      toast({
+        title: "Consent required",
+        description: "Please provide recording consent before submitting.",
+        variant: "destructive",
+      });
+      setPhase("consent");
+      return;
+    }
+
     const examResponses: ExamResponse[] = exam.questions.map((q) => ({
       questionId: q.id,
       response: responses.get(q.id) || "",
@@ -720,6 +768,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       responses: examResponses,
       studentId: user?.id || "",
       isPreview: previewMode || undefined,
+      consentGiven,
+      consentTimestamp: consentTimestamp || new Date().toISOString(),
     });
   };
 
@@ -737,6 +787,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     setScreenError("");
     setTabSwitchCount(0);
     setShowTabWarning(false);
+    setConsentGiven(false);
+    setConsentTimestamp(null);
     onOpenChange(false);
   };
 
@@ -750,6 +802,16 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
         return <MessageSquare className="h-4 w-4" />;
     }
   };
+
+  if (phase === "consent") {
+    return (
+      <VoiceConsentDialog
+        open={open}
+        onConsent={handleConsentAccepted}
+        onDecline={handleConsentDeclined}
+      />
+    );
+  }
 
   if (phase === "setup") {
     if (isQuickVox) {
@@ -790,6 +852,9 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
             </DialogTitle>
             <DialogDescription>
               Before starting, enable your camera and share your screen. Both are required during the exam.
+              <span className="mt-1 block" dir="rtl">
+                قبل البدء، فعّل الكاميرا وشارك شاشتك. كلاهما مطلوب أثناء الامتحان.
+              </span>
             </DialogDescription>
           </DialogHeader>
 
@@ -959,6 +1024,33 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
         </Dialog>
       );
     }
+    const officialPendingReview = isOfficialExam && !previewMode && !submissionResult.professorDecision;
+    if (officialPendingReview) {
+      return (
+        <Dialog open={open} onOpenChange={handleClose}>
+          <DialogContent className="max-w-md">
+            <DialogHeader className="text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                <CheckCircle2 className="h-8 w-8" />
+              </div>
+              <DialogTitle className="text-2xl">Response Submitted</DialogTitle>
+              <DialogDescription>
+                Your response has been submitted. Your professor will review and release your results.
+                <span className="mt-2 block" dir="rtl">
+                  تم تقديم إجابتك. سيقوم أستاذك بمراجعة نتائجك وإصدارها.
+                </span>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button className="w-full" onClick={handleClose} data-testid="button-close-results">
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      );
+    }
+
     const understandingScores = submissionResult.understandingScores || {};
     return (
       <Dialog open={open} onOpenChange={handleClose}>
@@ -1251,7 +1343,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
               data-testid="button-submit-exam"
             >
               <Send className="h-4 w-4 mr-2" />
-              {submitMutation.isPending ? "Grading..." : previewMode ? "Submit Preview" : "Submit Exam"}
+              {submitMutation.isPending ? (previewMode || isQuickVox ? "Grading..." : "Submitting...") : previewMode ? "Submit Preview" : "Submit Exam"}
             </Button>
           </div>
         </DialogFooter>
