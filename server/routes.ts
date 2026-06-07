@@ -1530,8 +1530,12 @@ export async function registerRoutes(
       }
 
       if (Object.keys(updates).length > 0) {
-        updates.proctoringUploadStatus = "upload_saved";
-        updates.proctoringUploadError = null;
+        const screenRecordingUrl = updates.screenRecordingUrl || submission.screenRecordingUrl;
+        const webcamRecordingUrl = updates.webcamRecordingUrl || submission.webcamRecordingUrl;
+        if (screenRecordingUrl && webcamRecordingUrl) {
+          updates.proctoringUploadStatus = "upload_saved";
+          updates.proctoringUploadError = null;
+        }
         await db.update(submissionsTable).set(updates).where(drizzleOrm.eq(submissionsTable.id, submissionId));
       }
 
@@ -1559,7 +1563,7 @@ export async function registerRoutes(
       }
 
       const statusSchema = z.object({
-        status: z.enum(["upload_failed", "upload_saved"]),
+        status: z.enum(["upload_failed"]),
         error: z.string().max(1000).optional(),
       });
       const statusResult = statusSchema.safeParse(req.body);
@@ -1573,7 +1577,7 @@ export async function registerRoutes(
 
       await db.update(submissionsTable).set({
         proctoringUploadStatus: statusResult.data.status,
-        proctoringUploadError: statusResult.data.status === "upload_failed" ? statusResult.data.error || "Recording upload failed" : null,
+        proctoringUploadError: statusResult.data.error || "Recording upload failed",
       }).where(drizzleOrm.eq(submissionsTable.id, submissionId));
 
       res.json({ success: true });
