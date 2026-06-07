@@ -1136,19 +1136,35 @@ async function evaluateResponse(
   materialContext?: string,
   customApiKey?: string | null
 ): Promise<EvalResult> {
-  let responseText = response;
-  let transcript: string | undefined;
+  if (question.type === "mcq") {
+    const score =
+      response.trim().toLowerCase() === (question.correctAnswer || "").trim().toLowerCase()
+        ? 1.0
+        : 0.0;
+    return { score, understandingScore: score, method: "exact" };
+  }
 
   // If audio data is provided, transcribe it first
   if (audioData) {
-    transcript = await transcribeAudio(audioData, question.text, { quality: "high" }) as string;
-    responseText = transcript || response;
+    const transcript = await transcribeAudio(audioData, question.text, { quality: "high" }) as string;
+    const transcriptText = transcript.trim();
+    if (transcriptText.length > 0) {
+      return evaluateWithAI(question, transcriptText, materialContext, customApiKey).then((result) => ({
+        ...result,
+        transcript,
+      }));
+    }
+
+    if (response.trim().length === 0) {
+      return { score: 0.0, understandingScore: 0.0, method: "fallback", transcript };
+    }
   }
 
-  return evaluateWithAI(question, responseText, materialContext, customApiKey).then((result) => ({
-    ...result,
-    transcript,
-  }));
+  if (response.trim().length === 0) {
+    return { score: 0.0, understandingScore: 0.0, method: "fallback" };
+  }
+
+  return evaluateWithAI(question, response, materialContext, customApiKey);
 }
 
 export async function generateFeedback(
@@ -1162,7 +1178,8 @@ export async function generateFeedback(
   try {
     const qaSummary = responses.map(r => {
       const question = exam.questions.find(q => q.id === r.questionId);
-      return `Q: ${question?.text}\nA: ${r.response}\nCorrectness: ${(scores[r.questionId] * 100).toFixed(0)}%\nUnderstanding: ${((understandingScores[r.questionId] ?? scores[r.questionId]) * 100).toFixed(0)}%`;
+      const answerText = r.transcript || r.response || "No answer";
+      return `Q: ${question?.text}\nA: ${answerText}\nCorrectness: ${(scores[r.questionId] * 100).toFixed(0)}%\nUnderstanding: ${((understandingScores[r.questionId] ?? scores[r.questionId]) * 100).toFixed(0)}%`;
     }).join("\n\n");
 
     const materialSection = materialContext
