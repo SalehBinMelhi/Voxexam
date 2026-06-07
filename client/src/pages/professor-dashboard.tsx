@@ -137,12 +137,12 @@ export default function ProfessorDashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-2" data-testid="tabs-dashboard">
-            <TabsTrigger value="simple" className="flex items-center gap-2" data-testid="tab-simple">
+          <TabsList className="grid w-full grid-cols-2 sm:max-w-md" data-testid="tabs-dashboard">
+            <TabsTrigger value="simple" className="flex h-auto w-full items-center justify-center gap-2 whitespace-normal px-3 py-2 text-xs sm:text-sm" data-testid="tab-simple">
               <FileQuestion className="h-4 w-4" />
               Quick Exam
             </TabsTrigger>
-            <TabsTrigger value="classes" className="flex items-center gap-2" data-testid="tab-classes">
+            <TabsTrigger value="classes" className="flex h-auto w-full items-center justify-center gap-2 whitespace-normal px-3 py-2 text-xs sm:text-sm" data-testid="tab-classes">
               <Layers className="h-4 w-4" />
               Classes
             </TabsTrigger>

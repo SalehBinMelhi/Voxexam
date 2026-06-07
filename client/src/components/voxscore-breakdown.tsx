@@ -79,7 +79,7 @@ export function ProfessorVoxScore({
       </div>
 
       {strongest && weakest && (
-        <div className="flex items-center gap-4 text-[10px]">
+        <div className="flex flex-col gap-2 text-[10px] sm:flex-row sm:items-center sm:gap-4">
           <span className="flex items-center gap-1 text-green-700 dark:text-green-400">
             <TrendingUp className="h-3 w-3" />
             Strongest: {voxProfessorName(strongest.dimension)}
@@ -93,7 +93,54 @@ export function ProfessorVoxScore({
 
       {open && (
         <div className="space-y-2" data-testid={`voxscore-table-${testId}`}>
-          <div className="overflow-x-auto">
+          <div className="space-y-2 sm:hidden">
+            {ordered.map((dim) => {
+              const c = voxBandColor(dim.band);
+              return (
+                <div
+                  key={dim.dimension}
+                  className="space-y-2 rounded-md border bg-background/70 p-3 text-[10px]"
+                  data-testid={`voxscore-row-${dim.dimension}-${testId}`}
+                >
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Dimension</p>
+                    <p className="font-medium">{voxProfessorName(dim.dimension)}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Band</p>
+                    <span className={`inline-flex rounded border px-1.5 py-0.5 font-medium ${c.bg} ${c.text} ${c.border}`}>
+                      {dim.band} {voxBandLabel(dim.band)}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Weight</p>
+                    <p className="text-muted-foreground">{voxWeightPercent(dim.dimension)}%</p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Contribution</p>
+                    <p className="text-muted-foreground">
+                      {dim.weightedScore.toFixed(1)}/{voxMaxContribution(dim.dimension)}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Evidence</p>
+                    <div className="text-muted-foreground">
+                      <span>{dim.evidence || <span className="italic">No rationale provided</span>}</span>
+                      <button
+                        type="button"
+                        className="ml-1 whitespace-nowrap text-primary underline hover:no-underline"
+                        onClick={() => onViewEvidence(dim.dimension)}
+                        data-testid={`button-voxscore-evidence-${dim.dimension}-${testId}`}
+                      >
+                        View evidence
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-[10px]">
               <thead>
                 <tr className="text-muted-foreground text-left border-b">
@@ -160,7 +207,7 @@ export function StudentVoxScore({ profile }: { profile: VoxScoreProfile }) {
     <div className="space-y-3" data-testid="student-voxscore-section">
       <h4 className="font-medium text-sm">VoxScore</h4>
 
-      <div className={`rounded-md border ${totalColor.border} ${totalColor.bg} p-3 flex items-center justify-between`}>
+      <div className={`rounded-md border ${totalColor.border} ${totalColor.bg} p-3 flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between`}>
         <div className="flex items-baseline gap-1">
           <span className={`text-3xl font-bold ${totalColor.text}`} data-testid="text-student-voxscore-total">
             {total}
@@ -216,17 +263,17 @@ export function StudentVoxScore({ profile }: { profile: VoxScoreProfile }) {
       </Button>
 
       {showAll && (
-        <div className="space-y-1" data-testid="student-voxscore-breakdown">
+        <div className="space-y-2" data-testid="student-voxscore-breakdown">
           {ordered.map((dim) => {
             const c = voxBandColor(dim.band);
             return (
               <div
                 key={dim.dimension}
-                className="flex items-center justify-between rounded-md border p-2"
+                className="flex flex-col items-start gap-2 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between"
                 data-testid={`student-voxscore-row-${dim.dimension}`}
               >
-                <span className="text-xs">{voxFriendlyName(dim.dimension)}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${c.bg} ${c.text} border ${c.border}`}>
+                <span className="text-sm">{voxFriendlyName(dim.dimension)}</span>
+                <span className={`rounded border px-2 py-1 text-xs font-semibold ${c.bg} ${c.text} ${c.border}`}>
                   {voxBandLabel(dim.band)}
                 </span>
               </div>
