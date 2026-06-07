@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { VoxScoreRadarChart, type VoxScoreRadarPoint } from "@/components/voxscore-radar-chart";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -39,9 +40,16 @@ import { format, parseISO } from "date-fns";
 
 type GraphMode = "both" | "correctness" | "understanding";
 
+interface StudentPerformanceRadarResponse {
+  studentId: string;
+  totalSubmissions: number;
+  voxScoreDimensions: VoxScoreRadarPoint[];
+}
+
 interface StudentDetailPanelProps {
   studentId: string;
   studentName: string;
+  classId: string;
   exams: Exam[];
   submissions: ExamSubmission[];
   onClose: () => void;
@@ -78,11 +86,16 @@ function getGradingMethodVariant(method: string): "default" | "secondary" | "out
   }
 }
 
-export function StudentDetailPanel({ studentId, studentName, exams, submissions, onClose }: StudentDetailPanelProps) {
+export function StudentDetailPanel({ studentId, studentName, classId, exams, submissions, onClose }: StudentDetailPanelProps) {
   const { toast } = useToast();
   const [graphMode, setGraphMode] = useState<GraphMode>("both");
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
   const [proctoringAnalysis, setProctoringAnalysis] = useState<Record<string, string>>({});
+  const { data: performanceRadar, isLoading: isRadarLoading } = useQuery<StudentPerformanceRadarResponse>({
+    queryKey: ["/api/students", studentId, `performance-radar?classId=${encodeURIComponent(classId)}`],
+    enabled: !!classId,
+    retry: false,
+  });
 
   const analyzeProctoring = useMutation({
     mutationFn: async (submissionId: string) => {
@@ -267,6 +280,14 @@ export function StudentDetailPanel({ studentId, studentName, exams, submissions,
           </CardContent>
         </Card>
       )}
+
+      <VoxScoreRadarChart
+        title="VoxScore Dimension Balance"
+        description="Knowledge / المعرفة · Reasoning / التفكير · Evidence / الأدلة"
+        data={performanceRadar?.voxScoreDimensions ?? []}
+        isLoading={isRadarLoading}
+        testId="card-student-voxscore-radar"
+      />
 
       <Separator />
 

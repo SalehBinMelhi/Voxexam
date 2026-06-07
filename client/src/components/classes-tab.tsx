@@ -246,6 +246,7 @@ export function ClassesTab() {
       <StudentDetailPanel
         studentId={selectedStudentId}
         studentName={selectedStudentName}
+        classId={selectedClass.id}
         exams={classExams}
         submissions={classSubmissions}
         onClose={() => { setSelectedStudentId(null); setSelectedStudentName(null); }}

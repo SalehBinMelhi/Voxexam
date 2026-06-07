@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { ProfessorVoxScore } from "@/components/voxscore-breakdown";
 import { ProfessorDecisionPanel } from "@/components/professor-decision-panel";
+import { VoxScoreRadarChart, type VoxScoreRadarPoint } from "@/components/voxscore-radar-chart";
 import {
   Dialog,
   DialogContent,
@@ -85,11 +86,45 @@ interface ExamAnalytics {
   students: { studentId: string; name: string | null; avgCorrectness: number; avgUnderstanding: number }[];
 }
 
-function AnalyticsSection({ examId, examTitle }: { examId: string; examTitle: string }) {
+interface ClassPerformanceRadarStudent {
+  studentId: string;
+  totalSubmissions: number;
+  voxScoreDimensions: VoxScoreRadarPoint[];
+}
+
+function AnalyticsSection({ examId, examTitle, classId }: { examId: string; examTitle: string; classId: string | null }) {
   const { data: analytics, isLoading, isError } = useQuery<ExamAnalytics>({
     queryKey: ["/api/exams", examId, "analytics"],
     retry: false,
   });
+  const {
+    data: classRadar = [],
+    isLoading: isRadarLoading,
+  } = useQuery<ClassPerformanceRadarStudent[]>({
+    queryKey: ["/api/classes", classId, `performance-radar?examId=${encodeURIComponent(examId)}`],
+    enabled: !!classId && !!examId,
+    retry: false,
+  });
+
+  const classRadarData: VoxScoreRadarPoint[] = (() => {
+    if (!classRadar.length) return [];
+
+    const aggregate = new Map<string, { label: string; total: number; count: number }>();
+    for (const student of classRadar) {
+      for (const dimension of student.voxScoreDimensions || []) {
+        const current = aggregate.get(dimension.dimension) ?? { label: dimension.label, total: 0, count: 0 };
+        current.total += dimension.score;
+        current.count += 1;
+        aggregate.set(dimension.dimension, current);
+      }
+    }
+
+    return Array.from(aggregate.entries()).map(([dimension, item]) => ({
+      dimension,
+      label: item.label,
+      score: item.count > 0 ? item.total / item.count : 0,
+    }));
+  })();
 
   const handleExportCsv = () => {
     if (!analytics || analytics.students.length === 0) return;
@@ -183,6 +218,16 @@ function AnalyticsSection({ examId, examTitle }: { examId: string; examTitle: st
           <p className="text-xs text-muted-foreground">Avg Understanding</p>
         </div>
       </div>
+
+      {classId ? (
+        <VoxScoreRadarChart
+          title="Class VoxScore Balance"
+          description="Average across selected exam submissions"
+          data={classRadarData}
+          isLoading={isRadarLoading}
+          testId="card-class-voxscore-radar"
+        />
+      ) : null}
 
       <div className="border rounded-md overflow-hidden">
         <table className="w-full text-xs" data-testid="table-analytics">
@@ -481,7 +526,7 @@ export function ExamDetailsDialog({
 
             <Separator />
 
-            <AnalyticsSection examId={exam.id} examTitle={exam.title} />
+            <AnalyticsSection examId={exam.id} examTitle={exam.title} classId={exam.classId ?? null} />
 
             <Separator />
 
