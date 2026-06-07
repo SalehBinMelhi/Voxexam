@@ -319,6 +319,7 @@ interface TakeExamDialogProps {
 }
 
 type ExamPhase = "setup" | "consent" | "exam" | "results";
+type RecordingUploadStatus = "idle" | "saving" | "saved" | "failed";
 
 export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }: TakeExamDialogProps) {
   const { user } = useAuth();
@@ -329,6 +330,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   const [audioResponses, setAudioResponses] = useState<Map<string, string>>(new Map());
   const [transcripts, setTranscripts] = useState<Map<string, string>>(new Map());
   const [submissionResult, setSubmissionResult] = useState<ExamSubmission | null>(null);
+  const [recordingUploadStatus, setRecordingUploadStatus] = useState<RecordingUploadStatus>("idle");
+  const [recordingUploadError, setRecordingUploadError] = useState("");
   const [consentGiven, setConsentGiven] = useState(false);
   const [consentTimestamp, setConsentTimestamp] = useState<string | null>(null);
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
@@ -361,6 +364,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
       setScreenReady(false);
       setWebcamError("");
       setScreenError("");
+      setRecordingUploadStatus("idle");
+      setRecordingUploadError("");
       setTabSwitchCount(0);
       setShowTabWarning(false);
       setConsentGiven(false);
@@ -623,6 +628,32 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     setPhase("exam");
   };
 
+  const getRecordingUploadErrorMessage = (error: unknown) => {
+    if (error instanceof Error && error.message.trim()) {
+      return error.message;
+    }
+    if (typeof error === "string" && error.trim()) {
+      return error;
+    }
+    return "Recording upload failed";
+  };
+
+  const reportRecordingUploadFailure = async (submissionId: string, error: unknown) => {
+    try {
+      await fetch(`/api/submissions/${submissionId}/proctoring-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "upload_failed",
+          error: getRecordingUploadErrorMessage(error),
+        }),
+        credentials: "include",
+      });
+    } catch (statusError) {
+      console.error("Failed to report recording upload status:", statusError);
+    }
+  };
+
   const handleConsentDeclined = () => {
     setConsentGiven(false);
     setConsentTimestamp(null);
@@ -651,18 +682,27 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
 
       const { screenBlob, webcamBlob } = await stopRecordings();
 
-      if ((screenBlob || webcamBlob) && result.id) {
+      if (!isQuickVox && (screenBlob || webcamBlob) && result.id) {
+        setRecordingUploadStatus("saving");
+        setRecordingUploadError("");
         try {
           const formData = new FormData();
           if (screenBlob) formData.append("screenRecording", screenBlob, "screen.webm");
           if (webcamBlob) formData.append("webcamRecording", webcamBlob, "webcam.webm");
-          await fetch(`/api/submissions/${result.id}/recordings`, {
+          const uploadResponse = await fetch(`/api/submissions/${result.id}/recordings`, {
             method: "POST",
             body: formData,
             credentials: "include",
           });
+          if (!uploadResponse.ok) {
+            throw new Error(`Recording upload failed with status ${uploadResponse.status}`);
+          }
+          setRecordingUploadStatus("saved");
         } catch (e) {
           console.error("Failed to upload recordings:", e);
+          setRecordingUploadStatus("failed");
+          setRecordingUploadError(getRecordingUploadErrorMessage(e));
+          await reportRecordingUploadFailure(result.id, e);
         }
       }
 
@@ -788,6 +828,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     setScreenReady(false);
     setWebcamError("");
     setScreenError("");
+    setRecordingUploadStatus("idle");
+    setRecordingUploadError("");
     setTabSwitchCount(0);
     setShowTabWarning(false);
     setConsentGiven(false);
@@ -942,6 +984,50 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
   }
 
   if (phase === "results" && submissionResult) {
+    const renderRecordingUploadStatus = () => {
+      if (isQuickVox || recordingUploadStatus === "idle") {
+        return null;
+      }
+
+      const statusCopy = (() => {
+        switch (recordingUploadStatus) {
+          case "saving":
+            return {
+              icon: <Monitor className="h-4 w-4 animate-pulse" />,
+              className: "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300",
+              text: "Saving exam recording... / جاري حفظ تسجيل الامتحان...",
+            };
+          case "saved":
+            return {
+              icon: <CheckCircle2 className="h-4 w-4" />,
+              className: "border-green-200 bg-green-50 text-green-800 dark:border-green-900/50 dark:bg-green-950/30 dark:text-green-300",
+              text: "Recording saved / تم حفظ التسجيل ✓",
+            };
+          case "failed":
+            return {
+              icon: <AlertTriangle className="h-4 w-4" />,
+              className: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300",
+              text: "Recording could not be saved. Please notify your professor. / تعذّر حفظ التسجيل. يرجى إبلاغ أستاذك.",
+            };
+        }
+      })();
+
+      return (
+        <div
+          className={`flex items-start gap-2 rounded-md border p-3 text-xs ${statusCopy.className}`}
+          data-testid={`recording-upload-status-${recordingUploadStatus}`}
+        >
+          <span className="mt-0.5 flex-shrink-0">{statusCopy.icon}</span>
+          <div className="space-y-1">
+            <p className="font-medium">{statusCopy.text}</p>
+            {recordingUploadStatus === "failed" && recordingUploadError && (
+              <p className="text-[11px] opacity-80">{recordingUploadError}</p>
+            )}
+          </div>
+        </div>
+      );
+    };
+
     if (isQuickVox) {
       const insight = submissionResult.quickvoxInsight || "";
       const followUp = submissionResult.quickvoxFollowUp || "";
@@ -1044,6 +1130,9 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                 </span>
               </DialogDescription>
             </DialogHeader>
+            <div className="py-4">
+              {renderRecordingUploadStatus()}
+            </div>
             <DialogFooter>
               <Button className="w-full" onClick={handleClose} data-testid="button-close-results">
                 Close
@@ -1116,6 +1205,8 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
                 })}
               </div>
             </div>
+
+            {renderRecordingUploadStatus()}
 
             {submissionResult.voxScoreProfile && (
               <StudentVoxScore profile={submissionResult.voxScoreProfile} />

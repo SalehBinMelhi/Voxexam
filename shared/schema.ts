@@ -304,6 +304,8 @@ export const submissions = pgTable("submissions", {
   isPreview: varchar("is_preview").default("false"),
   screenRecordingUrl: varchar("screen_recording_url"),
   webcamRecordingUrl: varchar("webcam_recording_url"),
+  proctoringUploadStatus: text("proctoring_upload_status"),
+  proctoringUploadError: text("proctoring_upload_error"),
   proctoringFlags: jsonb("proctoring_flags").$type<ProctoringFlag[]>(),
   tabSwitchCount: real("tab_switch_count").default(0),
   isSuspicious: varchar("is_suspicious").default("false"),
