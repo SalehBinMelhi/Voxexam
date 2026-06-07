@@ -224,6 +224,25 @@ function profileToRadarDimensions(profile?: VoxScoreProfile | null): RadarDimens
   });
 }
 
+function emptyStudentRadar(studentId: string): StudentPerformanceRadarResponse {
+  return {
+    studentId,
+    totalSubmissions: 0,
+    avgCorrectness: 0,
+    avgUnderstanding: 0,
+    questionTypeBreakdown: [],
+    strongestArea: null,
+    weakestArea: null,
+    trend: null,
+    gradingMethodDistribution: { ai: 0, exact: 0, fallback: 0, manual: 0, total: 0, fallbackRatio: 0 },
+    integrityRiskLevel: "low",
+    suspiciousSubmissionCount: 0,
+    avgTabSwitchCount: 0,
+    submissionTimeline: [],
+    voxScoreDimensions: [],
+  };
+}
+
 // Clamp a number into the 1–5 band range as an integer.
 function clampBand(n: number): VoxBand {
   const r = Math.round(n);
@@ -1582,6 +1601,10 @@ export async function logUserEvent(userId: string, eventType: string, metadata?:
 }
 
 export async function computeStudentRadar(studentId: string, filterExamIds?: string[]): Promise<StudentPerformanceRadarResponse> {
+  if (filterExamIds && filterExamIds.length === 0) {
+    return emptyStudentRadar(studentId);
+  }
+
   const examFilter = filterExamIds && filterExamIds.length > 0
     ? `AND s.exam_id = ANY($2)`
     : "";
@@ -1641,22 +1664,7 @@ export async function computeStudentRadar(studentId: string, filterExamIds?: str
   const totalSubmissions: number = summary.total_submissions;
 
   if (totalSubmissions === 0) {
-    return {
-      studentId,
-      totalSubmissions: 0,
-      avgCorrectness: 0,
-      avgUnderstanding: 0,
-      questionTypeBreakdown: [],
-      strongestArea: null,
-      weakestArea: null,
-      trend: null,
-      gradingMethodDistribution: { ai: 0, exact: 0, fallback: 0, manual: 0, total: 0, fallbackRatio: 0 },
-      integrityRiskLevel: "low",
-      suspiciousSubmissionCount: 0,
-      avgTabSwitchCount: 0,
-      submissionTimeline: [],
-      voxScoreDimensions: [],
-    };
+    return emptyStudentRadar(studentId);
   }
 
   const timeline: SubmissionTimelineEntry[] = timelineResult.rows.map((row: any) => ({

@@ -1734,7 +1734,21 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      const radar = await computeStudentRadar(studentId);
+      const classId = p(req.query.classId as string | string[] | undefined);
+      let filterExamIds: string[] | undefined;
+      if (classId) {
+        const cls = await storage.getClass(classId);
+        if (!cls) {
+          return res.status(404).json({ error: "Class not found" });
+        }
+        if (cls.professorId !== userId) {
+          return res.status(403).json({ error: "You can only view performance data for your own classes" });
+        }
+        const classExams = await storage.getExamsByClass(classId);
+        filterExamIds = classExams.map(e => e.id);
+      }
+
+      const radar = await computeStudentRadar(studentId, filterExamIds);
       res.json(radar);
     } catch (error) {
       console.error("Failed to compute student performance radar:", error);
@@ -1760,9 +1774,18 @@ export async function registerRoutes(
       }
 
       const classExams = await storage.getExamsByClass(classId);
-      const classExamIds = classExams.map(e => e.id);
+      const examId = p(req.query.examId as string | string[] | undefined);
+      let scopedExams = classExams;
+      if (examId) {
+        const selectedExam = classExams.find(e => e.id === examId);
+        if (!selectedExam) {
+          return res.status(404).json({ error: "Exam not found in this class" });
+        }
+        scopedExams = [selectedExam];
+      }
+      const scopedExamIds = scopedExams.map(e => e.id);
 
-      if (classExamIds.length === 0) {
+      if (scopedExamIds.length === 0) {
         return res.json([]);
       }
 
@@ -1774,7 +1797,7 @@ export async function registerRoutes(
       for (const enrollment of enrollmentsList) {
         studentIds.add(enrollment.studentId);
       }
-      for (const exam of classExams) {
+      for (const exam of scopedExams) {
         for (const sid of (exam.assignedStudentIds || [])) {
           studentIds.add(sid);
         }
@@ -1789,7 +1812,7 @@ export async function registerRoutes(
       }
 
       const radars = await Promise.all(
-        Array.from(studentIds).map(sid => computeStudentRadar(sid, classExamIds))
+        Array.from(studentIds).map(sid => computeStudentRadar(sid, scopedExamIds))
       );
 
       const nonEmpty = radars.filter(r => r.totalSubmissions > 0);

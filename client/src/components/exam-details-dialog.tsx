@@ -101,8 +101,8 @@ function AnalyticsSection({ examId, examTitle, classId }: { examId: string; exam
     data: classRadar = [],
     isLoading: isRadarLoading,
   } = useQuery<ClassPerformanceRadarStudent[]>({
-    queryKey: ["/api/classes", classId, "performance-radar"],
-    enabled: !!classId,
+    queryKey: ["/api/classes", classId, `performance-radar?examId=${encodeURIComponent(examId)}`],
+    enabled: !!classId && !!examId,
     retry: false,
   });
 
@@ -222,7 +222,7 @@ function AnalyticsSection({ examId, examTitle, classId }: { examId: string; exam
       {classId ? (
         <VoxScoreRadarChart
           title="Class VoxScore Balance"
-          description="Average across class submissions"
+          description="Average across selected exam submissions"
           data={classRadarData}
           isLoading={isRadarLoading}
           testId="card-class-voxscore-radar"
