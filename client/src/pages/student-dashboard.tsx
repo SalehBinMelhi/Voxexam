@@ -1,12 +1,15 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TakeExamDialog } from "@/components/take-exam-dialog";
 import { VoxPracticeDialog } from "@/components/voxpractice-dialog";
+import { AdaptiveExamDialog } from "@/components/adaptive-exam-dialog";
 import { HelpSupportPopover } from "@/components/help-support-popover";
 import { 
   LogOut, 
@@ -21,6 +24,10 @@ import {
   GraduationCap,
   Mic,
   Lock,
+  Sparkles,
+  Key,
+  User,
+  Home,
 } from "lucide-react";
 import type { Exam, ExamSubmission } from "@shared/schema";
 import { voxTotalBandColor } from "@/lib/voxscore";
@@ -45,8 +52,30 @@ function getExamStatus(exam: Exam): { label: string; variant: "default" | "secon
 
 export default function StudentDashboard() {
   const { user, logoutUrl } = useAuth();
+  const { toast } = useToast();
   const [selectedExam, setSelectedExam] = useState<Exam | null>(null);
   const [practiceOpen, setPracticeOpen] = useState(false);
+  const [adaptiveOpen, setAdaptiveOpen] = useState(false);
+
+  const handleSwitchToDoctor = async () => {
+    try {
+      const res = await apiRequest("POST", "/api/demo-login", { role: "professor" });
+      if (res.ok) {
+        queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+        toast({ title: "Switched to Doctor Portal" });
+      }
+    } catch {
+      toast({ title: "Failed to switch role", variant: "destructive" });
+    }
+  };
+
+  const handleGoHome = async () => {
+    try {
+      await fetch("/api/logout", { method: "POST" });
+    } catch {}
+    queryClient.setQueryData(["/api/auth/user"], null);
+    window.location.href = "/";
+  };
 
   const { data: exams = [], isLoading: examsLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
@@ -110,10 +139,33 @@ export default function StudentDashboard() {
             <span className="text-sm text-muted-foreground hidden sm:inline">
               {displayName}
             </span>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSwitchToDoctor}
+              className="gap-1 text-xs border-indigo-500/30 text-indigo-600 hover:bg-indigo-500/10"
+              title="Switch to Doctor Portal View"
+            >
+              <User className="h-3.5 w-3.5" />
+              Switch to Doctor Portal
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleGoHome}
+              className="gap-1 text-xs"
+              title="Return to Home Landing Page"
+            >
+              <Home className="h-3.5 w-3.5" />
+              Home
+            </Button>
+
             <HelpSupportPopover role="student" />
             <ThemeToggle />
             <a href={logoutUrl}>
-              <Button variant="ghost" size="icon" data-testid="button-logout">
+              <Button variant="ghost" size="icon" data-testid="button-logout" title="Exit / Logout">
                 <LogOut className="h-4 w-4" />
               </Button>
             </a>
@@ -125,6 +177,29 @@ export default function StudentDashboard() {
           <h2 className="text-2xl font-bold">My Exams</h2>
           <p className="text-muted-foreground">View and take your assigned exams</p>
         </div>
+
+        <Card className="border-indigo-500/30 bg-gradient-to-r from-indigo-500/10 via-primary/5 to-purple-500/10 shadow-sm">
+          <CardContent className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-11 h-11 rounded-md bg-indigo-500/20 text-indigo-600 flex items-center justify-center flex-shrink-0">
+                <Sparkles className="h-6 w-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-lg">Adaptive Oral Examination (Google Gemini)</h3>
+                  <Badge variant="outline" className="text-[11px] border-indigo-500/30 text-indigo-600">AI Powered</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Join an oral exam using a 5-digit access code provided by your doctor. The AI adapts follow-up questions to your answers.
+                </p>
+              </div>
+            </div>
+            <Button size="lg" onClick={() => setAdaptiveOpen(true)} className="flex-shrink-0 bg-gradient-to-r from-indigo-600 to-primary text-white gap-2">
+              <Key className="h-4 w-4" />
+              Join Exam with Code
+            </Button>
+          </CardContent>
+        </Card>
 
         <Card className="border-primary/30 bg-primary/5" data-testid="card-voxpractice-entry">
           <CardContent className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -401,6 +476,7 @@ export default function StudentDashboard() {
         />
       )}
       <VoxPracticeDialog open={practiceOpen} onOpenChange={setPracticeOpen} />
+      <AdaptiveExamDialog open={adaptiveOpen} onOpenChange={setAdaptiveOpen} />
     </div>
   );
 }

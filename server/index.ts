@@ -1,9 +1,10 @@
+import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { setupAuth, registerAuthRoutes, getSessionMiddleware } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, getSessionMiddleware } from "./auth";
 import { setupWebSocket } from "./websocket";
 
 const app = express();
@@ -101,7 +102,7 @@ app.use((req, res, next) => {
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      // reusePort: true,
     },
     () => {
       log(`serving on port ${port}`);

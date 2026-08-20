@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 
+import { users } from "./models/auth";
 export * from "./models/auth";
 
 export const questionTypes = ["mcq", "short", "audio"] as const;
@@ -91,24 +92,46 @@ export type InsertEnrollment = typeof enrollments.$inferInsert;
 export const exams = pgTable("exams", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: varchar("title").notNull(),
+  description: text("description"),
+  subjectName: varchar("subject_name"),
   professorId: varchar("professor_id").notNull(),
   classId: varchar("class_id"),
-  questions: jsonb("questions").notNull().$type<Question[]>(),
+  questions: jsonb("questions").notNull().$type<Question[]>().default([]),
+  blueprint: jsonb("blueprint"),
+  materialSummary: text("material_summary"),
+  maxQuestions: integer("max_questions").default(10),
+  maxFollowUpsPerConcept: integer("max_follow_ups_per_concept").default(2),
+  durationMinutes: integer("duration_minutes").default(30),
+  passingScore: real("passing_score").default(60),
+  showFinalScoreImmediately: boolean("show_final_score_immediately").default(true),
+  status: varchar("status").default("active"),
   startTime: varchar("start_time"),
   endTime: varchar("end_time"),
   assignedStudentIds: jsonb("assigned_student_ids").notNull().$type<string[]>().default([]),
   assignedStudentNames: jsonb("assigned_student_names").notNull().$type<string[]>().default([]),
-  accessCode: varchar("access_code").unique(),
+  accessCode: varchar("access_code").unique(), // Deprecated, use publicExamCode
+  publicExamCode: varchar("public_exam_code").unique(),
   accessCodeExpiresAt: timestamp("access_code_expires_at"),
   mode: varchar("mode").notNull().default("exam"),
+  currentVersionId: varchar("current_version_id"),
   createdAt: timestamp("created_at").defaultNow(),
+  publishedAt: timestamp("published_at"),
+  archivedAt: timestamp("archived_at"),
 });
 
 export type Exam = typeof exams.$inferSelect;
 
 export const insertExamSchema = z.object({
   title: z.string().min(1, "Exam title is required"),
-  questions: z.array(insertQuestionSchema).min(1, "At least one question is required"),
+  description: z.string().optional(),
+  subjectName: z.string().optional(),
+  questions: z.array(insertQuestionSchema).optional().default([]),
+  blueprint: z.any().optional(),
+  maxQuestions: z.number().optional().default(10),
+  maxFollowUpsPerConcept: z.number().optional().default(2),
+  durationMinutes: z.number().optional().default(30),
+  passingScore: z.number().optional().default(60),
+  showFinalScoreImmediately: z.boolean().optional().default(true),
   classId: z.string().optional().nullable(),
   startTime: z.string().nullable().optional(),
   endTime: z.string().nullable().optional(),
@@ -117,7 +140,7 @@ export const insertExamSchema = z.object({
   professorId: z.string().optional(),
   customAccessCode: z.string().max(10).optional(),
   autoGenerateCode: z.boolean().optional(),
-  mode: z.enum(["exam", "quickvox"]).optional().default("exam"),
+  mode: z.enum(["exam", "quickvox", "adaptive"]).optional().default("exam"),
 });
 
 export type InsertExam = z.infer<typeof insertExamSchema>;
@@ -289,18 +312,42 @@ export type InsertPracticeSession = z.infer<typeof insertPracticeSessionSchema>;
 export const professorDecisions = ["accepted", "adjusted", "overridden"] as const;
 export type ProfessorDecision = (typeof professorDecisions)[number];
 
-// Submissions table
+// Submissions table (Oral Exam Attempts)
 export const submissions = pgTable("submissions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   examId: varchar("exam_id").notNull(),
+  examVersionId: varchar("exam_version_id"),
   studentId: varchar("student_id").notNull(),
-  responses: jsonb("responses").notNull().$type<ExamResponse[]>(),
-  scores: jsonb("scores").notNull().$type<Record<string, number>>(),
+  studentSnapshot: jsonb("student_snapshot"),
+  examSnapshot: jsonb("exam_snapshot"),
+  startedAt: timestamp("started_at"),
+  responses: jsonb("responses").notNull().$type<ExamResponse[]>().default([]),
+  scores: jsonb("scores").notNull().$type<Record<string, number>>().default({}),
   understandingScores: jsonb("understanding_scores").$type<Record<string, number>>(),
   gradingMethods: jsonb("grading_methods").$type<Record<string, GradingMethod>>(),
-  totalScore: real("total_score").notNull(),
+  totalScore: real("total_score").notNull().default(0),
+  percentageScore: real("percentage_score"),
+  manualScore: real("manual_score"),
+  reviewStatus: varchar("review_status").default("not_reviewed"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
   totalUnderstandingScore: real("total_understanding_score"),
   feedback: jsonb("feedback").$type<{ strengths: string; weakPoints: string; recommendations: string } | null>(),
+  status: varchar("status").default("completed"), // in_progress | completed
+  currentConceptIndex: integer("current_concept_index").default(0),
+  adaptiveState: jsonb("adaptive_state"),
+  questionLogs: jsonb("question_logs").default([]),
+  finalScore: real("final_score"),
+  topicScores: jsonb("topic_scores"),
+  strengths: jsonb("strengths").default([]),
+  weaknesses: jsonb("weaknesses").default([]),
+  missingConcepts: jsonb("missing_concepts").default([]),
+  misconceptions: jsonb("misconceptions").default([]),
+  recommendations: jsonb("recommendations").default([]),
+  futureSuggestions: jsonb("future_suggestions").default([]),
+  doctorFinalScore: real("doctor_final_score"),
+  doctorTopicScores: jsonb("doctor_topic_scores"),
+  doctorScoreOverrides: jsonb("doctor_score_overrides").default([]),
   isPreview: varchar("is_preview").default("false"),
   screenRecordingUrl: varchar("screen_recording_url"),
   webcamRecordingUrl: varchar("webcam_recording_url"),
@@ -368,8 +415,9 @@ export const examsRelations = relations(exams, ({ one, many }) => ({
   submissions: many(submissions),
 }));
 
-export const submissionsRelations = relations(submissions, ({ one }) => ({
+export const submissionsRelations = relations(submissions, ({ one, many }) => ({
   exam: one(exams, { fields: [submissions.examId], references: [exams.id] }),
+  reviewRequests: many(reviewRequests),
 }));
 
 // User events table (audit logging)
@@ -412,6 +460,28 @@ export const chatMessages = pgTable("chat_messages", {
 
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
+
+// Grade Review Requests table
+export const reviewRequests = pgTable("review_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  attemptId: varchar("attempt_id").notNull(),
+  studentId: varchar("student_id").notNull(),
+  examId: varchar("exam_id").notNull(),
+  studentExplanation: text("student_explanation"),
+  status: varchar("status").notNull().default("pending"), // pending, in_review, approved, partially_approved, rejected, resolved
+  professorResponse: text("professor_response"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedByProfessorId: varchar("resolved_by_professor_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type ReviewRequest = typeof reviewRequests.$inferSelect;
+export type InsertReviewRequest = typeof reviewRequests.$inferInsert;
+
+export const reviewRequestsRelations = relations(reviewRequests, ({ one }) => ({
+  attempt: one(submissions, { fields: [reviewRequests.attemptId], references: [submissions.id] }),
+  exam: one(exams, { fields: [reviewRequests.examId], references: [exams.id] }),
+}));
 
 export interface QuestionTypeBreakdown {
   type: QuestionType;
@@ -463,3 +533,137 @@ export interface StudentPerformanceRadar {
   avgTabSwitchCount: number;
   submissionTimeline: SubmissionTimelineEntry[];
 }
+// ... to add to schema.ts
+
+// Exam Versions table
+export const examVersions = pgTable("exam_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  examId: varchar("exam_id").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  title: varchar("title").notNull(),
+  description: text("description"),
+  subjectName: varchar("subject_name"),
+  instructions: text("instructions"),
+  durationMinutes: integer("duration_minutes").default(30),
+  maxQuestions: integer("max_questions").default(10),
+  passingScore: real("passing_score").default(60),
+  totalPoints: real("total_points").default(0),
+  adaptiveSettings: jsonb("adaptive_settings"), // Maps to blueprint
+  gradingSettings: jsonb("grading_settings"),
+  availabilityStart: timestamp("availability_start"),
+  availabilityEnd: timestamp("availability_end"),
+  createdBy: varchar("created_by").notNull(), // professorId
+  createdAt: timestamp("created_at").defaultNow(),
+  publishedAt: timestamp("published_at"),
+});
+
+export type ExamVersion = typeof examVersions.$inferSelect;
+export type InsertExamVersion = typeof examVersions.$inferInsert;
+
+// Exam Questions table
+export const examQuestions = pgTable("exam_questions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  examVersionId: varchar("exam_version_id").notNull(),
+  questionOrder: integer("question_order").notNull(),
+  questionText: text("question_text").notNull(),
+  questionType: varchar("question_type").notNull(), // e.g. "oral", "mcq"
+  expectedAnswer: text("expected_answer"),
+  gradingRubric: text("grading_rubric"),
+  maximumPoints: real("maximum_points").default(100),
+  difficulty: varchar("difficulty").default("intermediate"),
+  topic: varchar("topic"),
+  followUpRules: jsonb("follow_up_rules"),
+  adaptiveMetadata: jsonb("adaptive_metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type ExamQuestion = typeof examQuestions.$inferSelect;
+export type InsertExamQuestion = typeof examQuestions.$inferInsert;
+
+// Attempt Answers table
+export const attemptAnswers = pgTable("attempt_answers", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  attemptId: varchar("attempt_id").notNull(),
+  questionId: varchar("question_id").notNull(),
+  questionSnapshot: jsonb("question_snapshot"),
+  answerText: text("answer_text"),
+  transcript: text("transcript"),
+  audioStoragePath: varchar("audio_storage_path"),
+  answerStartedAt: timestamp("answer_started_at"),
+  answeredAt: timestamp("answered_at"),
+  responseDurationSeconds: real("response_duration_seconds"),
+  automaticScore: real("automatic_score"),
+  automaticFeedback: text("automatic_feedback"),
+  automaticGradingExplanation: text("automatic_grading_explanation"),
+  automaticConfidence: varchar("automatic_confidence"),
+  manualScore: real("manual_score"),
+  manualFeedback: text("manual_feedback"),
+  finalScore: real("final_score"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type AttemptAnswer = typeof attemptAnswers.$inferSelect;
+export type InsertAttemptAnswer = typeof attemptAnswers.$inferInsert;
+
+// Grading Audit Logs table
+export const gradingAuditLogs = pgTable("grading_audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  attemptId: varchar("attempt_id").notNull(),
+  answerId: varchar("answer_id"), // Nullable if it's an attempt-wide score change
+  professorId: varchar("professor_id").notNull(),
+  previousScore: real("previous_score"),
+  newScore: real("new_score"),
+  previousFeedback: text("previous_feedback"),
+  newFeedback: text("new_feedback"),
+  changeReason: text("change_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type GradingAuditLog = typeof gradingAuditLogs.$inferSelect;
+export type InsertGradingAuditLog = typeof gradingAuditLogs.$inferInsert;
+
+// Updates to `exams`:
+/*
+  currentVersionId: varchar("current_version_id"),
+  publishedAt: timestamp("published_at"),
+  archivedAt: timestamp("archived_at"),
+  publicExamCode: varchar("public_exam_code").unique(), // rename from accessCode
+*/
+
+// Updates to `submissions`:
+/*
+  examVersionId: varchar("exam_version_id"),
+  studentSnapshot: jsonb("student_snapshot"),
+  examSnapshot: jsonb("exam_snapshot"),
+  startedAt: timestamp("started_at"),
+  percentageScore: real("percentage_score"),
+  reviewStatus: varchar("review_status").default("not_reviewed"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  manualScore: real("manual_score"),
+*/
+
+export const examVersionsRelations = relations(examVersions, ({ one, many }) => ({
+  exam: one(exams, { fields: [examVersions.examId], references: [exams.id] }),
+  questions: many(examQuestions),
+  attempts: many(submissions),
+}));
+
+export const examQuestionsRelations = relations(examQuestions, ({ one }) => ({
+  examVersion: one(examVersions, { fields: [examQuestions.examVersionId], references: [examVersions.id] }),
+}));
+
+export const attemptAnswersRelations = relations(attemptAnswers, ({ one }) => ({
+  attempt: one(submissions, { fields: [attemptAnswers.attemptId], references: [submissions.id] }),
+  question: one(examQuestions, { fields: [attemptAnswers.questionId], references: [examQuestions.id] }),
+}));
+
+export const gradingAuditLogsRelations = relations(gradingAuditLogs, ({ one }) => ({
+  attempt: one(submissions, { fields: [gradingAuditLogs.attemptId], references: [submissions.id] }),
+  answer: one(attemptAnswers, { fields: [gradingAuditLogs.answerId], references: [attemptAnswers.id] }),
+  professor: one(users, { fields: [gradingAuditLogs.professorId], references: [users.id] }),
+}));

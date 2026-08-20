@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SimpleExamTab } from "@/components/simple-exam-tab";
-import { ClassesTab } from "@/components/classes-tab";
+import { AdaptiveExamTab } from "@/components/adaptive-exam-tab";
 import {
   Dialog,
   DialogContent,
@@ -31,7 +31,8 @@ import {
   GraduationCap,
   Settings,
   FileQuestion,
-  Layers,
+  Mic,
+  Home,
 } from "lucide-react";
 import type { University } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -40,7 +41,7 @@ export default function ProfessorDashboard() {
   const { user, logout, logoutUrl } = useAuth();
   const { toast } = useToast();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("simple");
+  const [activeTab, setActiveTab] = useState("create-exam");
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [newUniversityName, setNewUniversityName] = useState("");
 
@@ -100,6 +101,14 @@ export default function ProfessorDashboard() {
     ? `${user.firstName} ${user.lastName || ""}`.trim()
     : user?.email || "Professor";
 
+  const handleGoHome = async () => {
+    try {
+      await fetch("/api/logout", { method: "POST" });
+    } catch {}
+    queryClient.setQueryData(["/api/auth/user"], null);
+    window.location.href = "/";
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b bg-card sticky top-0 z-50">
@@ -121,13 +130,25 @@ export default function ProfessorDashboard() {
             <span className="text-sm text-muted-foreground hidden sm:inline">
               {displayName}
             </span>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleGoHome}
+              className="gap-1 text-xs"
+              title="Return to Home Landing Page"
+            >
+              <Home className="h-3.5 w-3.5" />
+              Home
+            </Button>
+
             <HelpSupportPopover role="professor" activeTab={activeTab as "simple" | "classes"} />
             <Button variant="ghost" size="icon" onClick={() => setSettingsOpen(true)} data-testid="button-settings">
               <Settings className="h-4 w-4" />
             </Button>
             <ThemeToggle />
             <a href={logoutUrl}>
-              <Button variant="ghost" size="icon" data-testid="button-logout">
+              <Button variant="ghost" size="icon" data-testid="button-logout" title="Exit / Logout">
                 <LogOut className="h-4 w-4" />
               </Button>
             </a>
@@ -137,27 +158,28 @@ export default function ProfessorDashboard() {
 
       <main className="container mx-auto px-4 py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:max-w-md" data-testid="tabs-dashboard">
-            <TabsTrigger value="simple" className="flex h-auto w-full items-center justify-center gap-2 whitespace-normal px-3 py-2 text-xs sm:text-sm" data-testid="tab-simple">
+          <TabsList className="grid w-full grid-cols-2 sm:max-w-lg" data-testid="tabs-dashboard">
+            <TabsTrigger value="create-exam" className="flex h-auto w-full items-center justify-center gap-2 whitespace-normal px-3 py-2 text-xs sm:text-sm" data-testid="tab-create-exam">
               <FileQuestion className="h-4 w-4" />
-              Quick Exam
+              Create Exam
             </TabsTrigger>
-            <TabsTrigger value="classes" className="flex h-auto w-full items-center justify-center gap-2 whitespace-normal px-3 py-2 text-xs sm:text-sm" data-testid="tab-classes">
-              <Layers className="h-4 w-4" />
-              Classes
+            <TabsTrigger value="adaptive-oral" className="flex h-auto w-full items-center justify-center gap-2 whitespace-normal px-3 py-2 text-xs sm:text-sm" data-testid="tab-adaptive-oral">
+              <Mic className="h-4 w-4" />
+              Create Adaptive Oral Exam
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="simple">
+          <TabsContent value="create-exam">
             <SimpleExamTab />
           </TabsContent>
 
-          <TabsContent value="classes">
-            <ClassesTab />
+          <TabsContent value="adaptive-oral">
+            <AdaptiveExamTab />
           </TabsContent>
         </Tabs>
       </main>
 
+      {/* Settings Dialog */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -166,7 +188,7 @@ export default function ProfessorDashboard() {
               Settings
             </DialogTitle>
             <DialogDescription>
-              Link your university and manage its OpenAI API key
+              Link your university and manage its AI API key
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-5 py-2">
@@ -182,7 +204,7 @@ export default function ProfessorDashboard() {
               ) : (
                 <div className="space-y-3">
                   <p className="text-xs text-muted-foreground">
-                    Link your account to a university so your colleagues can share the same OpenAI API key.
+                    Link your account to a university so your colleagues can share the same AI API key.
                   </p>
                   {allUniversities.length > 0 && (
                     <div className="space-y-2">
@@ -221,14 +243,14 @@ export default function ProfessorDashboard() {
 
             {user?.universityId && (
               <div className="space-y-2">
-                <Label htmlFor="api-key">University OpenAI API Key (optional)</Label>
+                <Label htmlFor="api-key">University AI API Key (optional)</Label>
                 <p className="text-xs text-muted-foreground">
-                  Enter your university's OpenAI API key. All professors linked to this university will use it for AI question generation and grading.
+                  Enter your university's AI API key. All professors linked to this university will use it for AI question generation and grading.
                 </p>
                 <Input
                   id="api-key"
                   type="password"
-                  placeholder={userUniversity?.hasApiKey ? "••••••••••••••••" : "sk-..."}
+                  placeholder={userUniversity?.hasApiKey ? "••••••••••••••••" : "Enter API key..."}
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   data-testid="input-api-key"

@@ -1,16 +1,36 @@
-node_modules
-dist
-.DS_Store
-server/public
-vite.config.ts.*
-*.tar.gz
+# Dependencies
+node_modules/
 
-# Image files
-*.png
-*.jpg
-*.jpeg
-*.gif
-*.webp
-*.bmp
-*.svg
-*.ico
+# Build output
+dist/
+build/
+
+# Environment variables / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Generated server assets if appropriate
+server/public/
+
+# Temporary Vite files
+vite.config.ts.*
+
+# Archives
+*.tar.gz

@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users } from "lucide-react";
+import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users, KeyRound, UserPlus } from "lucide-react";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -28,15 +28,15 @@ const featureDetails: Record<Exclude<FeatureKey, null>, { title: string; icon: t
       },
       {
         heading: "Speech-to-Text Transcription",
-        text: "Once the student finishes recording, the audio is sent to GPT-4o-mini-transcribe for automatic transcription. The question text is included as context so the AI can better understand subject-specific terminology.",
+        text: "Once the student finishes recording, the audio is sent for automatic transcription using Google Gemini. The question text is included as context so the AI can better understand subject-specific terminology.",
       },
       {
         heading: "Format Handling",
-        text: "Different browsers record audio in different formats (WebM, OGG, etc.). The system automatically converts any format to WAV using ffmpeg before transcription, so it works reliably across all browsers.",
+        text: "Different browsers record audio in different formats (WebM, OGG, etc.). The system handles various formats automatically, so it works reliably across all browsers.",
       },
       {
         heading: "Grading",
-        text: "The transcribed text is then sent through the same AI grading pipeline as written answers — receiving both a correctness score and an understanding score. If transcription fails, a word-overlap fallback is used.",
+        text: "The transcribed text is then sent through the AI grading pipeline — receiving a score from 0 to 10 with detailed feedback. If transcription fails, a word-overlap fallback is used.",
       },
     ],
   },
@@ -47,24 +47,24 @@ const featureDetails: Record<Exclude<FeatureKey, null>, { title: string; icon: t
     iconColor: "text-chart-2",
     sections: [
       {
-        heading: "Dual Scoring System",
-        text: "Every answer receives two independent scores: a Correctness Score (are the facts accurate?) and an Understanding Score (does the student truly grasp the concept?). These scores often differ — a student might understand the idea well but state a fact slightly wrong.",
+        heading: "Intelligent Evaluation",
+        text: "Every answer is evaluated by Google Gemini AI, which acts as a fair professor. It compares the student's answer against the expected answer and any uploaded class materials.",
       },
       {
-        heading: "How the AI Evaluates",
-        text: "GPT-4o-mini acts as a fair professor. It compares the student's answer against the expected answer and any uploaded class materials. For oral/spoken answers, it doesn't penalize informal language, repetition, or filler words.",
+        heading: "Comprehensive Scoring",
+        text: "AI evaluates answers semantically, providing scores with detailed feedback including covered key points, missing concepts, and misconceptions.",
       },
       {
         heading: "Class Materials as Context",
-        text: "Professors can upload course materials (PDF, Word, PowerPoint, Excel, TXT, etc.) per class. These materials are extracted and passed to the AI when grading, so answers are evaluated against what was actually taught — not just the textbook definition.",
+        text: "Professors can upload course materials (PDF, Word, PowerPoint, Excel, TXT, etc.) per class. These materials are extracted and passed to the AI when grading, so answers are evaluated against what was actually taught.",
       },
       {
         heading: "MCQ vs. Open-Ended",
-        text: "Multiple-choice questions are graded by exact match (correct or incorrect). Short answer and audio questions go through the full AI evaluation pipeline. Professors can always manually override any score.",
+        text: "Multiple-choice questions are graded by exact match. Short answer and audio questions go through the full AI evaluation pipeline. Professors can always manually override any score.",
       },
       {
         heading: "Fallback Scoring",
-        text: "If the AI is unavailable, the system uses word-overlap scoring as a fallback — comparing common words between the student's answer and the expected answer. Scores are clearly labeled with how they were generated (AI, exact match, fallback, or manual).",
+        text: "If the AI is unavailable, the system uses word-overlap scoring as a fallback. Scores are clearly labeled with how they were generated (AI, exact match, fallback, or manual).",
       },
     ],
   },
@@ -76,31 +76,32 @@ const featureDetails: Record<Exclude<FeatureKey, null>, { title: string; icon: t
     sections: [
       {
         heading: "University & Class Hierarchy",
-        text: "Professors create or join a university, then create classes within it. Each class can have its own set of students, uploaded materials, and exams. This keeps everything organized by course.",
+        text: "Professors create or join a university, then create classes within it. Each class can have its own set of students, uploaded materials, and exams.",
       },
       {
         heading: "Student Enrollment",
-        text: "Students can be added to classes by the professor (by name or email) or can self-enroll. When creating an exam, professors can assign individual students or bulk-add all enrolled class students with one click.",
+        text: "Students can be added to classes by the professor or can self-enroll using a class code. When creating an exam, professors can assign individual students.",
       },
       {
         heading: "Exam Scheduling",
-        text: "Exams can have optional start and end times. If scheduled, students can only take them during the active window. If left unscheduled, the exam is available immediately and stays open indefinitely.",
+        text: "Exams can have optional start and end times. If scheduled, students can only take them during the active window. If left unscheduled, the exam is available immediately.",
       },
       {
         heading: "Submissions & Results",
-        text: "Professors see all submissions for their exams with summary statistics (average correctness, average understanding). They can expand each student's submission to see per-question scores, expected vs. actual answers, and AI-generated feedback with strengths, weak points, and study recommendations.",
+        text: "Professors see all submissions with summary statistics. They can expand each student's submission to see per-question scores, expected vs. actual answers, and AI-generated feedback.",
       },
       {
         heading: "Exam Proctoring",
-        text: "Before starting any exam, students must enable their webcam and share their screen. Both are recorded throughout the exam. The system also monitors for tab switches and flags suspicious activity. Professors can review recordings and proctoring alerts per submission.",
+        text: "Before starting any exam, students must enable their webcam and share their screen. Both are recorded throughout the exam. The system monitors for tab switches and flags suspicious activity.",
       },
     ],
   },
 };
 
 export default function LandingPage() {
-  const [loggingIn, setLoggingIn] = useState<string | null>(null);
   const [activeFeature, setActiveFeature] = useState<FeatureKey>(null);
+
+  // Student login state
   const [studentIdInput, setStudentIdInput] = useState("");
   const [examCodeInput, setExamCodeInput] = useState("");
   const [studentLoginError, setStudentLoginError] = useState("");
@@ -110,24 +111,18 @@ export default function LandingPage() {
   const [classLoginError, setClassLoginError] = useState("");
   const [classLoginLoading, setClassLoginLoading] = useState(false);
 
-  const handleDemoLogin = async (role: "professor" | "student") => {
-    setLoggingIn(role);
-    try {
-      const res = await fetch("/api/demo-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ role }),
-      });
-      if (res.ok) {
-        window.location.href = "/";
-      }
-    } catch (e) {
-      console.error("Demo login failed:", e);
-    } finally {
-      setLoggingIn(null);
-    }
-  };
+  // Professor auth state
+  const [professorDialogOpen, setProfessorDialogOpen] = useState(false);
+  const [professorTab, setProfessorTab] = useState<"signin" | "register">("signin");
+  const [profEmail, setProfEmail] = useState("");
+  const [profPassword, setProfPassword] = useState("");
+  const [profConfirmPassword, setProfConfirmPassword] = useState("");
+  const [profFullName, setProfFullName] = useState("");
+  const [profError, setProfError] = useState("");
+  const [profLoading, setProfLoading] = useState(false);
+
+  // Demo state
+  const [loggingIn, setLoggingIn] = useState<string | null>(null);
 
   const handleStudentLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,7 +145,7 @@ export default function LandingPage() {
       } else {
         setStudentLoginError(data.message || "Login failed. Please try again.");
       }
-    } catch (e) {
+    } catch {
       setStudentLoginError("Connection error. Please try again.");
     } finally {
       setStudentLoginLoading(false);
@@ -178,10 +173,129 @@ export default function LandingPage() {
       } else {
         setClassLoginError(data.message || "Login failed. Please try again.");
       }
-    } catch (e) {
+    } catch {
       setClassLoginError("Connection error. Please try again.");
     } finally {
       setClassLoginLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setStudentLoginError("");
+    setStudentLoginLoading(true);
+    try {
+      const res = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ role: "student" }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        setStudentLoginError(data.message || "Google Sign-In failed.");
+      }
+    } catch {
+      setStudentLoginError("Google Sign-In error. Please try again.");
+    } finally {
+      setStudentLoginLoading(false);
+    }
+  };
+
+  const handleDemoLogin = async (role: "professor" | "student") => {
+    setLoggingIn(role);
+    try {
+      const res = await fetch("/api/demo-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ role }),
+      });
+      if (res.ok) {
+        window.location.href = "/";
+      }
+    } catch (e) {
+      console.error("Demo login failed:", e);
+    } finally {
+      setLoggingIn(null);
+    }
+  };
+
+  const handleProfessorSignIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfError("");
+    if (!profEmail.trim() || !profPassword) {
+      setProfError("Email and password are required.");
+      return;
+    }
+    if (!profEmail.trim().toLowerCase().endsWith("@voxexam.ae")) {
+      setProfError("Email must end with @voxexam.ae");
+      return;
+    }
+    setProfLoading(true);
+    try {
+      const res = await fetch("/api/doctor-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: profEmail.trim(), password: profPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        setProfError(data.message || "Sign-in failed.");
+      }
+    } catch {
+      setProfError("Connection error. Please try again.");
+    } finally {
+      setProfLoading(false);
+    }
+  };
+
+  const handleProfessorRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfError("");
+    if (!profFullName.trim() || !profEmail.trim() || !profPassword || !profConfirmPassword) {
+      setProfError("All fields are required.");
+      return;
+    }
+    if (!profEmail.trim().toLowerCase().endsWith("@voxexam.ae")) {
+      setProfError("Email must end with @voxexam.ae");
+      return;
+    }
+    if (profPassword !== profConfirmPassword) {
+      setProfError("Passwords do not match.");
+      return;
+    }
+    if (profPassword.length < 8) {
+      setProfError("Password must be at least 8 characters.");
+      return;
+    }
+    setProfLoading(true);
+    try {
+      const res = await fetch("/api/professor/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          fullName: profFullName.trim(),
+          email: profEmail.trim(),
+          password: profPassword,
+          confirmPassword: profConfirmPassword,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        window.location.href = "/";
+      } else {
+        setProfError(data.message || "Registration failed.");
+      }
+    } catch {
+      setProfError("Connection error. Please try again.");
+    } finally {
+      setProfLoading(false);
     }
   };
 
@@ -189,19 +303,29 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b bg-card/80 backdrop-blur-sm sticky top-0 z-50">
+      <header className="border-b bg-card">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-md flex items-center justify-center" style={{ backgroundColor: "hsl(var(--brand-logo-bg))" }}>
               <GraduationCap className="h-5 w-5" style={{ color: "hsl(var(--brand-logo-fg))" }} />
             </div>
-            <span className="font-semibold text-lg"><span style={{ color: "hsl(var(--brand-text))" }}>Vox</span>Exams</span>
+            <div>
+              <h1 className="font-semibold"><span style={{ color: "hsl(var(--brand-text))" }}>Vox</span>Exams</h1>
+              <p className="text-xs text-muted-foreground">Oral Exam Platform</p>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <a href="/api/login">
-              <Button variant="outline" size="sm" data-testid="button-admin-login">Professor / Admin Login</Button>
-            </a>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => { setProfessorDialogOpen(true); setProfError(""); }}
+              data-testid="button-professor-login"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              Professor Login
+            </Button>
           </div>
         </div>
       </header>
@@ -222,10 +346,34 @@ export default function LandingPage() {
 
               <Card className="border-2 border-primary/20">
                 <CardContent className="p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <BookOpen className="h-5 w-5 text-primary" />
-                    <h3 className="font-semibold text-lg">Student Login</h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="h-5 w-5 text-primary" />
+                      <h3 className="font-semibold text-lg">Student Login</h3>
+                    </div>
                   </div>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full gap-3 border-2 shadow-sm font-medium bg-background hover:bg-muted mb-4 py-5"
+                    onClick={handleGoogleSignIn}
+                    disabled={studentLoginLoading}
+                  >
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                    </svg>
+                    Sign in with Google Account
+                  </Button>
+
+                  <div className="relative my-4 text-center">
+                    <div className="absolute inset-0 flex items-center"><div className="w-full border-t" /></div>
+                    <span className="relative bg-card px-3 text-xs text-muted-foreground uppercase tracking-wider font-semibold">Or enter access code</span>
+                  </div>
+
                   <Tabs defaultValue="join-exam" className="w-full">
                     <TabsList className="w-full" data-testid="tabs-student-login">
                       <TabsTrigger value="join-exam" className="flex-1" data-testid="tab-join-exam">Join Exam</TabsTrigger>
@@ -238,25 +386,11 @@ export default function LandingPage() {
                       <form onSubmit={handleStudentLogin} className="space-y-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="student-id">Your Name</Label>
-                          <Input
-                            id="student-id"
-                            placeholder="e.g. John Smith"
-                            value={studentIdInput}
-                            onChange={(e) => setStudentIdInput(e.target.value)}
-                            disabled={studentLoginLoading}
-                            data-testid="input-student-id"
-                          />
+                          <Input id="student-id" placeholder="e.g. John Smith" value={studentIdInput} onChange={(e) => setStudentIdInput(e.target.value)} disabled={studentLoginLoading} data-testid="input-student-id" />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="exam-code">Exam Code</Label>
-                          <Input
-                            id="exam-code"
-                            placeholder="Enter 5-digit code or exam ID"
-                            value={examCodeInput}
-                            onChange={(e) => setExamCodeInput(e.target.value)}
-                            disabled={studentLoginLoading}
-                            data-testid="input-exam-code"
-                          />
+                          <Input id="exam-code" placeholder="Enter 5-digit code or exam ID" value={examCodeInput} onChange={(e) => setExamCodeInput(e.target.value)} disabled={studentLoginLoading} data-testid="input-exam-code" />
                         </div>
                         {studentLoginError && (
                           <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-student-login-error">
@@ -264,13 +398,7 @@ export default function LandingPage() {
                             <span>{studentLoginError}</span>
                           </div>
                         )}
-                        <Button
-                          type="submit"
-                          className="w-full gap-2"
-                          size="lg"
-                          disabled={studentLoginLoading}
-                          data-testid="button-student-login"
-                        >
+                        <Button type="submit" className="w-full gap-2" size="lg" disabled={studentLoginLoading} data-testid="button-student-login">
                           <LogIn className="h-4 w-4" />
                           {studentLoginLoading ? "Logging in..." : "Enter Exam"}
                         </Button>
@@ -283,25 +411,11 @@ export default function LandingPage() {
                       <form onSubmit={handleClassLogin} className="space-y-3">
                         <div className="space-y-1.5">
                           <Label htmlFor="class-student-name">Your Name</Label>
-                          <Input
-                            id="class-student-name"
-                            placeholder="e.g. John Smith"
-                            value={classStudentName}
-                            onChange={(e) => setClassStudentName(e.target.value)}
-                            disabled={classLoginLoading}
-                            data-testid="input-class-student-name"
-                          />
+                          <Input id="class-student-name" placeholder="e.g. John Smith" value={classStudentName} onChange={(e) => setClassStudentName(e.target.value)} disabled={classLoginLoading} data-testid="input-class-student-name" />
                         </div>
                         <div className="space-y-1.5">
                           <Label htmlFor="class-code">Class Code</Label>
-                          <Input
-                            id="class-code"
-                            placeholder="Enter class join code"
-                            value={classCodeInput}
-                            onChange={(e) => setClassCodeInput(e.target.value)}
-                            disabled={classLoginLoading}
-                            data-testid="input-class-code"
-                          />
+                          <Input id="class-code" placeholder="Enter class join code" value={classCodeInput} onChange={(e) => setClassCodeInput(e.target.value)} disabled={classLoginLoading} data-testid="input-class-code" />
                         </div>
                         {classLoginError && (
                           <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-class-login-error">
@@ -309,13 +423,7 @@ export default function LandingPage() {
                             <span>{classLoginError}</span>
                           </div>
                         )}
-                        <Button
-                          type="submit"
-                          className="w-full gap-2"
-                          size="lg"
-                          disabled={classLoginLoading}
-                          data-testid="button-class-login"
-                        >
+                        <Button type="submit" className="w-full gap-2" size="lg" disabled={classLoginLoading} data-testid="button-class-login">
                           <Users className="h-4 w-4" />
                           {classLoginLoading ? "Joining..." : "Join Class"}
                         </Button>
@@ -334,7 +442,7 @@ export default function LandingPage() {
                     className="gap-2"
                     onClick={() => handleDemoLogin("professor")}
                     disabled={loggingIn !== null}
-                    data-testid="button-login-professor"
+                    data-testid="button-login-professor-demo"
                   >
                     <UserCog className="h-3.5 w-3.5" />
                     {loggingIn === "professor" ? "Logging in..." : "Demo Professor"}
@@ -345,7 +453,7 @@ export default function LandingPage() {
                     className="gap-2"
                     onClick={() => handleDemoLogin("student")}
                     disabled={loggingIn !== null}
-                    data-testid="button-login-student"
+                    data-testid="button-login-student-demo"
                   >
                     <BookOpen className="h-3.5 w-3.5" />
                     {loggingIn === "student" ? "Logging in..." : "Demo Student"}
@@ -381,11 +489,7 @@ export default function LandingPage() {
             <p className="text-muted-foreground">Everything you need for modern oral examinations</p>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
-            <Card
-              className="group hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => setActiveFeature("audio")}
-              data-testid="card-feature-audio"
-            >
+            <Card className="group hover:shadow-md transition-shadow cursor-pointer" onClick={() => setActiveFeature("audio")} data-testid="card-feature-audio">
               <CardContent className="p-6 space-y-4">
                 <div className="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center group-hover:bg-primary/20 transition-colors">
                   <Mic className="h-6 w-6 text-primary" />
@@ -399,29 +503,21 @@ export default function LandingPage() {
                 </p>
               </CardContent>
             </Card>
-            <Card
-              className="group hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => setActiveFeature("grading")}
-              data-testid="card-feature-grading"
-            >
+            <Card className="group hover:shadow-md transition-shadow cursor-pointer" onClick={() => setActiveFeature("grading")} data-testid="card-feature-grading">
               <CardContent className="p-6 space-y-4">
                 <div className="w-12 h-12 bg-chart-2/10 rounded-lg flex items-center justify-center group-hover:bg-chart-2/20 transition-colors">
                   <Brain className="h-6 w-6 text-chart-2" />
                 </div>
                 <h3 className="font-semibold text-lg">AI-Powered Grading</h3>
                 <p className="text-sm text-muted-foreground">
-                  GPT-4o-mini evaluates answers semantically, providing fair scores with manual override options.
+                  Gemini AI evaluates answers semantically, providing fair scores with manual override options.
                 </p>
                 <p className="text-xs text-primary font-medium flex items-center gap-1 group-hover:gap-2 transition-all">
                   Learn more <ChevronRight className="h-3 w-3" />
                 </p>
               </CardContent>
             </Card>
-            <Card
-              className="group hover:shadow-md transition-shadow cursor-pointer"
-              onClick={() => setActiveFeature("management")}
-              data-testid="card-feature-management"
-            >
+            <Card className="group hover:shadow-md transition-shadow cursor-pointer" onClick={() => setActiveFeature("management")} data-testid="card-feature-management">
               <CardContent className="p-6 space-y-4">
                 <div className="w-12 h-12 bg-chart-4/10 rounded-lg flex items-center justify-center group-hover:bg-chart-4/20 transition-colors">
                   <Shield className="h-6 w-6 text-chart-4" />
@@ -445,6 +541,7 @@ export default function LandingPage() {
         </div>
       </footer>
 
+      {/* Feature Detail Dialog */}
       <Dialog open={activeFeature !== null} onOpenChange={(open) => !open && setActiveFeature(null)}>
         {detail && (
           <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
@@ -466,6 +563,140 @@ export default function LandingPage() {
             </div>
           </DialogContent>
         )}
+      </Dialog>
+
+      {/* Professor Sign-In / Register Dialog */}
+      <Dialog open={professorDialogOpen} onOpenChange={setProfessorDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center">
+                <GraduationCap className="h-5 w-5 text-primary" />
+              </div>
+              <DialogTitle className="text-xl">Professor Portal</DialogTitle>
+            </div>
+          </DialogHeader>
+
+          <Tabs value={professorTab} onValueChange={(v) => { setProfessorTab(v as "signin" | "register"); setProfError(""); }} className="mt-2">
+            <TabsList className="w-full">
+              <TabsTrigger value="signin" className="flex-1 gap-1.5" data-testid="tab-prof-signin">
+                <LogIn className="h-3.5 w-3.5" />
+                Sign In
+              </TabsTrigger>
+              <TabsTrigger value="register" className="flex-1 gap-1.5" data-testid="tab-prof-register">
+                <UserPlus className="h-3.5 w-3.5" />
+                Create Account
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="signin" className="mt-4">
+              <form onSubmit={handleProfessorSignIn} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="prof-email-signin">Email</Label>
+                  <Input
+                    id="prof-email-signin"
+                    type="email"
+                    placeholder="professor@voxexam.ae"
+                    value={profEmail}
+                    onChange={(e) => setProfEmail(e.target.value)}
+                    disabled={profLoading}
+                    data-testid="input-prof-email-signin"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="prof-password-signin">Password</Label>
+                  <Input
+                    id="prof-password-signin"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={profPassword}
+                    onChange={(e) => setProfPassword(e.target.value)}
+                    disabled={profLoading}
+                    data-testid="input-prof-password-signin"
+                  />
+                </div>
+                {profError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    <span>{profError}</span>
+                  </div>
+                )}
+                <Button type="submit" className="w-full gap-2" size="lg" disabled={profLoading} data-testid="button-prof-signin">
+                  <LogIn className="h-4 w-4" />
+                  {profLoading ? "Signing in..." : "Sign In"}
+                </Button>
+                <p className="text-xs text-center text-muted-foreground">
+                  Only <strong>@voxexam.ae</strong> email addresses are accepted.
+                </p>
+              </form>
+            </TabsContent>
+
+            <TabsContent value="register" className="mt-4">
+              <form onSubmit={handleProfessorRegister} className="space-y-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="prof-fullname">Full Name</Label>
+                  <Input
+                    id="prof-fullname"
+                    placeholder="Dr. Ahmed Al Mansouri"
+                    value={profFullName}
+                    onChange={(e) => setProfFullName(e.target.value)}
+                    disabled={profLoading}
+                    data-testid="input-prof-fullname"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="prof-email-register">Email</Label>
+                  <Input
+                    id="prof-email-register"
+                    type="email"
+                    placeholder="professor@voxexam.ae"
+                    value={profEmail}
+                    onChange={(e) => setProfEmail(e.target.value)}
+                    disabled={profLoading}
+                    data-testid="input-prof-email-register"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="prof-password-register">Password</Label>
+                  <Input
+                    id="prof-password-register"
+                    type="password"
+                    placeholder="Min 8 chars, uppercase, lowercase, number"
+                    value={profPassword}
+                    onChange={(e) => setProfPassword(e.target.value)}
+                    disabled={profLoading}
+                    data-testid="input-prof-password-register"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="prof-confirm-password">Confirm Password</Label>
+                  <Input
+                    id="prof-confirm-password"
+                    type="password"
+                    placeholder="Re-enter password"
+                    value={profConfirmPassword}
+                    onChange={(e) => setProfConfirmPassword(e.target.value)}
+                    disabled={profLoading}
+                    data-testid="input-prof-confirm-password"
+                  />
+                </div>
+                {profError && (
+                  <div className="flex items-center gap-2 text-sm text-destructive">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                    <span>{profError}</span>
+                  </div>
+                )}
+                <Button type="submit" className="w-full gap-2" size="lg" disabled={profLoading} data-testid="button-prof-register">
+                  <UserPlus className="h-4 w-4" />
+                  {profLoading ? "Creating Account..." : "Create Professor Account"}
+                </Button>
+                <p className="text-xs text-center text-muted-foreground">
+                  Only <strong>@voxexam.ae</strong> email addresses are accepted.
+                </p>
+              </form>
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
       </Dialog>
     </div>
   );

@@ -11,13 +11,28 @@ import mammoth from "mammoth";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent, analyzePracticeMaterial, generatePracticeQuestions, generatePracticeProbe, generatePracticeMicroFeedback, buildPracticeReadinessReport } from "./storage";
-import { isAuthenticated } from "./replit_integrations/auth";
-import { objectStorageClient } from "./replit_integrations/object_storage";
+import { isAuthenticated, isProfessor } from "./auth";
+import { db } from "./db";
+import { exams, submissions } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
+import {
+  analyzeLectureMaterial,
+  evaluateAnswerAndGenerateAdaptiveNextQuestion,
+  evaluateCompleteExamAttempt,
+  evaluateOralAnswer,
+  type ExamBlueprint,
+  type ExamBlueprintConcept,
+} from "./gemini";
 import { insertExamSchema, insertExamSubmissionSchema, insertPracticeSessionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD, type PracticeQuestion } from "@shared/schema";
 import { z } from "zod";
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+
+function getUserId(req: any): string {
+  if (!req?.user) return "demo-professor";
+  return req.user.claims?.sub || req.user.id || req.user.sub || "demo-professor";
+}
 
 const RECORDINGS_DIR = path.join(process.cwd(), "recordings");
 if (!fs.existsSync(RECORDINGS_DIR)) {
@@ -25,7 +40,7 @@ if (!fs.existsSync(RECORDINGS_DIR)) {
 }
 
 // Resolve the bucket and object name for a proctoring recording stored in
-// Replit Object Storage, under the private object dir's "recordings/" prefix.
+// object storage under the private object dir's "recordings/" prefix.
 function getRecordingObjectLocation(fileName: string): { bucketName: string; objectName: string } {
   const privateDir = process.env.PRIVATE_OBJECT_DIR || "";
   if (!privateDir) {
@@ -41,11 +56,11 @@ function getRecordingObjectLocation(fileName: string): { bucketName: string; obj
   return { bucketName, objectName };
 }
 
-// Upload a proctoring recording buffer to Object Storage. Returns the filename.
+// Upload a proctoring recording buffer to local recordings folder. Returns void.
 async function uploadRecordingToObjectStorage(fileName: string, buffer: Buffer): Promise<void> {
-  const { bucketName, objectName } = getRecordingObjectLocation(fileName);
-  const file = objectStorageClient.bucket(bucketName).file(objectName);
-  await file.save(buffer, { contentType: "video/webm" });
+  const filePath = path.join(RECORDINGS_DIR, fileName);
+  await fs.promises.mkdir(RECORDINGS_DIR, { recursive: true });
+  await fs.promises.writeFile(filePath, buffer);
 }
 
 // Extract readable plain text from an uploaded study-material file. Supports
@@ -175,6 +190,522 @@ export async function registerRoutes(
     const { openaiApiKey, ...safe } = user;
     return safe;
   };
+
+  // =========================================================================
+  // GOOGLE GEMINI ADAPTIVE ORAL EXAM ROUTES
+  // =========================================================================
+
+  // 1. Create Exam (Doctor)
+  app.post("/api/adaptive-exams", isProfessor, async (req, res) => {
+    try {
+      const sessUser = req.user as any;
+      const professorId = sessUser?.claims?.sub || sessUser?.id || "demo-doctor";
+      const {
+        title,
+        description,
+        subjectName,
+        maxQuestions = 10,
+        maxFollowUpsPerConcept = 2,
+        durationMinutes = 30,
+        passingScore = 60,
+        showFinalScoreImmediately = true,
+      } = req.body;
+
+      if (!title || typeof title !== "string" || !title.trim()) {
+        return res.status(400).json({ error: "Exam title is required" });
+      }
+
+      const accessCode = Math.floor(10000 + Math.random() * 90000).toString();
+
+      const [newExam] = await db.insert(exams).values({
+        title: title.trim(),
+        description: description?.trim() || "",
+        subjectName: subjectName?.trim() || "",
+        professorId,
+        questions: [],
+        maxQuestions: Number(maxQuestions) || 10,
+        maxFollowUpsPerConcept: Number(maxFollowUpsPerConcept) || 2,
+        durationMinutes: Number(durationMinutes) || 30,
+        passingScore: Number(passingScore) || 60,
+        showFinalScoreImmediately: Boolean(showFinalScoreImmediately),
+        accessCode,
+        status: "draft",
+        mode: "adaptive",
+      }).returning();
+
+      res.json(newExam);
+    } catch (error: any) {
+      console.error("Create adaptive exam error:", error);
+      res.status(500).json({ error: "Failed to create exam: " + error.message });
+    }
+  });
+
+  // 2. Upload Material & Generate Gemini Blueprint (Doctor)
+  app.post("/api/adaptive-exams/:id/upload-material", isProfessor, upload.array("materials", 5), async (req, res) => {
+    try {
+      const examId = p(req.params.id);
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: "No files uploaded" });
+      }
+
+      let combinedText = "";
+      for (const file of files) {
+        const text = await extractTextFromUpload(file.buffer, file.originalname, file.mimetype);
+        combinedText += `\n--- FILE: ${file.originalname} ---\n${text}`;
+      }
+
+      if (!combinedText.trim()) {
+        return res.status(400).json({ error: "No readable text content extracted from uploaded files" });
+      }
+
+      // Analyze material with Google Gemini
+      const blueprint = await analyzeLectureMaterial(combinedText);
+
+      // Save material & blueprint to exam
+      const [updatedExam] = await db.update(exams).set({
+        blueprint: blueprint as any,
+        materialSummary: blueprint.summary,
+        subjectName: blueprint.courseName || undefined,
+        status: "active",
+      }).where(eq(exams.id, examId)).returning();
+
+      res.json({ success: true, blueprint, exam: updatedExam });
+    } catch (error: any) {
+      console.error("Material analysis error:", error);
+      res.status(500).json({ error: "Material analysis failed: " + error.message });
+    }
+  });
+
+  // 3. Edit Blueprint & Publish Exam (Doctor)
+  app.put("/api/adaptive-exams/:id/blueprint", isProfessor, async (req, res) => {
+    try {
+      const examId = p(req.params.id);
+      const { blueprint, status = "active", maxQuestions, maxFollowUpsPerConcept, durationMinutes } = req.body;
+
+      const [updatedExam] = await db.update(exams).set({
+        blueprint: blueprint as any,
+        status,
+        ...(maxQuestions ? { maxQuestions: Number(maxQuestions) } : {}),
+        ...(maxFollowUpsPerConcept ? { maxFollowUpsPerConcept: Number(maxFollowUpsPerConcept) } : {}),
+        ...(durationMinutes ? { durationMinutes: Number(durationMinutes) } : {}),
+      }).where(eq(exams.id, examId)).returning();
+
+      res.json(updatedExam);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update blueprint" });
+    }
+  });
+
+  // 4. Validate Student Access Code (Student)
+  app.post("/api/student/validate-code", async (req, res) => {
+    try {
+      const { accessCode } = req.body;
+      if (!accessCode || typeof accessCode !== "string") {
+        return res.status(400).json({ error: "Access code is required" });
+      }
+
+      const cleanCode = accessCode.trim();
+      let [rawExam] = await db.select().from(exams).where(eq(exams.publicExamCode, cleanCode));
+      if (!rawExam) {
+        const result = await db.select().from(exams).where(eq(exams.accessCode, cleanCode));
+        rawExam = result[0];
+      }
+
+      if (!rawExam) {
+        return res.status(404).json({ error: "Invalid exam code. Please check with your professor." });
+      }
+
+      const exam = await storage.getExam(rawExam.id);
+      
+      if (!exam) {
+        return res.status(404).json({ error: "Exam data could not be retrieved." });
+      }
+
+      if (exam.status === "inactive" || exam.status === "draft") {
+        return res.status(403).json({ error: "This exam is not active." });
+      }
+
+      if (exam.accessCodeExpiresAt && new Date(exam.accessCodeExpiresAt) < new Date()) {
+        return res.status(410).json({ error: "This exam code has expired." });
+      }
+
+      res.json({
+        valid: true,
+        examId: exam.id,
+        title: exam.title,
+        description: exam.description,
+        subjectName: exam.subjectName,
+        maxQuestions: exam.maxQuestions,
+        durationMinutes: exam.durationMinutes,
+        showFinalScoreImmediately: exam.showFinalScoreImmediately,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Validation failed" });
+    }
+  });
+
+  // 5. Start Adaptive Exam Attempt (Student)
+  app.post("/api/adaptive-attempts/start", async (req, res) => {
+    try {
+      const { examId, studentId = "student-demo", studentName = "Student" } = req.body;
+      const exam = await storage.getExam(examId);
+
+      if (!exam || !exam.blueprint) {
+        return res.status(404).json({ error: "Exam or exam blueprint not found" });
+      }
+
+      const blueprint = exam.blueprint as ExamBlueprint;
+      const firstTopic = blueprint.topics?.[0];
+      const firstConcept = firstTopic?.concepts?.[0];
+
+      if (!firstConcept) {
+        return res.status(400).json({ error: "No concepts available in this exam blueprint" });
+      }
+
+      const initialQuestion = firstConcept.suggestedInitialQuestion || `Explain the key ideas of ${firstConcept.title}.`;
+
+      const initialAdaptiveState = {
+        currentTopicIndex: 0,
+        currentConceptIndex: 0,
+        currentConceptId: firstConcept.id,
+        currentConceptTitle: firstConcept.title,
+        followUpCountForConcept: 0,
+        totalQuestionsAsked: 1,
+        conceptCoverageMap: {},
+      };
+
+      const initialQuestionLog = {
+        questionIndex: 1,
+        conceptId: firstConcept.id,
+        conceptTitle: firstConcept.title,
+        question: initialQuestion,
+        createdAt: new Date().toISOString(),
+      };
+
+      const [attempt] = await db.insert(submissions).values({
+        examId,
+        studentId,
+        status: "in_progress",
+        currentConceptIndex: 0,
+        adaptiveState: initialAdaptiveState as any,
+        questionLogs: [initialQuestionLog] as any,
+        responses: [],
+        scores: {},
+        totalScore: 0,
+        submittedAt: new Date().toISOString(),
+      }).returning();
+
+      res.json({
+        attemptId: attempt.id,
+        examTitle: exam.title,
+        currentQuestion: initialQuestion,
+        questionNumber: 1,
+        totalQuestions: exam.maxQuestions || 10,
+        conceptTitle: firstConcept.title,
+      });
+    } catch (error: any) {
+      console.error("Start attempt error:", error);
+      res.status(500).json({ error: "Failed to start exam attempt: " + error.message });
+    }
+  });
+
+  // 6. Submit Audio/Text Answer & Get Next Adaptive Question (Student)
+  app.post("/api/adaptive-attempts/:id/answer", recordingUpload.single("audio"), async (req, res) => {
+    try {
+      const attemptId = p(req.params.id);
+      const { transcriptText } = req.body;
+      const file = req.file;
+
+      const [attempt] = await db.select().from(submissions).where(eq(submissions.id, attemptId));
+      if (!attempt) {
+        return res.status(404).json({ error: "Exam attempt not found" });
+      }
+
+      if (attempt.status === "completed") {
+        return res.status(400).json({ error: "Exam attempt is already completed" });
+      }
+
+      const exam = await storage.getExam(attempt.examId);
+      if (!exam || !exam.blueprint) {
+        return res.status(404).json({ error: "Exam definition not found" });
+      }
+
+      const blueprint = exam.blueprint as ExamBlueprint;
+      const logs = (attempt.questionLogs as any[]) || [];
+      const currentLog = logs[logs.length - 1];
+
+      if (!currentLog) {
+        return res.status(400).json({ error: "No active question found in attempt log" });
+      }
+
+      let targetConcept: ExamBlueprintConcept | null = null;
+      for (const topic of blueprint.topics || []) {
+        for (const concept of topic.concepts || []) {
+          if (concept.id === currentLog.conceptId || concept.title === currentLog.conceptTitle) {
+            targetConcept = concept;
+            break;
+          }
+        }
+        if (targetConcept) break;
+      }
+
+      if (!targetConcept && blueprint.topics?.[0]?.concepts?.[0]) {
+        targetConcept = blueprint.topics[0].concepts[0];
+      }
+
+      let audioBase64: string | undefined;
+      let mimeType: string | undefined;
+
+      if (file) {
+        audioBase64 = file.buffer.toString("base64");
+        mimeType = file.mimetype || "audio/webm";
+      }
+
+      const state = (attempt.adaptiveState as any) || {};
+      const followUpCount = state.followUpCountForConcept || 0;
+      const totalAsked = logs.length;
+      const maxQ = exam.maxQuestions || 10;
+      const maxF = exam.maxFollowUpsPerConcept || 2;
+
+      // Evaluate answer and generate next adaptive question using Google Gemini
+      const evalResult = await evaluateAnswerAndGenerateAdaptiveNextQuestion({
+        blueprint,
+        currentConcept: targetConcept!,
+        currentQuestion: currentLog.question,
+        studentAudioBase64: audioBase64,
+        audioMimeType: mimeType,
+        studentTranscriptText: transcriptText || undefined,
+        previousLogs: logs.map(l => ({
+          question: l.question,
+          conceptId: l.conceptId,
+          transcript: l.transcript || "",
+          coveredPoints: l.coveredKeyPoints || [],
+          missingPoints: l.missingKeyPoints || [],
+          misconceptions: l.misconceptions || [],
+          score: l.score || 0,
+        })),
+        followUpCountForConcept: followUpCount,
+        maxFollowUpsPerConcept: maxF,
+        totalQuestionsAsked: totalAsked,
+        maxQuestions: maxQ,
+      });
+
+      currentLog.transcript = evalResult.transcript;
+      currentLog.answerSummary = evalResult.answerSummary;
+      currentLog.coveredKeyPoints = evalResult.coveredKeyPoints;
+      currentLog.missingKeyPoints = evalResult.missingKeyPoints;
+      currentLog.misconceptions = evalResult.misconceptions;
+      currentLog.score = evalResult.score;
+      currentLog.correctness = evalResult.correctness;
+      currentLog.studentFeedback = evalResult.studentFeedback;
+      if (audioBase64) {
+        currentLog.audioBase64 = audioBase64;
+      }
+
+      let isFinished = false;
+      let nextQuestionText: string | null = null;
+      let nextConcept: ExamBlueprintConcept | null = null;
+
+      if (totalAsked >= maxQ || evalResult.nextAction === "finish_exam") {
+        isFinished = true;
+      } else if (evalResult.nextAction === "follow_up" || evalResult.nextAction === "clarify" || evalResult.nextAction === "simplify") {
+        nextQuestionText = evalResult.nextQuestion || `Could you elaborate further on ${targetConcept?.title}?`;
+        nextConcept = targetConcept;
+        state.followUpCountForConcept = followUpCount + 1;
+      } else {
+        state.followUpCountForConcept = 0;
+        let foundCurrent = false;
+        for (const topic of blueprint.topics || []) {
+          for (const concept of topic.concepts || []) {
+            if (foundCurrent) {
+              nextConcept = concept;
+              break;
+            }
+            if (concept.id === targetConcept?.id) {
+              foundCurrent = true;
+            }
+          }
+          if (nextConcept) break;
+        }
+
+        if (!nextConcept) {
+          isFinished = true;
+        } else {
+          nextQuestionText = evalResult.nextQuestion || nextConcept.suggestedInitialQuestion || `Explain ${nextConcept.title}.`;
+        }
+      }
+
+      if (!isFinished && nextQuestionText && nextConcept) {
+        const nextLog = {
+          questionIndex: logs.length + 1,
+          conceptId: nextConcept.id,
+          conceptTitle: nextConcept.title,
+          question: nextQuestionText,
+          createdAt: new Date().toISOString(),
+        };
+        logs.push(nextLog);
+        state.currentConceptId = nextConcept.id;
+        state.currentConceptTitle = nextConcept.title;
+      }
+
+      if (isFinished) {
+        const finalReport = await evaluateCompleteExamAttempt({
+          blueprint,
+          attemptLogs: logs.map(l => ({
+            question: l.question,
+            conceptTitle: l.conceptTitle,
+            transcript: l.transcript || "",
+            coveredPoints: l.coveredKeyPoints || [],
+            missingPoints: l.missingKeyPoints || [],
+            misconceptions: l.misconceptions || [],
+            score: l.score || 0,
+          })),
+        });
+
+        const [finalAttempt] = await db.update(submissions).set({
+          status: "completed",
+          questionLogs: logs as any,
+          adaptiveState: state as any,
+          finalScore: finalReport.finalScore,
+          totalScore: finalReport.finalScore,
+          topicScores: finalReport.topicScores as any,
+          strengths: finalReport.strengths as any,
+          weaknesses: finalReport.weaknesses as any,
+          missingConcepts: finalReport.missingConcepts as any,
+          misconceptions: finalReport.misconceptions as any,
+          recommendations: finalReport.recommendations as any,
+          futureSuggestions: finalReport.futureSuggestions as any,
+        }).where(eq(submissions.id, attemptId)).returning();
+
+        return res.json({
+          isFinished: true,
+          evaluation: evalResult,
+          report: finalReport,
+          attempt: finalAttempt,
+        });
+      } else {
+        const [updatedAttempt] = await db.update(submissions).set({
+          questionLogs: logs as any,
+          adaptiveState: state as any,
+        }).where(eq(submissions.id, attemptId)).returning();
+
+        return res.json({
+          isFinished: false,
+          evaluation: evalResult,
+          nextQuestion: nextQuestionText,
+          questionNumber: logs.length,
+          totalQuestions: maxQ,
+          conceptTitle: nextConcept?.title,
+        });
+      }
+    } catch (error: any) {
+      console.error("Submit adaptive answer error:", error);
+      res.status(500).json({ error: "Failed to evaluate answer: " + error.message });
+    }
+  });
+
+  // 7. Get Attempt State or Diagnostic Report (Student / Doctor)
+  app.get("/api/adaptive-attempts/:id", async (req, res) => {
+    try {
+      const attemptId = p(req.params.id);
+      const [attempt] = await db.select().from(submissions).where(eq(submissions.id, attemptId));
+      if (!attempt) {
+        return res.status(404).json({ error: "Attempt not found" });
+      }
+      const exam = await storage.getExam(attempt.examId);
+      res.json({ attempt, exam });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch attempt" });
+    }
+  });
+
+  // 8. Doctor Score Override Endpoint (Doctor)
+  app.post("/api/adaptive-attempts/:id/override", isProfessor, async (req, res) => {
+    try {
+      const attemptId = p(req.params.id);
+      const sessUser = req.user as any;
+      const doctorId = sessUser?.claims?.sub || sessUser?.id || "doctor";
+      const { doctorFinalScore, doctorTopicScores, questionOverrides, reason } = req.body;
+
+      const [attempt] = await db.select().from(submissions).where(eq(submissions.id, attemptId));
+      if (!attempt) {
+        return res.status(404).json({ error: "Attempt not found" });
+      }
+
+      const existingOverrides = (attempt.doctorScoreOverrides as any[]) || [];
+      const newOverrideLog = {
+        doctorId,
+        timestamp: new Date().toISOString(),
+        originalFinalScore: attempt.finalScore ?? attempt.totalScore,
+        newDoctorFinalScore: doctorFinalScore !== undefined ? Number(doctorFinalScore) : attempt.finalScore,
+        reason: reason || "Doctor manual score review",
+        questionOverrides: questionOverrides || [],
+      };
+
+      existingOverrides.push(newOverrideLog);
+
+      const [updated] = await db.update(submissions).set({
+        doctorFinalScore: doctorFinalScore !== undefined ? Number(doctorFinalScore) : attempt.doctorFinalScore,
+        doctorTopicScores: doctorTopicScores !== undefined ? doctorTopicScores : attempt.doctorTopicScores,
+        doctorScoreOverrides: existingOverrides as any,
+        professorDecision: "overridden",
+        professorOverrideReason: reason || "Doctor override",
+        professorReviewTimestamp: new Date(),
+      }).where(eq(submissions.id, attemptId)).returning();
+
+      res.json({ success: true, attempt: updated });
+    } catch (error: any) {
+      console.error("Score override error:", error);
+      res.status(500).json({ error: "Failed to apply score override" });
+    }
+  });
+
+  // =========================================================================
+  // STANDARD EXAM: ORAL ANSWER EVALUATION (0–10 scoring via Gemini)
+  // =========================================================================
+  app.post("/api/evaluate-oral", isAuthenticated, recordingUpload.single("audio"), async (req, res) => {
+    try {
+      const { questionText, expectedAnswer, rubric, keyPoints, transcriptText } = req.body;
+
+      if (!questionText) {
+        return res.status(400).json({ error: "Question text is required." });
+      }
+
+      let audioBase64: string | undefined;
+      let mimeType: string | undefined;
+      const file = req.file;
+
+      if (file) {
+        audioBase64 = file.buffer.toString("base64");
+        mimeType = file.mimetype || "audio/webm";
+      }
+
+      let parsedKeyPoints: string[] | undefined;
+      if (keyPoints) {
+        try {
+          parsedKeyPoints = typeof keyPoints === "string" ? JSON.parse(keyPoints) : keyPoints;
+        } catch {
+          parsedKeyPoints = keyPoints.split(",").map((k: string) => k.trim()).filter(Boolean);
+        }
+      }
+
+      const evaluation = await evaluateOralAnswer({
+        questionText,
+        expectedAnswer: expectedAnswer || undefined,
+        rubric: rubric || undefined,
+        keyPoints: parsedKeyPoints,
+        studentAudioBase64: audioBase64,
+        audioMimeType: mimeType,
+        studentTranscriptText: transcriptText || undefined,
+      });
+
+      res.json({ success: true, evaluation });
+    } catch (error: any) {
+      console.error("Oral evaluation error:", error);
+      res.status(500).json({ error: error.message || "Oral evaluation failed." });
+    }
+  });
 
   const sanitizeUniversity = (uni: any) => {
     const { openaiApiKey, ...safe } = uni;
@@ -698,7 +1229,7 @@ export async function registerRoutes(
 
   app.delete("/api/materials/:id", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can delete materials" });
@@ -898,7 +1429,7 @@ export async function registerRoutes(
   // Create a practice session (scoped to the authenticated student).
   app.post("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const parsed = insertPracticeSessionSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid practice session data", details: parsed.error.errors });
@@ -937,7 +1468,7 @@ export async function registerRoutes(
   // List the authenticated student's own practice sessions.
   app.get("/api/practice/sessions", isAuthenticated, requireStudent, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const sessions = await storage.getPracticeSessionsByStudent(userId);
       res.json(sessions);
     } catch (error: any) {
@@ -1102,7 +1633,7 @@ export async function registerRoutes(
 
   app.get("/api/exams/:id/analytics", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || (user.role !== "professor" && user.role !== "admin")) {
         return res.status(403).json({ error: "Professor or admin access required" });
@@ -1132,17 +1663,19 @@ export async function registerRoutes(
         });
       }
 
-      const professorId = req.user!.claims.sub;
+      const professorId = getUserId(req);
       const exam = await storage.createExam(professorId, parseResult.data);
       res.status(201).json(exam);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to create exam" });
+    } catch (error: any) {
+      console.error("POST /api/exams error:", error);
+      res.status(500).json({ error: error.message || "Failed to create exam" });
     }
   });
 
   app.patch("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const userId = getUserId(req);
+      const user = await storage.getUser(userId);
       if (!user || (user.role !== "professor" && user.role !== "admin")) {
         return res.status(403).json({ error: "Only professors can update exams" });
       }
@@ -1248,7 +1781,7 @@ export async function registerRoutes(
       }
 
       const { examId, responses, isPreview, consentGiven, consentTimestamp } = parseResult.data;
-      const studentId = req.user!.claims.sub;
+      const studentId = getUserId(req);
 
       const exam = await storage.getExam(examId);
       if (!exam) {
@@ -1608,36 +2141,17 @@ export async function registerRoutes(
       }
     }
 
-    // Legacy recordings written to the filesystem before the move to Object
-    // Storage are still served from disk so they remain accessible.
-    const filePath = path.join(RECORDINGS_DIR, filename);
-    if (fs.existsSync(filePath)) {
-      res.setHeader("Content-Type", "video/webm");
-      return res.sendFile(filePath);
-    }
-
-    // New recordings live in Object Storage.
+    // Check if recording file exists locally
     try {
-      const { bucketName, objectName } = getRecordingObjectLocation(filename);
-      const objectFile = objectStorageClient.bucket(bucketName).file(objectName);
-      const [exists] = await objectFile.exists();
-      if (!exists) {
-        return res.status(404).json({ error: "Recording not found" });
+      const filePath = path.join(RECORDINGS_DIR, filename);
+      if (fs.existsSync(filePath)) {
+        res.setHeader("Content-Type", "video/webm");
+        return res.sendFile(filePath);
       }
-      res.setHeader("Content-Type", "video/webm");
-      const stream = objectFile.createReadStream();
-      stream.on("error", (err) => {
-        console.error("Error streaming recording:", err);
-        if (!res.headersSent) {
-          res.status(500).json({ error: "Error streaming recording" });
-        }
-      });
-      stream.pipe(res);
-    } catch (error) {
-      console.error("Failed to load recording:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to load recording" });
-      }
+      return res.status(404).json({ error: "Recording not found" });
+    } catch (err: any) {
+      console.error("Error streaming recording:", err);
+      return res.status(500).json({ error: "Failed to stream recording" });
     }
   });
 
@@ -2056,6 +2570,112 @@ export async function registerRoutes(
       res.json(active || null);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch support request" });
+    }
+  });
+
+  // Grade review requests
+  app.post("/api/attempts/:id/review-request", isAuthenticated, async (req, res) => {
+    try {
+      const studentId = getUserId(req);
+      const attemptId = p(req.params.id);
+      const attempt = await storage.getSubmission(attemptId);
+      if (!attempt) return res.status(404).json({ error: "Attempt not found" });
+      if (attempt.studentId !== studentId) return res.status(403).json({ error: "Unauthorized" });
+      
+      const existing = await storage.getReviewRequestsByAttempt(attemptId);
+      if (existing.some(r => r.status === "pending" || r.status === "in_review")) {
+        return res.status(400).json({ error: "A review request is already active for this attempt." });
+      }
+
+      const { studentExplanation } = req.body;
+      const reviewReq = await storage.createReviewRequest({
+        attemptId,
+        studentId,
+        examId: attempt.examId,
+        studentExplanation,
+        status: "pending",
+      });
+
+      res.json(reviewReq);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to create review request" });
+    }
+  });
+
+  app.get("/api/review-requests", isProfessor, async (req, res) => {
+    try {
+      const professorId = getUserId(req);
+      const requests = await storage.getReviewRequestsByProfessor(professorId);
+      res.json(requests);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch review requests" });
+    }
+  });
+
+  app.put("/api/review-requests/:id", isProfessor, async (req, res) => {
+    try {
+      const professorId = getUserId(req);
+      const { status, professorResponse } = req.body;
+      const reviewReq = await storage.getReviewRequest(p(req.params.id));
+      if (!reviewReq) return res.status(404).json({ error: "Not found" });
+      
+      const exam = await storage.getExam(reviewReq.examId);
+      if (!exam || exam.professorId !== professorId) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+
+      const updated = await storage.updateReviewRequest(reviewReq.id, {
+        status,
+        professorResponse,
+        resolvedAt: ["approved", "partially_approved", "rejected", "resolved"].includes(status) ? new Date() : null,
+        resolvedByProfessorId: professorId,
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update review request" });
+    }
+  });
+
+  app.put("/api/attempts/:id/override-score", isProfessor, async (req, res) => {
+    try {
+      const professorId = getUserId(req);
+      const attemptId = p(req.params.id);
+      const { questionId, newScore, reason } = req.body;
+      
+      const attempt = await storage.getSubmission(attemptId);
+      if (!attempt) return res.status(404).json({ error: "Not found" });
+      
+      const exam = await storage.getExam(attempt.examId);
+      if (!exam || exam.professorId !== professorId) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+
+      if (newScore < 0 || newScore > 1) {
+        return res.status(400).json({ error: "Score must be between 0 and 1" });
+      }
+      if (!reason || !reason.trim()) {
+        return res.status(400).json({ error: "A reason is required to override a score" });
+      }
+
+      const updated = await storage.overrideSubmissionScore(attemptId, questionId, newScore, reason, professorId);
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to override score" });
+    }
+  });
+
+  app.get("/api/exams/:id/attempts", isProfessor, async (req, res) => {
+    try {
+      const professorId = getUserId(req);
+      const exam = await storage.getExam(p(req.params.id));
+      if (!exam) return res.status(404).json({ error: "Exam not found" });
+      if (exam.professorId !== professorId) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+      const attempts = await storage.getSubmissionsByExam(exam.id);
+      res.json(attempts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch attempts" });
     }
   });
 

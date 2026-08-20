@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { index, jsonb, pgTable, timestamp, varchar, real } from "drizzle-orm/pg-core";
 
 // Session storage table.
-// (IMPORTANT) This table is mandatory for Replit Auth, don't drop it.
+// (IMPORTANT) This table is mandatory for authentication, don't drop it.
 export const sessions = pgTable(
   "sessions",
   {
@@ -14,7 +14,7 @@ export const sessions = pgTable(
 );
 
 // User storage table.
-// (IMPORTANT) This table is mandatory for Replit Auth, don't drop it.
+// (IMPORTANT) This table is mandatory for authentication, don't drop it.
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").unique(),
@@ -24,7 +24,8 @@ export const users = pgTable("users", {
   role: varchar("role"),
   universityId: varchar("university_id"),
   openaiApiKey: varchar("openai_api_key"),
-  authProvider: varchar("auth_provider").default("replit"),
+  passwordHash: varchar("password_hash"),
+  authProvider: varchar("auth_provider").default("local"),
   studentId: varchar("student_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

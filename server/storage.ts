@@ -1,6 +1,7 @@
-import OpenAI, { toFile } from "openai";
+import { GoogleGenAI } from "@google/genai";
+import { geminiClient, GEMINI_MODEL, GEMINI_GRADING_MODEL } from "./config/gemini";
 import { createHash } from "crypto";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, desc } from "drizzle-orm";
 import { db } from "./db";
 import { pool } from "./db";
 import {
@@ -14,6 +15,12 @@ import {
   userEvents,
   supportRequests,
   chatMessages,
+  practiceSessions,
+  reviewRequests,
+  examVersions,
+  examQuestions,
+  attemptAnswers,
+  gradingAuditLogs,
   type User,
   type University,
   type InsertUniversity,
@@ -45,7 +52,6 @@ import {
   type SupportRequest,
   type ChatMessage,
   type VoxConfidenceLevel,
-  practiceSessions,
   type PracticeSession,
   type InsertPracticeSession,
   type PracticeQuestion,
@@ -53,18 +59,17 @@ import {
   type PracticeSessionMode,
   type PracticeCoachStyle,
   type PracticeCognitiveLevel,
+  type InsertReviewRequest,
+  type ReviewRequest,
 } from "@shared/schema";
 import {
   ensureCompatibleFormat,
   speechToText,
   type SpeechToTextLogprob,
   type SpeechToTextQuality,
-} from "./replit_integrations/audio/client";
+} from "./integrations/audio/client";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+
 
 export interface AudioTranscriptionResult {
   text: string;
@@ -378,17 +383,18 @@ Respond with ONLY a JSON object in EXACTLY this shape:
 }
 Include all seven dimensions D1 through D7 exactly once.`;
 
-    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+    const ai = customApiKey ? new GoogleGenAI({ apiKey: customApiKey }) : geminiClient;
 
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1200,
-      temperature: 0.1,
-      response_format: { type: "json_object" },
+    const completion = await ai.models.generateContent({
+      model: GEMINI_GRADING_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.1,
+      },
     });
 
-    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const raw = completion.text?.trim() || "{}";
     const parsed = JSON.parse(raw);
 
     if (!parsed || !Array.isArray(parsed.dimensions)) {
@@ -463,19 +469,17 @@ Do not include anything outside the JSON object.`;
   const userMessage = `Question: ${question}\n\nTheir answer: ${transcript}`;
 
   try {
-    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userMessage },
-      ],
-      max_tokens: 250,
-      temperature: 0.7,
-      response_format: { type: "json_object" },
+    const ai = customApiKey ? new GoogleGenAI({ apiKey: customApiKey }) : geminiClient;
+    const completion = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: `${systemPrompt}\n\n${userMessage}`,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.7,
+      },
     });
 
-    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const raw = completion.text?.trim() || "{}";
     const parsed = JSON.parse(raw);
     const insight = typeof parsed.insight === "string" ? parsed.insight.trim() : "";
     const followUp = typeof parsed.followUp === "string" ? parsed.followUp.trim() : "";
@@ -515,8 +519,8 @@ const PRACTICE_APPROVED_PROBES = [
   "What assumption are you making here?",
 ] as const;
 
-function practiceClient(customApiKey?: string | null): OpenAI {
-  return customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
+function practiceClient(customApiKey?: string | null): GoogleGenAI {
+  return customApiKey ? new GoogleGenAI({ apiKey: customApiKey }) : geminiClient;
 }
 
 // Build a VoxScoreProfile from an AI dimensions array. Mirrors the parsing in
@@ -729,14 +733,15 @@ Return ONLY a JSON object with this shape:
 Each question should be oral-exam friendly, academically serious, and distinct from the others.`;
 
   try {
-    const completion = await client.chat.completions.create({
-      model: PRACTICE_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-      max_tokens: 400,
-      response_format: { type: "json_object" },
+    const completion = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.7,
+      },
     });
-    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const raw = completion.text?.trim() || "{}";
     const parsed = JSON.parse(raw);
     const questions = Array.isArray(parsed.questions)
       ? parsed.questions.filter((value: unknown) => typeof value === "string" && value.trim().length > 0)
@@ -788,14 +793,15 @@ Return ONLY a JSON object in exactly this shape:
 
   try {
     const client = practiceClient(customApiKey);
-    const completion = await client.chat.completions.create({
-      model: PRACTICE_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 900,
-      temperature: 0.3,
-      response_format: { type: "json_object" },
+    const completion = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.3,
+      },
     });
-    const parsed = JSON.parse(completion.choices[0]?.message?.content?.trim() || "{}");
+    const parsed = JSON.parse(completion.text?.trim() || "{}");
     const toStrArr = (v: unknown): string[] =>
       Array.isArray(v) ? v.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
     return {
@@ -850,14 +856,15 @@ Return ONLY a JSON object in exactly this shape:
 
   try {
     const client = practiceClient(customApiKey);
-    const completion = await client.chat.completions.create({
-      model: PRACTICE_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1500,
-      temperature: 0.5,
-      response_format: { type: "json_object" },
+    const completion = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.5,
+      },
     });
-    const parsed = JSON.parse(completion.choices[0]?.message?.content?.trim() || "{}");
+    const parsed = JSON.parse(completion.text?.trim() || "{}");
     const list = Array.isArray(parsed?.questions) ? parsed.questions : [];
     const validLevels = new Set<PracticeCognitiveLevel>([
       "recall",
@@ -941,13 +948,14 @@ Rules:
 Return ONLY the follow-up question as plain text.`;
 
   try {
-    const completion = await client.chat.completions.create({
-      model: PRACTICE_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.5,
-      max_tokens: 80,
+    const completion = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        temperature: 0.5,
+      },
     });
-    const probe = completion.choices[0]?.message?.content?.trim() || defaultProbe;
+    const probe = completion.text?.trim() || defaultProbe;
     return objectMode ? probe : { probe };
   } catch (error) {
     console.error("[VOXPRACTICE] generatePracticeProbe failed:", error);
@@ -1033,28 +1041,30 @@ No bullet points. Match the student's language when possible.`;
 
   try {
     const [scoringCompletion, feedbackCompletion] = await Promise.all([
-      client.chat.completions.create({
-        model: PRACTICE_MODEL,
-        messages: [{ role: "user", content: scoringPrompt }],
-        temperature: 0.2,
-        max_tokens: 1200,
-        response_format: { type: "json_object" },
+      client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: scoringPrompt,
+        config: {
+          responseMimeType: "application/json",
+          temperature: 0.2,
+        },
       }),
-      client.chat.completions.create({
-        model: PRACTICE_MODEL,
-        messages: [{ role: "user", content: feedbackPrompt }],
-        temperature: 0.4,
-        max_tokens: 180,
+      client.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: feedbackPrompt,
+        config: {
+          temperature: 0.4,
+        },
       }),
     ]);
 
-    const parsed = JSON.parse(scoringCompletion.choices[0]?.message?.content?.trim() || "{}");
+    const parsed = JSON.parse(scoringCompletion.text?.trim() || "{}");
     const voxScoreProfile = practiceProfileFromDimensions(
       parsed,
       typeof parsed?.languageDetected === "string" ? parsed.languageDetected : "unknown",
       new Set(voxDimensions.filter((dimension) => !scoredDimensions.has(dimension)))
     );
-    const microFeedback = feedbackCompletion.choices[0]?.message?.content?.trim() || "";
+    const microFeedback = feedbackCompletion.text?.trim() || "";
     return { microFeedback, voxScoreProfile };
   } catch (error) {
     console.error("[VOXPRACTICE] generatePracticeMicroFeedback failed:", error);
@@ -1103,13 +1113,14 @@ Write 3-4 sentences, focused on what the student can do next. Match the language
 
   let summary = "";
   try {
-    const completion = await client.chat.completions.create({
-      model: PRACTICE_MODEL,
-      messages: [{ role: "user", content: reportPrompt }],
-      temperature: 0.5,
-      max_tokens: 220,
+    const completion = await client.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: reportPrompt,
+      config: {
+        temperature: 0.5,
+      },
     });
-    summary = completion.choices[0]?.message?.content?.trim() || "";
+    summary = completion.text?.trim() || "";
   } catch (error) {
     console.error("[VOXPRACTICE] generatePracticeReadinessReport failed:", error);
   }
@@ -1250,16 +1261,17 @@ Provide concise feedback in JSON format:
   "recommendations": "2-3 specific actionable recommendations for improvement"
 }`;
 
-    const client = customApiKey ? new OpenAI({ apiKey: customApiKey }) : openai;
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 400,
-      temperature: 0.3,
-      response_format: { type: "json_object" },
+    const ai = customApiKey ? new GoogleGenAI({ apiKey: customApiKey }) : geminiClient;
+    const completion = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.3,
+      },
     });
 
-    const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+    const raw = completion.text?.trim() || "{}";
     const parsed = JSON.parse(raw);
 
     return {
@@ -1406,8 +1418,18 @@ export interface IStorage {
   getChatMessages(supportRequestId: string): Promise<ChatMessage[]>;
   createChatMessage(data: { supportRequestId: string; senderId: string; senderRole: string; message: string }): Promise<ChatMessage>;
 
+  // Review request methods
+  createReviewRequest(data: InsertReviewRequest): Promise<ReviewRequest>;
+  getReviewRequestsByProfessor(professorId: string): Promise<ReviewRequest[]>;
+  getReviewRequest(id: string): Promise<ReviewRequest | undefined>;
+  getReviewRequestsByAttempt(attemptId: string): Promise<ReviewRequest[]>;
+  updateReviewRequest(id: string, updates: Partial<ReviewRequest>): Promise<ReviewRequest | undefined>;
+
   // Analytics
   getExamAnalytics(examId: string): Promise<any>;
+
+  // Score override method
+  overrideSubmissionScore(submissionId: string, questionId: string, newScore: number, reason: string, professorId: string): Promise<ExamSubmission | undefined>;
 }
 
 async function generateExamAccessCode(): Promise<string> {
@@ -1566,7 +1588,38 @@ class DatabaseStorage implements IStorage {
 
   async getExam(id: string): Promise<Exam | undefined> {
     const [exam] = await db.select().from(exams).where(eq(exams.id, id));
-    return exam || undefined;
+    if (!exam) return undefined;
+
+    if (exam.currentVersionId) {
+      const [version] = await db.select().from(examVersions).where(eq(examVersions.id, exam.currentVersionId));
+      if (version) {
+        exam.title = version.title;
+        exam.description = version.description;
+        exam.subjectName = version.subjectName;
+        exam.durationMinutes = version.durationMinutes;
+        exam.maxQuestions = version.maxQuestions;
+        exam.passingScore = version.passingScore;
+        exam.blueprint = version.adaptiveSettings;
+      }
+
+      const questions = await db.select().from(examQuestions).where(eq(examQuestions.examVersionId, exam.currentVersionId));
+      if (questions && questions.length > 0) {
+        exam.questions = questions.map(q => ({
+          id: q.id,
+          text: q.questionText,
+          type: q.questionType as any,
+          correctAnswer: q.expectedAnswer || "",
+          maximumPoints: q.maximumPoints || 100,
+        }));
+      }
+    }
+
+    // Polyfill accessCode for backwards compatibility
+    if (exam.publicExamCode) {
+      exam.accessCode = exam.publicExamCode;
+    }
+
+    return exam;
   }
 
   async getAllExams(): Promise<Exam[]> {
@@ -1610,13 +1663,150 @@ class DatabaseStorage implements IStorage {
       ...insertExam,
       questions: questionsWithIds,
       accessCode,
+      publicExamCode: accessCode,
       accessCodeExpiresAt,
     }).returning();
+
+    // Create Version 1
+    const [version] = await db.insert(examVersions).values({
+      examId: exam.id,
+      versionNumber: 1,
+      title: exam.title,
+      description: exam.description,
+      subjectName: exam.subjectName,
+      durationMinutes: exam.durationMinutes || 30,
+      maxQuestions: exam.maxQuestions || 10,
+      passingScore: exam.passingScore || 60,
+      adaptiveSettings: exam.blueprint,
+      createdBy: exam.professorId,
+      publishedAt: exam.status === "active" ? new Date() : null,
+    }).returning();
+
+    // Insert questions into the relational table
+    if (questionsWithIds.length > 0) {
+      for (let i = 0; i < questionsWithIds.length; i++) {
+        const q = questionsWithIds[i];
+        await db.insert(examQuestions).values({
+          examVersionId: version.id,
+          questionOrder: i,
+          questionText: q.text || "Untitled Question",
+          questionType: q.type || "short",
+          expectedAnswer: q.correctAnswer,
+          maximumPoints: 100,
+        });
+      }
+    }
+
+    // Update parent exam
+    await db.update(exams)
+      .set({ currentVersionId: version.id })
+      .where(eq(exams.id, exam.id));
+
+    exam.currentVersionId = version.id;
+
     return exam;
   }
 
   async updateExam(id: string, updates: Partial<Exam>): Promise<Exam | undefined> {
-    const [exam] = await db.update(exams).set(updates).where(eq(exams.id, id)).returning();
+    const [currentExam] = await db.select().from(exams).where(eq(exams.id, id));
+    if (!currentExam) return undefined;
+
+    // Check if we need to update the version
+    const versionUpdates: any = {};
+    if (updates.title !== undefined) versionUpdates.title = updates.title;
+    if (updates.description !== undefined) versionUpdates.description = updates.description;
+    if (updates.subjectName !== undefined) versionUpdates.subjectName = updates.subjectName;
+    if (updates.durationMinutes !== undefined) versionUpdates.durationMinutes = updates.durationMinutes;
+    if (updates.maxQuestions !== undefined) versionUpdates.maxQuestions = updates.maxQuestions;
+    if (updates.passingScore !== undefined) versionUpdates.passingScore = updates.passingScore;
+    if (updates.blueprint !== undefined) versionUpdates.adaptiveSettings = updates.blueprint;
+
+    const hasVersionUpdates = Object.keys(versionUpdates).length > 0 || updates.questions !== undefined;
+
+    if (hasVersionUpdates) {
+      if (currentExam.status === "active") {
+        // Create a new draft version
+        const [oldVersion] = await db.select().from(examVersions).where(eq(examVersions.id, currentExam.currentVersionId || ""));
+        const versionNumber = (oldVersion?.versionNumber || 0) + 1;
+
+        const [newVersion] = await db.insert(examVersions).values({
+          examId: currentExam.id,
+          versionNumber,
+          title: versionUpdates.title || currentExam.title,
+          description: versionUpdates.description || currentExam.description,
+          subjectName: versionUpdates.subjectName || currentExam.subjectName,
+          durationMinutes: versionUpdates.durationMinutes || currentExam.durationMinutes,
+          maxQuestions: versionUpdates.maxQuestions || currentExam.maxQuestions,
+          passingScore: versionUpdates.passingScore || currentExam.passingScore,
+          adaptiveSettings: versionUpdates.adaptiveSettings || currentExam.blueprint,
+          createdBy: currentExam.professorId,
+        }).returning();
+
+        // Copy over questions (either new ones from updates, or old ones)
+        let questionsToInsert = updates.questions;
+        if (!questionsToInsert && oldVersion) {
+            const oldQuestions = await db.select().from(examQuestions).where(eq(examQuestions.examVersionId, oldVersion.id));
+            questionsToInsert = oldQuestions.map(oq => ({
+              id: oq.id, text: oq.questionText, type: oq.questionType as any, correctAnswer: oq.expectedAnswer || ""
+            }));
+        }
+
+        if (questionsToInsert && questionsToInsert.length > 0) {
+          for (let i = 0; i < questionsToInsert.length; i++) {
+            const q: any = questionsToInsert[i];
+            await db.insert(examQuestions).values({
+              examVersionId: newVersion.id,
+              questionOrder: i,
+              questionText: q.text || "Untitled Question",
+              questionType: q.type || "short",
+              expectedAnswer: q.correctAnswer,
+              maximumPoints: 100,
+            });
+          }
+        }
+
+        updates.currentVersionId = newVersion.id;
+        updates.status = "draft"; // Reverts to draft
+      } else if (currentExam.currentVersionId) {
+        // Update existing draft version
+        if (Object.keys(versionUpdates).length > 0) {
+          await db.update(examVersions).set(versionUpdates).where(eq(examVersions.id, currentExam.currentVersionId));
+        }
+
+        if (updates.questions !== undefined) {
+          // Replace questions
+          await db.delete(examQuestions).where(eq(examQuestions.examVersionId, currentExam.currentVersionId));
+          for (let i = 0; i < updates.questions.length; i++) {
+            const q: any = updates.questions[i];
+            await db.insert(examQuestions).values({
+              examVersionId: currentExam.currentVersionId,
+              questionOrder: i,
+              questionText: q.text || "Untitled Question",
+              questionType: q.type || "short",
+              expectedAnswer: q.correctAnswer,
+              maximumPoints: 100,
+            });
+          }
+        }
+      }
+    }
+
+    // Keep updates clean for the parent table
+    const parentUpdates = { ...updates };
+    delete parentUpdates.questions; 
+    delete parentUpdates.blueprint;
+    // Map backwards compatibility for accessCode
+    if (parentUpdates.accessCode) {
+      parentUpdates.publicExamCode = parentUpdates.accessCode;
+      delete parentUpdates.accessCode;
+    }
+
+    if (Object.keys(parentUpdates).length > 0) {
+      const [exam] = await db.update(exams).set(parentUpdates).where(eq(exams.id, id)).returning();
+      return exam;
+    }
+
+    const [exam] = await db.select().from(exams).where(eq(exams.id, id));
     return exam || undefined;
   }
 
@@ -1627,7 +1817,12 @@ class DatabaseStorage implements IStorage {
 
   async getSubmission(id: string): Promise<ExamSubmission | undefined> {
     const [submission] = await db.select().from(submissions).where(eq(submissions.id, id));
-    return submission || undefined;
+    if (!submission) return undefined;
+
+    const answers = await db.select().from(attemptAnswers).where(eq(attemptAnswers.attemptId, id));
+    (submission as any).attemptAnswers = answers;
+
+    return submission;
   }
 
   async getSubmissionsByExam(examId: string): Promise<ExamSubmission[]> {
@@ -1708,6 +1903,7 @@ class DatabaseStorage implements IStorage {
 
       const [submission] = await db.insert(submissions).values({
         examId,
+        examVersionId: exam.currentVersionId,
         studentId,
         responses,
         scores: {},
@@ -1715,6 +1911,8 @@ class DatabaseStorage implements IStorage {
         gradingMethods: {},
         totalScore: 0,
         totalUnderstandingScore: 0,
+        percentageScore: 0,
+        reviewStatus: "not_reviewed",
         feedback: null,
         quickvoxInsight,
         quickvoxFollowUp,
@@ -1723,6 +1921,16 @@ class DatabaseStorage implements IStorage {
         consentTimestamp,
         submittedAt: new Date().toISOString(),
       }).returning();
+
+      if (question) {
+        await db.insert(attemptAnswers).values({
+          attemptId: submission.id,
+          questionId: question.id,
+          answerText: transcript,
+          transcript: transcript,
+          audioStoragePath: firstResponse?.audioData,
+        });
+      }
 
       return submission;
     }
@@ -1773,6 +1981,7 @@ class DatabaseStorage implements IStorage {
 
     const [submission] = await db.insert(submissions).values({
       examId,
+      examVersionId: exam.currentVersionId,
       studentId,
       responses,
       scores,
@@ -1780,6 +1989,8 @@ class DatabaseStorage implements IStorage {
       gradingMethods: gradingMethodsMap,
       totalScore: legacyTotalScore,
       totalUnderstandingScore,
+      percentageScore: legacyTotalScore * 100,
+      reviewStatus: "not_reviewed",
       feedback,
       voxScoreProfile,
       isPreview: isPreview ? "true" : "false",
@@ -1787,6 +1998,20 @@ class DatabaseStorage implements IStorage {
       consentTimestamp,
       submittedAt: new Date().toISOString(),
     }).returning();
+
+    for (const response of responses) {
+      const q = exam.questions.find((x) => x.id === response.questionId);
+      if (q) {
+        await db.insert(attemptAnswers).values({
+          attemptId: submission.id,
+          questionId: q.id,
+          answerText: response.transcript || response.response,
+          transcript: response.transcript || response.response,
+          audioStoragePath: response.audioData,
+          automaticScore: scores[q.id] || 0,
+        });
+      }
+    }
 
     return submission;
   }
@@ -1839,13 +2064,75 @@ class DatabaseStorage implements IStorage {
     arabicFlag: boolean;
   }): Promise<ExamSubmission | undefined> {
     const [updated] = await db.update(submissions).set({
-      professorDecision: data.professorDecision,
-      professorOverrideReason: data.professorOverrideReason ?? null,
-      professorHolisticScore: data.professorHolisticScore ?? null,
-      professorReviewDurationMinutes: data.professorReviewDurationMinutes ?? null,
+      ...data,
       professorReviewTimestamp: new Date(),
       gradingGap: data.gradingGap,
       arabicFlag: data.arabicFlag,
+    }).where(eq(submissions.id, submissionId)).returning();
+
+    return updated || undefined;
+  }
+
+  async overrideSubmissionScore(
+    submissionId: string,
+    questionId: string,
+    newScore: number,
+    reason: string,
+    professorId: string
+  ): Promise<ExamSubmission | undefined> {
+    const [sub] = await db.select().from(submissions).where(eq(submissions.id, submissionId));
+    if (!sub) return undefined;
+
+    // Retrieve the specific attemptAnswer
+    const [answer] = await db.select().from(attemptAnswers)
+      .where(and(eq(attemptAnswers.attemptId, submissionId), eq(attemptAnswers.questionId, questionId)));
+
+    let previousScore = sub.scores[questionId] || 0;
+    if (answer) {
+      previousScore = answer.manualScore ?? answer.automaticScore ?? previousScore;
+
+      // Update attemptAnswer
+      await db.update(attemptAnswers).set({
+        manualScore: newScore,
+        finalScore: newScore,
+        reviewedBy: professorId,
+        reviewedAt: new Date(),
+        manualFeedback: reason,
+      }).where(eq(attemptAnswers.id, answer.id));
+
+      // Insert audit log
+      await db.insert(gradingAuditLogs).values({
+        attemptId: submissionId,
+        answerId: answer.id,
+        professorId,
+        previousScore,
+        newScore,
+        changeReason: reason,
+      });
+    }
+
+    // Update parent submission totals
+    const allAnswers = await db.select().from(attemptAnswers).where(eq(attemptAnswers.attemptId, submissionId));
+    let totalScoreSum = 0;
+    let scoredCount = 0;
+
+    allAnswers.forEach(ans => {
+      const s = ans.manualScore ?? ans.automaticScore;
+      if (s !== null) {
+        totalScoreSum += s;
+        scoredCount++;
+      }
+    });
+
+    const newDoctorFinalScore = scoredCount > 0 ? totalScoreSum / scoredCount : 0;
+
+    const [updated] = await db.update(submissions).set({
+      doctorFinalScore: newDoctorFinalScore,
+      manualScore: newDoctorFinalScore,
+      percentageScore: newDoctorFinalScore * 100,
+      reviewStatus: "manually_adjusted",
+      reviewedBy: professorId,
+      reviewedAt: new Date(),
     }).where(eq(submissions.id, submissionId)).returning();
 
     return updated || undefined;
@@ -1916,12 +2203,48 @@ class DatabaseStorage implements IStorage {
   }
 
   async getChatMessages(supportRequestId: string): Promise<ChatMessage[]> {
-    return db.select().from(chatMessages).where(eq(chatMessages.supportRequestId, supportRequestId)).orderBy(chatMessages.createdAt);
+    return await db.select().from(chatMessages).where(eq(chatMessages.supportRequestId, supportRequestId)).orderBy(chatMessages.createdAt);
   }
 
   async createChatMessage(data: { supportRequestId: string; senderId: string; senderRole: string; message: string }): Promise<ChatMessage> {
-    const [msg] = await db.insert(chatMessages).values(data).returning();
-    return msg;
+    const [newMessage] = await db.insert(chatMessages).values(data).returning();
+    return newMessage;
+  }
+
+  // Review request methods
+  async createReviewRequest(data: InsertReviewRequest): Promise<ReviewRequest> {
+    const [newRequest] = await db.insert(reviewRequests).values(data).returning();
+    return newRequest;
+  }
+
+  async getReviewRequestsByProfessor(professorId: string): Promise<ReviewRequest[]> {
+    // Join with exams to get requests for exams owned by this professor
+    const results = await db.select({
+      reviewRequest: reviewRequests,
+    })
+    .from(reviewRequests)
+    .innerJoin(exams, eq(reviewRequests.examId, exams.id))
+    .where(eq(exams.professorId, professorId))
+    .orderBy(desc(reviewRequests.createdAt));
+    return results.map(r => r.reviewRequest);
+  }
+
+  async getReviewRequest(id: string): Promise<ReviewRequest | undefined> {
+    const [request] = await db.select().from(reviewRequests).where(eq(reviewRequests.id, id));
+    return request;
+  }
+
+  async getReviewRequestsByAttempt(attemptId: string): Promise<ReviewRequest[]> {
+    return await db.select().from(reviewRequests).where(eq(reviewRequests.attemptId, attemptId)).orderBy(desc(reviewRequests.createdAt));
+  }
+
+  async updateReviewRequest(id: string, updates: Partial<ReviewRequest>): Promise<ReviewRequest | undefined> {
+    const [updated] = await db
+      .update(reviewRequests)
+      .set({ ...updates })
+      .where(eq(reviewRequests.id, id))
+      .returning();
+    return updated;
   }
 
   // Exam access code methods

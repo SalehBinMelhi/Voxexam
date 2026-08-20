@@ -1,7 +1,11 @@
 import { useState, useRef } from "react";
+import { DoctorExamCreator } from "@/components/doctor-exam-creator";
+import { DoctorAttemptReviewer } from "@/components/doctor-attempt-reviewer";
 import { ProfessorVoxScore } from "@/components/voxscore-breakdown";
 import { ProfessorDecisionPanel } from "@/components/professor-decision-panel";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/use-auth";
+import { useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,7 +65,6 @@ import { QRCodeSVG } from "qrcode.react";
 import type { InsertQuestion, QuestionType, Exam, ExamSubmission, User as UserType, ProctoringFlag } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
-import { useAuth } from "@/hooks/use-auth";
 import { TakeExamDialog } from "@/components/take-exam-dialog";
 import { Eye } from "lucide-react";
 
@@ -92,6 +95,7 @@ function getScoreBg(score: number) {
 export function SimpleExamTab() {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [_, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState("");
@@ -119,6 +123,9 @@ export function SimpleExamTab() {
   const [quickVoxQuestion, setQuickVoxQuestion] = useState("");
   const [qrExam, setQrExam] = useState<Exam | null>(null);
 
+  const [doctorCreatorOpen, setDoctorCreatorOpen] = useState(false);
+  const [reviewAttemptId, setReviewAttemptId] = useState<string | null>(null);
+
   const { data: exams = [], isLoading } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
   });
@@ -131,7 +138,7 @@ export function SimpleExamTab() {
     queryKey: ["/api/users"],
   });
 
-  const simpleExams = exams.filter(e => !e.classId);
+  const simpleExams = exams.filter(e => e.mode !== "adaptive");
 
   const createExamMutation = useMutation({
     mutationFn: async (data: {
@@ -870,7 +877,8 @@ export function SimpleExamTab() {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-end">
+      <div className="flex justify-between items-center gap-3">
+        <h2 className="text-2xl font-bold tracking-tight">Standard Exams</h2>
         <Button
           variant="outline"
           onClick={() => setQuickVoxOpen(true)}
@@ -881,14 +889,15 @@ export function SimpleExamTab() {
         </Button>
       </div>
 
+
       <Card data-testid="card-simple-exam-form">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileQuestion className="h-5 w-5" />
-            Create a Quick Exam
+            Create Exam
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            Add questions manually, assign students, and optionally upload reference materials for AI grading
+            Build exams with MCQ, short answer, and oral (audio) questions. Add reference materials for AI-powered grading.
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -1083,20 +1092,48 @@ export function SimpleExamTab() {
 
                 {newQuestionType === "mcq" && (
                   <div className="space-y-2">
-                    <Label>Answer Options</Label>
+                    <Label>Answer Options <span className="text-xs text-muted-foreground">(min 2 required)</span></Label>
                     {newQuestionOptions.map((opt, i) => (
                       <div key={i} className="flex items-center gap-2">
-                        <Input placeholder={`Option ${i + 1}`} value={opt} onChange={(e) => updateOption(i, e.target.value)} />
-                        {newQuestionOptions.length > 1 && (
+                        <span className="text-xs text-muted-foreground w-4 flex-shrink-0">{String.fromCharCode(65 + i)}.</span>
+                        <Input placeholder={`Option ${String.fromCharCode(65 + i)}`} value={opt} onChange={(e) => updateOption(i, e.target.value)} />
+                        {newQuestionOptions.length > 2 && (
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeOption(i)}>
                             <X className="h-4 w-4" />
                           </Button>
                         )}
                       </div>
                     ))}
+                    {newCorrectAnswer && !newQuestionOptions.some(o => o.trim().toLowerCase() === newCorrectAnswer.trim().toLowerCase()) && (
+                      <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        The correct answer should match one of the options above.
+                      </p>
+                    )}
                     <Button variant="outline" size="sm" onClick={addOption}>
                       <Plus className="h-3.5 w-3.5 mr-1" /> Add Option
                     </Button>
+                  </div>
+                )}
+
+                {newQuestionType === "audio" && (
+                  <div className="space-y-3 border rounded-md p-3 bg-muted/30">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Mic className="h-4 w-4 text-primary" />
+                      Oral Question Configuration
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Oral answers are transcribed and evaluated by Gemini AI, scoring 0–10. Provide context for better grading.
+                    </p>
+                    <div className="space-y-2">
+                      <Label className="text-xs">Rubric / Grading Criteria (optional)</Label>
+                      <Textarea
+                        placeholder="e.g. Student should explain at least 3 key benefits, provide examples, and demonstrate understanding of trade-offs."
+                        className="text-xs"
+                        rows={2}
+                        data-testid="textarea-oral-rubric"
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -1127,7 +1164,7 @@ export function SimpleExamTab() {
       <div className="space-y-4">
         <h3 className="text-lg font-semibold flex items-center gap-2">
           <BookOpen className="h-5 w-5" />
-          My Quick Exams
+          My Exams
         </h3>
 
         {isLoading ? (
@@ -1154,7 +1191,7 @@ export function SimpleExamTab() {
                 <Card
                   key={exam.id}
                   className="cursor-pointer hover-elevate transition-all"
-                  onClick={() => setSelectedExam(exam)}
+                  onClick={() => setLocation(`/professor/exams/${exam.id}`)}
                   data-testid={`card-simple-exam-${exam.id}`}
                 >
                   <CardHeader className="pb-3">

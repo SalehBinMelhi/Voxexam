@@ -10,7 +10,8 @@ import AdminDashboard from "@/pages/admin-dashboard";
 import ProfessorDashboard from "@/pages/professor-dashboard";
 import StudentDashboard from "@/pages/student-dashboard";
 import QuickVoxLinkPage from "@/pages/quickvox-link";
-
+import ProfessorExamDetails from "@/pages/professor-exam-details";
+import ProfessorAttemptDetails from "@/pages/professor-attempt-details";
 function AppContent() {
   const { user, isLoading, isAuthenticated } = useAuth();
 
@@ -38,7 +39,14 @@ function AppContent() {
   }
 
   if (user.role === "professor") {
-    return <ProfessorDashboard />;
+    return (
+      <Switch>
+        <Route path="/professor/exams/:examId" component={ProfessorExamDetails} />
+        <Route path="/professor/exams/:examId/attempts/:attemptId" component={ProfessorAttemptDetails} />
+        <Route path="/" component={ProfessorDashboard} />
+        <Route component={ProfessorDashboard} />
+      </Switch>
+    );
   }
 
   return <StudentDashboard />;
