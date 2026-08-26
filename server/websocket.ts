@@ -26,7 +26,8 @@ class VoxWebSocketServer {
         const passport = session?.passport;
         const user = passport?.user;
 
-        if (!user?.claims?.sub) {
+        const userId = user?.claims?.sub || user?.id || user?.sub;
+        if (!userId) {
           socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
           socket.destroy();
           return;
@@ -39,7 +40,7 @@ class VoxWebSocketServer {
     });
 
     this.wss.on("connection", (ws: WebSocket, _request: IncomingMessage, user: any) => {
-      const userId = user.claims.sub;
+      const userId = user.claims?.sub || user.id || user.sub;
 
       storage.getUser(userId).then(dbUser => {
         const userRole = dbUser?.role || "unknown";

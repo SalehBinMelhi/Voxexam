@@ -87,19 +87,7 @@ export default function StudentDashboard() {
 
   const submittedExamIds = new Set(submissions.map((s) => s.examId));
 
-  useEffect(() => {
-    if (!exams.length) return;
-    let autoOpen: string | null = null;
-    try {
-      autoOpen = sessionStorage.getItem("quickvoxAutoOpenExamId");
-    } catch {}
-    if (!autoOpen) return;
-    const target = exams.find((e) => e.id === autoOpen);
-    if (target) {
-      try { sessionStorage.removeItem("quickvoxAutoOpenExamId"); } catch {}
-      setSelectedExam(target);
-    }
-  }, [exams]);
+
 
   const activeExams = exams.filter((e) => getExamStatus(e).canTake && !submittedExamIds.has(e.id));
   const completedExams = exams.filter((e) => submittedExamIds.has(e.id));
@@ -476,7 +464,11 @@ export default function StudentDashboard() {
         />
       )}
       <VoxPracticeDialog open={practiceOpen} onOpenChange={setPracticeOpen} />
-      <AdaptiveExamDialog open={adaptiveOpen} onOpenChange={setAdaptiveOpen} />
+      <AdaptiveExamDialog 
+        open={adaptiveOpen} 
+        onOpenChange={setAdaptiveOpen} 
+        onValidNormalExam={(exam) => setSelectedExam(exam)}
+      />
     </div>
   );
 }

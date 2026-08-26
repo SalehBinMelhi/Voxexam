@@ -217,13 +217,13 @@ export function DoctorExamCreator({ open, onOpenChange, onExamCreated }: DoctorE
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Upload className="h-5 w-5 text-primary" /> Upload Lecture / Course Materials
                 </CardTitle>
-                <CardDescription>Select lecture PDFs, plain text (.txt), or Word documents (.docx).</CardDescription>
+                <CardDescription>Upload your PDF lecture materials (Text or Scanned).</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.txt,.docx,.md"
+                  accept="application/pdf,.pdf"
                   onChange={(e) => setFiles(Array.from(e.target.files || []))}
                   className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
                 />

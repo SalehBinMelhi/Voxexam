@@ -62,7 +62,7 @@ import {
   QrCode,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import type { InsertQuestion, QuestionType, Exam, ExamSubmission, User as UserType, ProctoringFlag } from "@shared/schema";
+import type { InsertQuestion, QuestionType, Exam, ExamSubmission, User as UserType, ProctoringFlag, Class } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO, isAfter, isBefore } from "date-fns";
 import { TakeExamDialog } from "@/components/take-exam-dialog";
@@ -100,8 +100,7 @@ export function SimpleExamTab() {
 
   const [title, setTitle] = useState("");
   const [questions, setQuestions] = useState<InsertQuestion[]>([]);
-  const [manualStudentNames, setManualStudentNames] = useState<string[]>([]);
-  const [newStudentName, setNewStudentName] = useState("");
+  const [selectedClassId, setSelectedClassId] = useState<string>("none");
   const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -118,9 +117,7 @@ export function SimpleExamTab() {
   const [expandedSubmission, setExpandedSubmission] = useState<string | null>(null);
   const [previewExam, setPreviewExam] = useState<Exam | null>(null);
 
-  const [quickVoxOpen, setQuickVoxOpen] = useState(false);
-  const [quickVoxTitle, setQuickVoxTitle] = useState("");
-  const [quickVoxQuestion, setQuickVoxQuestion] = useState("");
+
   const [qrExam, setQrExam] = useState<Exam | null>(null);
 
   const [doctorCreatorOpen, setDoctorCreatorOpen] = useState(false);
@@ -132,6 +129,10 @@ export function SimpleExamTab() {
 
   const { data: submissions = [] } = useQuery<ExamSubmission[]>({
     queryKey: ["/api/submissions"],
+  });
+
+  const { data: classes = [] } = useQuery<Class[]>({
+    queryKey: ["/api/classes"],
   });
 
   const { data: allUsers = [] } = useQuery<UserType[]>({
@@ -146,17 +147,19 @@ export function SimpleExamTab() {
       questions: InsertQuestion[];
       startTime: string | null;
       endTime: string | null;
-      assignedStudentNames: string[];
+      classId: string | null;
       materialFiles: File[];
     }) => {
-      let classId: string | null = null;
+      let classId: string | null = data.classId;
 
       if (data.materialFiles.length > 0) {
-        const classRes = await apiRequest("POST", "/api/classes", {
-          name: `_simple_${data.title.substring(0, 30)}_${Date.now()}`,
-        });
-        const cls = await classRes.json();
-        classId = cls.id;
+        if (!classId) {
+          const classRes = await apiRequest("POST", "/api/classes", {
+            subjectName: `_simple_${data.title.substring(0, 30)}_${Date.now()}`,
+          });
+          const cls = await classRes.json();
+          classId = cls.id;
+        }
 
         for (const file of data.materialFiles) {
           const formData = new FormData();
@@ -175,7 +178,6 @@ export function SimpleExamTab() {
         startTime: data.startTime,
         endTime: data.endTime,
         classId,
-        assignedStudentNames: data.assignedStudentNames,
       });
       return response.json();
     },
@@ -190,34 +192,11 @@ export function SimpleExamTab() {
     },
   });
 
-  const createQuickVoxMutation = useMutation({
-    mutationFn: async (data: { title: string; question: string }) => {
-      const response = await apiRequest("POST", "/api/exams", {
-        title: data.title,
-        questions: [{ text: data.question, type: "audio" as QuestionType }],
-        mode: "quickvox",
-        assignedStudentIds: [],
-        assignedStudentNames: [],
-      });
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/exams"] });
-      toast({ title: "QuickVox created", description: "Your QuickVox is ready." });
-      setQuickVoxOpen(false);
-      setQuickVoxTitle("");
-      setQuickVoxQuestion("");
-    },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to create QuickVox.", variant: "destructive" });
-    },
-  });
 
   const resetForm = () => {
     setTitle("");
     setQuestions([]);
-    setManualStudentNames([]);
-    setNewStudentName("");
+    setSelectedClassId("none");
     setStartDate("");
     setStartTime("");
     setEndDate("");
@@ -230,26 +209,16 @@ export function SimpleExamTab() {
     setEditingIndex(null);
   };
 
-  const addStudentName = () => {
-    const name = newStudentName.trim();
-    if (name && !manualStudentNames.includes(name)) {
-      setManualStudentNames([...manualStudentNames, name]);
-      setNewStudentName("");
-    }
-  };
-
-  const removeStudentName = (name: string) => {
-    setManualStudentNames(manualStudentNames.filter((n) => n !== name));
-  };
-
   const addQuestion = () => {
     if (!newQuestion.trim()) return;
+
     const question: InsertQuestion = {
       text: newQuestion.trim(),
       type: newQuestionType,
       options: newQuestionType === "mcq" ? newQuestionOptions.filter((o) => o.trim()) : undefined,
       correctAnswer: newCorrectAnswer.trim() || undefined,
     };
+
     if (editingIndex !== null) {
       const updated = [...questions];
       updated[editingIndex] = question;
@@ -258,19 +227,11 @@ export function SimpleExamTab() {
     } else {
       setQuestions([...questions, question]);
     }
+
     setNewQuestion("");
+    setNewQuestionType("short");
     setNewQuestionOptions([""]);
     setNewCorrectAnswer("");
-    setNewQuestionType("short");
-  };
-
-  const editQuestion = (index: number) => {
-    const q = questions[index];
-    setNewQuestion(q.text);
-    setNewQuestionType(q.type);
-    setNewQuestionOptions(q.options && q.options.length > 0 ? [...q.options] : [""]);
-    setNewCorrectAnswer(q.correctAnswer || "");
-    setEditingIndex(index);
   };
 
   const cancelEdit = () => {
@@ -286,11 +247,20 @@ export function SimpleExamTab() {
     if (editingIndex === index) cancelEdit();
   };
 
+  const editQuestion = (index: number) => {
+    const q = questions[index];
+    setNewQuestion(q.text);
+    setNewQuestionType(q.type);
+    setNewQuestionOptions(q.options || [""]);
+    setNewCorrectAnswer(q.correctAnswer || "");
+    setEditingIndex(index);
+  };
+
   const addOption = () => setNewQuestionOptions([...newQuestionOptions, ""]);
-  const updateOption = (index: number, value: string) => {
-    const updated = [...newQuestionOptions];
-    updated[index] = value;
-    setNewQuestionOptions(updated);
+  const updateOption = (index: number, val: string) => {
+    const opts = [...newQuestionOptions];
+    opts[index] = val;
+    setNewQuestionOptions(opts);
   };
   const removeOption = (index: number) => setNewQuestionOptions(newQuestionOptions.filter((_, i) => i !== index));
 
@@ -304,7 +274,7 @@ export function SimpleExamTab() {
       questions,
       startTime: startDate ? `${startDate}T${startTime || "00:00"}` : null,
       endTime: endDate ? `${endDate}T${endTime || "23:59"}` : null,
-      assignedStudentNames: manualStudentNames,
+      classId: selectedClassId === "none" ? null : selectedClassId,
       materialFiles,
     });
   };
@@ -596,20 +566,7 @@ export function SimpleExamTab() {
             </Card>
           ))}
         </div>
-
-        {selectedExam.assignedStudentNames && selectedExam.assignedStudentNames.length > 0 && (
-          <div className="space-y-2">
-            <h4 className="text-sm font-medium flex items-center gap-2">
-              <Users className="h-4 w-4" />
-              Assigned Students
-            </h4>
-            <div className="flex flex-wrap gap-1.5">
-              {selectedExam.assignedStudentNames.map((name) => (
-                <Badge key={name} variant="outline" className="text-xs">{name}</Badge>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* No assigned students display needed here since we use class assignment */}
 
         {examSubmissions.length > 0 && (
           <>
@@ -879,14 +836,6 @@ export function SimpleExamTab() {
     <div className="space-y-8">
       <div className="flex justify-between items-center gap-3">
         <h2 className="text-2xl font-bold tracking-tight">Standard Exams</h2>
-        <Button
-          variant="outline"
-          onClick={() => setQuickVoxOpen(true)}
-          data-testid="button-open-create-quickvox"
-        >
-          <Mic className="h-4 w-4 mr-2" />
-          Create QuickVox
-        </Button>
       </div>
 
 
@@ -955,30 +904,22 @@ export function SimpleExamTab() {
 
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <Label>Assign Students</Label>
-              <span className="text-sm text-muted-foreground">{manualStudentNames.length} assigned</span>
+              <Label>Targeted Class (optional)</Label>
             </div>
-            <div className="flex gap-2">
-              <Input
-                placeholder="Student name or email..."
-                value={newStudentName}
-                onChange={(e) => setNewStudentName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addStudentName(); } }}
-                data-testid="input-simple-student-name"
-              />
-              <Button variant="outline" onClick={addStudentName} disabled={!newStudentName.trim()} data-testid="button-simple-add-student">
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-            {manualStudentNames.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {manualStudentNames.map((name) => (
-                  <Badge key={name} variant="default" className="cursor-pointer" onClick={() => removeStudentName(name)}>
-                    <Users className="h-3 w-3 mr-1" />{name}<X className="h-3 w-3 ml-1" />
-                  </Badge>
+            <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+              <SelectTrigger data-testid="select-simple-class">
+                <SelectValue placeholder="Select a class..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No Class (Open Access)</SelectItem>
+                {classes.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.courseNumber ? `${c.courseNumber} - ` : ""}{c.subjectName}
+                  </SelectItem>
                 ))}
-              </div>
-            )}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">Select a class to assign this exam to enrolled students.</p>
           </div>
 
           <div className="space-y-3">
@@ -988,7 +929,7 @@ export function SimpleExamTab() {
               ref={fileInputRef}
               type="file"
               className="hidden"
-              accept=".pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx,.xls"
+              accept="application/pdf,.pdf"
               onChange={handleFileSelect}
               multiple
               data-testid="input-simple-file-upload"
@@ -1237,60 +1178,6 @@ export function SimpleExamTab() {
         )}
       </div>
 
-      <Dialog open={quickVoxOpen} onOpenChange={(o) => { if (!createQuickVoxMutation.isPending) setQuickVoxOpen(o); }}>
-        <DialogContent className="max-w-md" data-testid="dialog-create-quickvox">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Mic className="h-5 w-5" />
-              Create QuickVox
-            </DialogTitle>
-            <DialogDescription>
-              A voice-only, single-question exam. No camera, screen, or proctoring.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="quickvox-title">Exam Title <span className="text-red-500">*</span></Label>
-              <Input
-                id="quickvox-title"
-                placeholder="e.g., Quick Check-in"
-                value={quickVoxTitle}
-                onChange={(e) => setQuickVoxTitle(e.target.value)}
-                data-testid="input-quickvox-title"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="quickvox-question">Question <span className="text-red-500">*</span></Label>
-              <Textarea
-                id="quickvox-question"
-                placeholder="Enter the question students will answer with their voice..."
-                value={quickVoxQuestion}
-                onChange={(e) => setQuickVoxQuestion(e.target.value)}
-                rows={4}
-                data-testid="textarea-quickvox-question"
-              />
-              <p className="text-xs text-muted-foreground">Students will record an audio response.</p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setQuickVoxOpen(false)}
-              disabled={createQuickVoxMutation.isPending}
-              data-testid="button-cancel-quickvox"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => createQuickVoxMutation.mutate({ title: quickVoxTitle.trim(), question: quickVoxQuestion.trim() })}
-              disabled={!quickVoxTitle.trim() || !quickVoxQuestion.trim() || createQuickVoxMutation.isPending}
-              data-testid="button-submit-quickvox"
-            >
-              {createQuickVoxMutation.isPending ? "Creating..." : "Create QuickVox"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={!!qrExam} onOpenChange={(o) => { if (!o) setQrExam(null); }}>
         <DialogContent className="max-w-sm" data-testid="dialog-quickvox-qr">

@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { geminiClient, GEMINI_MODEL, GEMINI_GRADING_MODEL } from "./config/gemini";
+import { geminiClient, GEMINI_MODEL, GEMINI_GRADING_MODEL, generateGeminiContent } from "./config/gemini";
 import { createHash } from "crypto";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { db } from "./db";
@@ -145,20 +145,20 @@ export async function transcribeAudio(
 ): Promise<string | AudioTranscriptionResult> {
   try {
     console.log("[AUDIO] Starting audio transcription, data URL length:", audioDataUrl.length);
-    
+
     const base64Separator = ";base64,";
     const separatorIndex = audioDataUrl.indexOf(base64Separator);
-    
+
     if (separatorIndex === -1) {
       console.error("[AUDIO] Invalid audio data URL format - no ;base64, separator found");
       return emptyTranscriptionResult(options?.includeLogprobs);
     }
-    
+
     const metadataPart = audioDataUrl.substring(0, separatorIndex);
     const base64Data = audioDataUrl.substring(separatorIndex + base64Separator.length);
-    
+
     console.log("[AUDIO] Metadata:", metadataPart);
-    
+
     const audioBuffer = Buffer.from(base64Data, "base64");
     console.log("[AUDIO] Audio buffer size:", audioBuffer.length, "bytes");
 
@@ -449,46 +449,6 @@ Include all seven dimensions D1 through D7 exactly once.`;
   }
 }
 
-export async function evaluateQuickVoxAnswer(
-  question: string,
-  transcript: string,
-  customApiKey?: string | null
-): Promise<{ insight: string; followUp: string }> {
-  const systemPrompt = `You are a warm, thoughtful conversation partner. A person just answered a quick voice question (a "QuickVox"). Your job is to respond with ONE genuine insight about what they said and ONE follow-up question that invites them to reflect a little more deeply.
-
-Always respond in the SAME LANGUAGE as the person's answer.
-
-Return ONLY a JSON object in exactly this shape:
-{"insight": "...", "followUp": "..."}
-
-- "insight": 1–2 short sentences. Warm, specific, and human. Reflect back something meaningful you noticed in their answer — a strength, a tension, a non-obvious pattern. Avoid generic praise, judgment, or advice.
-- "followUp": ONE open-ended, curious question that builds naturally on what they said. Not a quiz, not a yes/no.
-
-Do not include anything outside the JSON object.`;
-
-  const userMessage = `Question: ${question}\n\nTheir answer: ${transcript}`;
-
-  try {
-    const ai = customApiKey ? new GoogleGenAI({ apiKey: customApiKey }) : geminiClient;
-    const completion = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: `${systemPrompt}\n\n${userMessage}`,
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.7,
-      },
-    });
-
-    const raw = completion.text?.trim() || "{}";
-    const parsed = JSON.parse(raw);
-    const insight = typeof parsed.insight === "string" ? parsed.insight.trim() : "";
-    const followUp = typeof parsed.followUp === "string" ? parsed.followUp.trim() : "";
-    return { insight, followUp };
-  } catch (error) {
-    console.error("[QUICKVOX] evaluateQuickVoxAnswer failed:", error);
-    return { insight: "", followUp: "" };
-  }
-}
 
 // ===========================================================================
 // VoxPractice AI layer — private, student-led oral self-training.
@@ -918,11 +878,11 @@ export async function generatePracticeProbe(
   const params = objectMode
     ? paramsOrQuestion
     : {
-        questionText: paramsOrQuestion,
-        answerText: transcript || "",
-        materialsText: options?.materialContent || undefined,
-        customApiKey,
-      };
+      questionText: paramsOrQuestion,
+      answerText: transcript || "",
+      materialsText: options?.materialContent || undefined,
+      customApiKey,
+    };
   const client = practiceClient(params.customApiKey);
   const defaultProbe = PRACTICE_APPROVED_PROBES[0];
   if (!params.answerText.trim()) {
@@ -1002,12 +962,12 @@ export async function generatePracticeMicroFeedback(
 ): Promise<{ microFeedback: string; voxScoreProfile: VoxScoreProfile; allDimensionScores?: null; shouldGrade?: boolean }> {
   const params = typeof paramsOrQuestion === "string"
     ? {
-        questionText: paramsOrQuestion,
-        answerText: transcript || "",
-        transcriptLogprobs: options?.transcriptionLogprobs || undefined,
-        materialsText: options?.materialContent || undefined,
-        customApiKey,
-      }
+      questionText: paramsOrQuestion,
+      answerText: transcript || "",
+      transcriptLogprobs: options?.transcriptionLogprobs || undefined,
+      materialsText: options?.materialContent || undefined,
+      customApiKey,
+    }
     : paramsOrQuestion;
   const coverage = practiceScoreCoverageStatus(params.answerText, params.transcriptLogprobs);
   if (coverage === "insufficient") {
@@ -1184,7 +1144,7 @@ function fallbackScore(question: Question, response: string): number {
   const correctWords = question.correctAnswer.toLowerCase().split(/\s+/);
   const responseWords = response.toLowerCase().split(/\s+/);
 
-  const matches = correctWords.filter(word => 
+  const matches = correctWords.filter(word =>
     responseWords.some(respWord => respWord.includes(word) || word.includes(respWord))
   ).length;
 
@@ -1290,42 +1250,158 @@ Provide concise feedback in JSON format:
 }
 
 export async function aiQuestionChat(
-  _conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
-  _materialContent: string,
-  _customApiKey?: string | null
+  conversationHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  materialContent: string,
+  customApiKey?: string | null
 ): Promise<{ reply: string; questions?: Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }> }> {
-  return { reply: "Question chat is temporarily unavailable. Please generate questions directly from materials." };
+  try {
+    const prompt = `You are an AI assistant helping a professor build an exam based on the provided material.
+    
+MATERIAL CONTENT:
+${materialContent.substring(0, 50000)}
+
+Follow the conversation history and respond to the professor's latest request. If the professor asks to generate or refine questions, provide them in the JSON 'questions' array. Otherwise, just reply to them.
+Return ONLY valid JSON matching this schema:
+{
+  "reply": "your conversational reply to the professor",
+  "questions": [
+    { "text": "...", "type": "mcq|short|audio", "options": ["A", "B", "C", "D"], "correctAnswer": "..." }
+  ]
+}
+`;
+
+    // Convert history for Gemini
+    const contents = [
+      { role: "user", parts: [{ text: prompt }] },
+      ...conversationHistory.map(h => ({
+        role: h.role === "assistant" ? "model" : "user",
+        parts: [{ text: h.content }]
+      }))
+    ];
+
+    const response = await generateGeminiContent({
+      model: GEMINI_MODEL,
+      contents,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.7
+      }
+    });
+
+    const result = JSON.parse(response?.text || "{}");
+    return {
+      reply: result.reply || "I'm sorry, I couldn't process that.",
+      questions: result.questions || []
+    };
+  } catch (error) {
+    console.error("aiQuestionChat error:", error);
+    return { reply: "An error occurred while generating the response." };
+  }
 }
 
 export async function generateQuestionsFromMaterials(
-  _materialContent: string,
-  _numQuestions = 5,
-  _questionTypes: string[] = ["short", "mcq", "audio"],
-  _customApiKey?: string | null,
-  _instructions?: string | null
+  materialContent: string,
+  numQuestions = 5,
+  questionTypes: string[] = ["short", "mcq", "audio"],
+  customApiKey?: string | null,
+  instructions?: string | null
 ): Promise<Array<{ text: string; type: string; options?: string[]; correctAnswer?: string }>> {
-  return [];
+  try {
+    const prompt = `Generate exactly ${numQuestions} exam questions based on the following material.
+    Allowed question types: ${questionTypes.join(", ")}.
+    ${instructions ? `Additional instructions: ${instructions}` : ""}
+    
+MATERIAL CONTENT:
+${materialContent.substring(0, 50000)}
+
+Return ONLY valid JSON matching this schema:
+{
+  "questions": [
+    { "text": "...", "type": "...", "options": ["A", "B", "C", "D"], "correctAnswer": "..." }
+  ]
+}
+`;
+
+    const response = await generateGeminiContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.7
+      }
+    });
+
+    const result = JSON.parse(response?.text || "{}");
+    return result.questions || [];
+  } catch (error) {
+    console.error("generateQuestionsFromMaterials error:", error);
+    return [];
+  }
 }
 
 export async function analyzeProctoringScreenshot(
-  _screenshots: string[],
-  _labels: string[],
-  _examTitle: string,
-  _customApiKey?: string | null
+  screenshots: string[],
+  labels: string[],
+  examTitle: string,
+  customApiKey?: string | null
 ): Promise<string> {
-  return "Tab switch detected";
+  try {
+    const parts: any[] = [{ text: `Analyze the following screenshots taken during the exam "${examTitle}". Look for prohibited items (phones, secondary devices) or missing persons. Keep the analysis brief.` }];
+
+    screenshots.forEach((base64, idx) => {
+      // Assuming base64 format is "data:image/jpeg;base64,..."
+      const match = base64.match(/^data:(image\/\w+);base64,(.*)$/);
+      if (match) {
+        parts.push({
+          inlineData: {
+            mimeType: match[1],
+            data: match[2]
+          }
+        });
+      }
+    });
+
+    const response = await generateGeminiContent({
+      model: GEMINI_MODEL,
+      contents: [{ role: "user", parts }],
+      config: { temperature: 0.2 }
+    });
+
+    return response?.text || "No issues detected in screenshots.";
+  } catch (error) {
+    console.error("analyzeProctoringScreenshot error:", error);
+    return "Failed to analyze screenshots due to an error.";
+  }
 }
 
 export async function analyzeProctoringPatterns(
-  _examTitle: string,
-  _questions: Array<{ id?: string; text: string; correctAnswer?: string }>,
-  _responses: Array<{ questionId: string; response: string }>,
-  _scores: Record<string, number>,
-  _proctoringFlags: Array<{ type: string; timestamp: string; durationAway?: number; aiVerdict?: string }>,
+  examTitle: string,
+  questions: Array<{ id?: string; text: string; correctAnswer?: string }>,
+  responses: Array<{ questionId: string; response: string }>,
+  scores: Record<string, number>,
+  proctoringFlags: Array<{ type: string; timestamp: string; durationAway?: number; aiVerdict?: string }>,
   tabSwitchCount: number,
-  _customApiKey?: string | null
+  customApiKey?: string | null
 ): Promise<string> {
-  return tabSwitchCount === 0 ? "No tab switches detected — no proctoring concerns." : "Tab switches detected — review proctoring evidence manually.";
+  try {
+    const prompt = `Analyze the student's behavior during the exam "${examTitle}".
+Total tab switches: ${tabSwitchCount}
+Proctoring Flags: ${JSON.stringify(proctoringFlags, null, 2)}
+Student Scores: ${JSON.stringify(scores, null, 2)}
+
+Determine if there is strong evidence of cheating (e.g. looking up answers in other tabs for questions they scored highly on). Return a brief, analytical summary for the professor.`;
+
+    const response = await generateGeminiContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: { temperature: 0.3 }
+    });
+
+    return response?.text || "Pattern analysis unavailable.";
+  } catch (error) {
+    console.error("analyzeProctoringPatterns error:", error);
+    return "Failed to analyze proctoring patterns due to an error.";
+  }
 }
 
 export interface IStorage {
@@ -1335,7 +1411,7 @@ export interface IStorage {
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: Partial<User>): Promise<User>;
   updateUserRole(userId: string, role: string, universityId?: string): Promise<User | undefined>;
-  updateUserOpenAIKey(userId: string, apiKey: string | null): Promise<User | undefined>;
+  updateUserGeminiKey(userId: string, apiKey: string | null): Promise<User | undefined>;
 
   // University methods
   getUniversity(id: string): Promise<University | undefined>;
@@ -1345,14 +1421,17 @@ export interface IStorage {
 
   // Class methods
   getClass(id: string): Promise<Class | undefined>;
+  getAllClasses(): Promise<Class[]>;
   getClassesByUniversity(universityId: string): Promise<Class[]>;
   getClassesByProfessor(professorId: string): Promise<Class[]>;
-  getClassByJoinCode(code: string): Promise<Class | undefined>;
+  getClassByClassCode(code: string): Promise<Class | undefined>;
+  createClass(classData: InsertClass): Promise<Class>;
   createClass(professorId: string, classData: InsertClass): Promise<Class>;
-  createClass(classData: InsertClass & { professorId: string }): Promise<Class>;
   updateClassRoster(id: string, roster: string[]): Promise<Class | undefined>;
+  updateClass(id: string, data: Partial<InsertClass>): Promise<Class | undefined>;
   deleteClass(id: string): Promise<boolean>;
-  regenerateClassJoinCode(classId: string): Promise<Class | undefined>;
+  regenerateClassClassCode(classId: string): Promise<Class | undefined>;
+  enrollStudentInClass(studentId: string, classId: string, displayName?: string): Promise<any>;
 
   // Enrollment methods
   getEnrollmentsByClass(classId: string): Promise<Enrollment[]>;
@@ -1442,12 +1521,22 @@ async function generateExamAccessCode(): Promise<string> {
   return code;
 }
 
-async function generateClassJoinCode(): Promise<string> {
+async function generateClassCode(): Promise<string> {
+  const { randomBytes } = await import("crypto");
   let code: string;
   let existing: Class | undefined;
+
+  // Characters that are easy to read (no 0/O, 1/I/l, 5/S, 8/B)
+  const charset = "ACDEFGHJKLMNPQRTUVWXYZ234679";
+
   do {
-    code = Math.random().toString(36).slice(2, 8).toUpperCase();
-    existing = await storage.getClassByJoinCode(code);
+    const bytes = randomBytes(8);
+    let result = "";
+    for (let i = 0; i < 8; i++) {
+      result += charset[bytes[i] % charset.length];
+    }
+    code = result;
+    existing = await storage.getClassByClassCode(code);
   } while (existing);
   return code;
 }
@@ -1482,8 +1571,8 @@ class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async updateUserOpenAIKey(userId: string, apiKey: string | null): Promise<User | undefined> {
-    const [user] = await db.update(users).set({ openaiApiKey: apiKey, updatedAt: new Date() }).where(eq(users.id, userId)).returning();
+  async updateUserGeminiKey(userId: string, apiKey: string | null): Promise<User | undefined> {
+    const [user] = await db.update(users).set({ geminiApiKey: apiKey, updatedAt: new Date() }).where(eq(users.id, userId)).returning();
     return user || undefined;
   }
 
@@ -1502,13 +1591,17 @@ class DatabaseStorage implements IStorage {
   }
 
   async updateUniversityApiKey(universityId: string, apiKey: string | null): Promise<University | undefined> {
-    const [university] = await db.update(universities).set({ openaiApiKey: apiKey }).where(eq(universities.id, universityId)).returning();
+    const [university] = await db.update(universities).set({ geminiApiKey: apiKey }).where(eq(universities.id, universityId)).returning();
     return university || undefined;
   }
 
   async getClass(id: string): Promise<Class | undefined> {
     const [cls] = await db.select().from(classes).where(eq(classes.id, id));
     return cls || undefined;
+  }
+
+  async getAllClasses(): Promise<Class[]> {
+    return db.select().from(classes);
   }
 
   async getClassesByUniversity(universityId: string): Promise<Class[]> {
@@ -1519,25 +1612,30 @@ class DatabaseStorage implements IStorage {
     return db.select().from(classes).where(eq(classes.professorId, professorId));
   }
 
+  async createClass(insertClass: InsertClass): Promise<Class>;
   async createClass(professorId: string, insertClass: InsertClass): Promise<Class>;
-  async createClass(insertClass: InsertClass & { professorId: string }): Promise<Class>;
   async createClass(
-    professorIdOrClass: string | (InsertClass & { professorId: string }),
+    professorIdOrClass: string | InsertClass,
     maybeClass?: InsertClass
   ): Promise<Class> {
     const insertClass = typeof professorIdOrClass === "string"
       ? { ...maybeClass!, professorId: professorIdOrClass }
       : professorIdOrClass;
-    const joinCode = await generateClassJoinCode();
+    const classCode = await generateClassCode();
     const [cls] = await db.insert(classes).values({
       ...insertClass,
-      joinCode,
+      classCode,
     }).returning();
     return cls;
   }
 
   async updateClassRoster(id: string, roster: string[]): Promise<Class | undefined> {
     const [updated] = await db.update(classes).set({ roster }).where(eq(classes.id, id)).returning();
+    return updated || undefined;
+  }
+
+  async updateClass(id: string, data: Partial<InsertClass>): Promise<Class | undefined> {
+    const [updated] = await db.update(classes).set(data).where(eq(classes.id, id)).returning();
     return updated || undefined;
   }
 
@@ -1599,7 +1697,8 @@ class DatabaseStorage implements IStorage {
         exam.durationMinutes = version.durationMinutes;
         exam.maxQuestions = version.maxQuestions;
         exam.passingScore = version.passingScore;
-        exam.blueprint = version.adaptiveSettings;
+        // exam.blueprint = version.adaptiveSettings;
+        exam.blueprint = version.adaptiveSettings ?? exam.blueprint;
       }
 
       const questions = await db.select().from(examQuestions).where(eq(examQuestions.examVersionId, exam.currentVersionId));
@@ -1745,10 +1844,10 @@ class DatabaseStorage implements IStorage {
         // Copy over questions (either new ones from updates, or old ones)
         let questionsToInsert = updates.questions;
         if (!questionsToInsert && oldVersion) {
-            const oldQuestions = await db.select().from(examQuestions).where(eq(examQuestions.examVersionId, oldVersion.id));
-            questionsToInsert = oldQuestions.map(oq => ({
-              id: oq.id, text: oq.questionText, type: oq.questionType as any, correctAnswer: oq.expectedAnswer || ""
-            }));
+          const oldQuestions = await db.select().from(examQuestions).where(eq(examQuestions.examVersionId, oldVersion.id));
+          questionsToInsert = oldQuestions.map(oq => ({
+            id: oq.id, text: oq.questionText, type: oq.questionType as any, correctAnswer: oq.expectedAnswer || ""
+          }));
         }
 
         if (questionsToInsert && questionsToInsert.length > 0) {
@@ -1793,7 +1892,7 @@ class DatabaseStorage implements IStorage {
 
     // Keep updates clean for the parent table
     const parentUpdates = { ...updates };
-    delete parentUpdates.questions; 
+    delete parentUpdates.questions;
     delete parentUpdates.blueprint;
     // Map backwards compatibility for accessCode
     if (parentUpdates.accessCode) {
@@ -1891,15 +1990,8 @@ class DatabaseStorage implements IStorage {
       let quickvoxInsight: string | null = null;
       let quickvoxFollowUp: string | null = null;
 
-      if (question && transcript.trim()) {
-        try {
-          const result = await evaluateQuickVoxAnswer(question.text, transcript, customApiKey);
-          quickvoxInsight = result.insight;
-          quickvoxFollowUp = result.followUp;
-        } catch (error) {
-          console.error("[QUICKVOX] Failed to generate insight:", error);
-        }
-      }
+      // We no longer call the Gemini API for QuickVox insights since the feature is removed.
+      // We just let it save as a normal un-graded submission.
 
       const [submission] = await db.insert(submissions).values({
         examId,
@@ -2222,10 +2314,10 @@ class DatabaseStorage implements IStorage {
     const results = await db.select({
       reviewRequest: reviewRequests,
     })
-    .from(reviewRequests)
-    .innerJoin(exams, eq(reviewRequests.examId, exams.id))
-    .where(eq(exams.professorId, professorId))
-    .orderBy(desc(reviewRequests.createdAt));
+      .from(reviewRequests)
+      .innerJoin(exams, eq(reviewRequests.examId, exams.id))
+      .where(eq(exams.professorId, professorId))
+      .orderBy(desc(reviewRequests.createdAt));
     return results.map(r => r.reviewRequest);
   }
 
@@ -2270,14 +2362,27 @@ class DatabaseStorage implements IStorage {
 
   // Class join code methods
   async getClassByJoinCode(code: string): Promise<Class | undefined> {
-    const [cls] = await db.select().from(classes).where(eq(classes.joinCode, code));
+    return this.getClassByClassCode(code);
+  }
+
+  async getClassByClassCode(code: string): Promise<Class | undefined> {
+    const [cls] = await db.select().from(classes).where(eq(classes.classCode, code));
     return cls || undefined;
   }
 
-  async regenerateClassJoinCode(classId: string): Promise<Class | undefined> {
-    const newCode = await generateClassJoinCode();
-    const [updated] = await db.update(classes).set({ joinCode: newCode }).where(eq(classes.id, classId)).returning();
+  async regenerateClassClassCode(classId: string): Promise<Class | undefined> {
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const [updated] = await db.update(classes).set({ classCode: code }).where(eq(classes.id, classId)).returning();
     return updated || undefined;
+  }
+
+  async enrollStudentInClass(studentId: string, classId: string, displayName?: string): Promise<any> {
+    const [enrollment] = await db.insert(enrollments).values({
+      classId,
+      guestStudentId: studentId,
+      displayName: displayName || "Student",
+    }).returning();
+    return enrollment;
   }
 
   async getExamAnalytics(examId: string) {

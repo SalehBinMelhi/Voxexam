@@ -5,11 +5,13 @@ import multer from "multer";
 import { createRequire } from "module";
 import fs from "fs";
 import path from "path";
+import os from "os";
+import { Storage } from "@google-cloud/storage";
+import { randomUUID } from "crypto";
 const require = createRequire(import.meta.url);
 const pdf = require("pdf-parse");
-import mammoth from "mammoth";
-import * as XLSX from "xlsx";
-import JSZip from "jszip";
+
+import { processLecturePdf } from "./pdf/pdf-service";
 import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent, analyzePracticeMaterial, generatePracticeQuestions, generatePracticeProbe, generatePracticeMicroFeedback, buildPracticeReadinessReport } from "./storage";
 import { isAuthenticated, isProfessor } from "./auth";
 import { db } from "./db";
@@ -26,8 +28,43 @@ import {
 import { insertExamSchema, insertExamSubmissionSchema, insertPracticeSessionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD, type PracticeQuestion } from "@shared/schema";
 import { z } from "zod";
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-const recordingUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const upload = multer({ 
+  storage: multer.memoryStorage(), 
+  limits: { fileSize: parseInt(process.env.MAX_LECTURE_FILE_MB || "50", 10) * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = ['application/pdf'];
+    const ext = (file.originalname || "").toLowerCase();
+    if (allowedMimeTypes.includes(file.mimetype) || ext.endsWith(".pdf")) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type: ${file.mimetype}. Allowed types: PDF.`));
+    }
+  }
+});
+
+const recordingUpload = multer({ 
+  storage: multer.memoryStorage(), 
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowedMimeTypes = [
+      'audio/webm',
+      'video/webm',
+      'audio/mp4',
+      'video/mp4',
+      'audio/mpeg',
+      'audio/wav',
+      'audio/ogg',
+      'video/ogg',
+      'application/octet-stream' // sometimes sent by older browsers for media
+    ];
+    // Since some browsers don't send the exact mime type, we also check the extension or allow some generic ones
+    if (allowedMimeTypes.includes(file.mimetype) || file.mimetype.startsWith('audio/') || file.mimetype.startsWith('video/')) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid media type: ${file.mimetype}. Only audio and video are allowed.`));
+    }
+  }
+});
 
 function getUserId(req: any): string {
   if (!req?.user) return "demo-professor";
@@ -58,106 +95,29 @@ function getRecordingObjectLocation(fileName: string): { bucketName: string; obj
 
 // Upload a proctoring recording buffer to local recordings folder. Returns void.
 async function uploadRecordingToObjectStorage(fileName: string, buffer: Buffer): Promise<void> {
-  const filePath = path.join(RECORDINGS_DIR, fileName);
-  await fs.promises.mkdir(RECORDINGS_DIR, { recursive: true });
+  if (process.env.GCS_BUCKET_NAME || process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    try {
+      const storage = new Storage();
+      const bucketName = process.env.GCS_BUCKET_NAME || "voxexam-recordings";
+      const bucket = storage.bucket(bucketName);
+      const file = bucket.file(fileName);
+      await file.save(buffer, {
+        metadata: { contentType: "video/webm" }
+      });
+      return;
+    } catch (e) {
+      console.error("GCS upload failed, falling back to temp dir:", e);
+    }
+  }
+
+  // Fallback for local development if GCS is not configured.
+  // Never write to the git working tree; write to a temp directory instead.
+  const tempDir = path.join(os.tmpdir(), "voxexam-recordings");
+  await fs.promises.mkdir(tempDir, { recursive: true });
+  const filePath = path.join(tempDir, fileName);
   await fs.promises.writeFile(filePath, buffer);
 }
 
-// Extract readable plain text from an uploaded study-material file. Supports
-// PDF, Word (.docx), PowerPoint (.pptx), Excel, and plain-text/CSV/MD files.
-// Throws an Error with a user-friendly message when the file cannot be read.
-async function extractTextFromUpload(
-  buffer: Buffer,
-  fileName: string,
-  mimeType: string,
-): Promise<string> {
-  let content = "";
-  const lowerName = (fileName || "").toLowerCase();
-
-  if (mimeType === "application/pdf" || lowerName.endsWith(".pdf")) {
-    try {
-      const { extractText, getDocumentProxy } = await import("unpdf");
-      const pdfDoc = await getDocumentProxy(new Uint8Array(buffer));
-      const { text } = await extractText(pdfDoc, { mergePages: true });
-      content = text || "";
-    } catch {
-      try {
-        const pdfData = await pdf(buffer);
-        content = pdfData.text || "";
-      } catch {
-        content = "";
-      }
-    }
-    if (!content.trim()) {
-      throw new Error(
-        "Could not read this PDF. It may be scanned, image-based, or password-protected. Try a .docx or .txt file instead.",
-      );
-    }
-  } else if (
-    lowerName.endsWith(".docx") ||
-    mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  ) {
-    try {
-      const result = await mammoth.extractRawText({ buffer });
-      content = result.value;
-    } catch {
-      throw new Error("Could not parse this Word document.");
-    }
-  } else if (
-    lowerName.endsWith(".pptx") ||
-    mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-  ) {
-    try {
-      const zip = await JSZip.loadAsync(buffer);
-      const slideTexts: string[] = [];
-      const slideFiles = Object.keys(zip.files)
-        .filter((f) => f.match(/^ppt\/slides\/slide\d+\.xml$/))
-        .sort();
-      for (const slideFile of slideFiles) {
-        const xmlContent = await zip.files[slideFile].async("text");
-        const textMatches = xmlContent.match(/<a:t>([^<]*)<\/a:t>/g);
-        if (textMatches) {
-          slideTexts.push(textMatches.map((m) => m.replace(/<\/?a:t>/g, "")).join(" "));
-        }
-      }
-      content = slideTexts.join("\n\n");
-    } catch {
-      throw new Error("Could not parse this PowerPoint file.");
-    }
-  } else if (
-    lowerName.endsWith(".xlsx") ||
-    lowerName.endsWith(".xls") ||
-    mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-    mimeType === "application/vnd.ms-excel"
-  ) {
-    try {
-      const workbook = XLSX.read(buffer, { type: "buffer" });
-      const sheetTexts: string[] = [];
-      for (const sheetName of workbook.SheetNames) {
-        const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-        if (csv.trim()) sheetTexts.push(`Sheet: ${sheetName}\n${csv}`);
-      }
-      content = sheetTexts.join("\n\n");
-    } catch {
-      throw new Error("Could not parse this Excel file.");
-    }
-  } else if (
-    mimeType.startsWith("text/") ||
-    mimeType === "application/json" ||
-    lowerName.endsWith(".txt") ||
-    lowerName.endsWith(".md") ||
-    lowerName.endsWith(".csv")
-  ) {
-    content = buffer.toString("utf-8");
-  } else {
-    throw new Error("Unsupported file type. Please upload a PDF, Word, PowerPoint, or TXT file.");
-  }
-
-  if (!content.trim()) {
-    throw new Error("This file has no readable text content.");
-  }
-  return content;
-}
 
 declare global {
   namespace Express {
@@ -187,7 +147,7 @@ export async function registerRoutes(
 
   // Users routes
   const sanitizeUser = (user: any) => {
-    const { openaiApiKey, ...safe } = user;
+    const { geminiApiKey, ...safe } = user;
     return safe;
   };
 
@@ -241,36 +201,29 @@ export async function registerRoutes(
   });
 
   // 2. Upload Material & Generate Gemini Blueprint (Doctor)
-  app.post("/api/adaptive-exams/:id/upload-material", isProfessor, upload.array("materials", 5), async (req, res) => {
+  app.post("/api/adaptive-exams/:id/upload-material", isProfessor, upload.array("materials", 1), async (req, res) => {
     try {
       const examId = p(req.params.id);
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
-        return res.status(400).json({ error: "No files uploaded" });
+        return res.status(400).json({ error: "No PDF file uploaded" });
       }
 
-      let combinedText = "";
-      for (const file of files) {
-        const text = await extractTextFromUpload(file.buffer, file.originalname, file.mimetype);
-        combinedText += `\n--- FILE: ${file.originalname} ---\n${text}`;
-      }
-
-      if (!combinedText.trim()) {
-        return res.status(400).json({ error: "No readable text content extracted from uploaded files" });
-      }
-
-      // Analyze material with Google Gemini
-      const blueprint = await analyzeLectureMaterial(combinedText);
+      const file = files[0];
+      const result = await processLecturePdf(file.buffer, file.originalname);
 
       // Save material & blueprint to exam
       const [updatedExam] = await db.update(exams).set({
-        blueprint: blueprint as any,
-        materialSummary: blueprint.summary,
-        subjectName: blueprint.courseName || undefined,
+        blueprint: result.blueprint as any,
+        materialSummary: result.blueprint.summary,
+        subjectName: result.blueprint.courseName || undefined,
+        processingMethod: result.processingMethod,
+        pageCount: result.pageCount,
+        processingStatus: "success",
         status: "active",
       }).where(eq(exams.id, examId)).returning();
 
-      res.json({ success: true, blueprint, exam: updatedExam });
+      res.json({ success: true, blueprint: result.blueprint, exam: updatedExam });
     } catch (error: any) {
       console.error("Material analysis error:", error);
       res.status(500).json({ error: "Material analysis failed: " + error.message });
@@ -326,6 +279,10 @@ export async function registerRoutes(
         return res.status(403).json({ error: "This exam is not active." });
       }
 
+      if (exam.mode === "adaptive" && !exam.blueprint) {
+        return res.status(403).json({ error: "This adaptive exam is incomplete (missing blueprint). Please check with your professor." });
+      }
+
       if (exam.accessCodeExpiresAt && new Date(exam.accessCodeExpiresAt) < new Date()) {
         return res.status(410).json({ error: "This exam code has expired." });
       }
@@ -339,6 +296,7 @@ export async function registerRoutes(
         maxQuestions: exam.maxQuestions,
         durationMinutes: exam.durationMinutes,
         showFinalScoreImmediately: exam.showFinalScoreImmediately,
+        mode: exam.mode,
       });
     } catch (error: any) {
       res.status(500).json({ error: "Validation failed" });
@@ -606,14 +564,20 @@ export async function registerRoutes(
   });
 
   // 7. Get Attempt State or Diagnostic Report (Student / Doctor)
-  app.get("/api/adaptive-attempts/:id", async (req, res) => {
+  app.get("/api/adaptive-attempts/:id", isAuthenticated, async (req, res) => {
     try {
+      const userId = getUserId(req);
       const attemptId = p(req.params.id);
       const [attempt] = await db.select().from(submissions).where(eq(submissions.id, attemptId));
       if (!attempt) {
         return res.status(404).json({ error: "Attempt not found" });
       }
       const exam = await storage.getExam(attempt.examId);
+      
+      if (attempt.studentId !== userId && (!exam || exam.professorId !== userId)) {
+        return res.status(403).json({ error: "Not authorized to view this attempt" });
+      }
+
       res.json({ attempt, exam });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch attempt" });
@@ -631,6 +595,11 @@ export async function registerRoutes(
       const [attempt] = await db.select().from(submissions).where(eq(submissions.id, attemptId));
       if (!attempt) {
         return res.status(404).json({ error: "Attempt not found" });
+      }
+
+      const exam = await storage.getExam(attempt.examId);
+      if (!exam || exam.professorId !== doctorId) {
+        return res.status(403).json({ error: "Not authorized to override scores for this exam" });
       }
 
       const existingOverrides = (attempt.doctorScoreOverrides as any[]) || [];
@@ -708,13 +677,13 @@ export async function registerRoutes(
   });
 
   const sanitizeUniversity = (uni: any) => {
-    const { openaiApiKey, ...safe } = uni;
-    return { ...safe, hasApiKey: !!openaiApiKey };
+    const { geminiApiKey, ...safe } = uni;
+    return { ...safe, hasApiKey: !!geminiApiKey };
   };
 
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       let users = await storage.getAllUsers();
 
       const demoMatch = userId.match(/^demo-(professor|student)-(.+)$/);
@@ -748,7 +717,7 @@ export async function registerRoutes(
 
   app.patch("/api/users/:id/role", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       if (userId !== p(req.params.id)) {
         return res.status(403).json({ error: "Cannot update another user's role" });
       }
@@ -768,7 +737,7 @@ export async function registerRoutes(
 
   app.patch("/api/universities/:id/api-key", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can manage university settings" });
@@ -781,7 +750,7 @@ export async function registerRoutes(
       if (!uni) {
         return res.status(404).json({ error: "University not found" });
       }
-      res.json({ hasApiKey: !!uni.openaiApiKey });
+      res.json({ hasApiKey: !!uni.geminiApiKey });
     } catch (error) {
       res.status(500).json({ error: "Failed to update API key" });
     }
@@ -789,7 +758,7 @@ export async function registerRoutes(
 
   app.post("/api/generate-questions", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can generate questions" });
@@ -816,7 +785,7 @@ export async function registerRoutes(
       let customApiKey: string | null = null;
       if (user.universityId) {
         const uni = await storage.getUniversity(user.universityId);
-        if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+        if (uni?.geminiApiKey) customApiKey = uni.geminiApiKey;
       }
 
       const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
@@ -836,7 +805,7 @@ export async function registerRoutes(
 
   app.post("/api/ai-question-chat", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can use AI question generation" });
@@ -875,7 +844,7 @@ export async function registerRoutes(
       let customApiKey: string | null = null;
       if (user.universityId) {
         const uni = await storage.getUniversity(user.universityId);
-        if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+        if (uni?.geminiApiKey) customApiKey = uni.geminiApiKey;
       }
 
       const combinedContent = materials.map(m => `--- ${m.fileName} ---\n${m.content}`).join("\n\n");
@@ -911,7 +880,7 @@ export async function registerRoutes(
 
   app.post("/api/universities", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can create universities" });
@@ -930,13 +899,13 @@ export async function registerRoutes(
   // Classes routes
   app.get("/api/classes", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user) return res.status(404).json({ error: "User not found" });
 
       if (user.role === "professor") {
-        const classes = await storage.getClassesByProfessor(userId);
-        res.json(classes);
+        const classes = await storage.getAllClasses();
+        res.json(classes.filter(c => c.status !== 'archived'));
       } else if (user.role === "student") {
         const enrollmentsList = await storage.getEnrollmentsByStudent(userId);
         const classIds = enrollmentsList.map(e => e.classId);
@@ -962,27 +931,58 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/classes", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/classes", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
-      if (!user || user.role !== "professor") {
-        return res.status(403).json({ error: "Only professors can create classes" });
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Only admins can create classes" });
       }
-      const { name, universityId, roster } = req.body;
-      if (!name) {
-        return res.status(400).json({ error: "Class name is required" });
+      const { subjectName, courseNumber, sectionNumber, universityId, roster } = req.body;
+      if (!subjectName) {
+        return res.status(400).json({ error: "Subject name is required" });
       }
-      const cls = await storage.createClass({ name, universityId, professorId: userId, roster: roster || [] });
+      const cls = await storage.createClass({ subjectName, courseNumber, sectionNumber, universityId, createdByAdminId: userId, roster: roster || [] });
       res.status(201).json(cls);
     } catch (error) {
       res.status(500).json({ error: "Failed to create class" });
     }
   });
 
+  app.get("/api/admin/classes", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(getUserId(req));
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Only admins can access all classes" });
+      }
+      const allClasses = await storage.getAllClasses();
+      res.json(allClasses);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch classes" });
+    }
+  });
+
+  app.patch("/api/admin/classes/:id", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(getUserId(req));
+      if (!user || user.role !== "admin") {
+        return res.status(403).json({ error: "Only admins can edit classes" });
+      }
+      const classId = p(req.params.id);
+      const updateData = req.body;
+      const updatedClass = await storage.updateClass(classId, updateData);
+      if (!updatedClass) {
+        return res.status(404).json({ error: "Class not found" });
+      }
+      res.json(updatedClass);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update class" });
+    }
+  });
+
   app.patch("/api/classes/:id/roster", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can update class roster" });
@@ -1018,7 +1018,7 @@ export async function registerRoutes(
 
   app.delete("/api/classes/:id", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can delete classes" });
@@ -1039,7 +1039,7 @@ export async function registerRoutes(
       const enrollmentsList = await storage.getEnrollmentsByClass(p(req.params.classId));
       const students = await Promise.all(
         enrollmentsList.map(async (e) => {
-          const user = await storage.getUser(e.studentId);
+          const user = e.studentId ? await storage.getUser(e.studentId) : null;
           return { ...e, student: user };
         })
       );
@@ -1051,7 +1051,7 @@ export async function registerRoutes(
 
   app.post("/api/classes/:classId/enroll", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const classId = p(req.params.classId);
       
       const existingEnrollments = await storage.getEnrollmentsByStudent(userId);
@@ -1113,7 +1113,7 @@ export async function registerRoutes(
 
   app.post("/api/classes/:classId/materials", isAuthenticated, upload.single("file"), async (req: any, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can upload materials" });
@@ -1138,76 +1138,14 @@ export async function registerRoutes(
       const mimeType = file.mimetype || "";
 
       if (mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")) {
-        // Try unpdf first (modern, handles more PDF types)
         try {
-          const { extractText, getDocumentProxy } = await import("unpdf");
-          const pdfDoc = await getDocumentProxy(new Uint8Array(file.buffer));
-          const { text } = await extractText(pdfDoc, { mergePages: true });
-          content = text || "";
-          console.log("[PDF] unpdf extracted", content.length, "chars");
-        } catch (unpdfError: any) {
-          console.error("[PDF] unpdf failed, trying pdf-parse fallback:", unpdfError?.message);
-          // Fallback to pdf-parse
-          try {
-            const pdfData = await pdf(file.buffer);
-            content = pdfData.text || "";
-            console.log("[PDF] pdf-parse extracted", content.length, "chars");
-          } catch (pdfParseError: any) {
-            console.error("[PDF] pdf-parse also failed:", pdfParseError?.message);
-          }
+          const pdfData = await pdf(file.buffer);
+          content = pdfData.text || "";
+        } catch (pdfParseError: any) {
+          console.error("[PDF] pdf-parse failed:", pdfParseError?.message);
         }
-
-        if (!content || content.trim().length === 0) {
-          return res.status(400).json({
-            error: "Could not read this PDF. It may be scanned, image-based, or password-protected. Try re-saving it as a new PDF, or convert it to a .docx or .txt file first."
-          });
-        }
-      } else if (fileName.endsWith(".docx") || mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
-        try {
-          const result = await mammoth.extractRawText({ buffer: file.buffer });
-          content = result.value;
-        } catch {
-          return res.status(400).json({ error: "Could not parse Word document" });
-        }
-      } else if (fileName.endsWith(".pptx") || mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation") {
-        try {
-          const zip = await JSZip.loadAsync(file.buffer);
-          const slideTexts: string[] = [];
-          const slideFiles = Object.keys(zip.files).filter(f => f.match(/^ppt\/slides\/slide\d+\.xml$/)).sort();
-          for (const slideFile of slideFiles) {
-            const xmlContent = await zip.files[slideFile].async("text");
-            const textMatches = xmlContent.match(/<a:t>([^<]*)<\/a:t>/g);
-            if (textMatches) {
-              const slideText = textMatches.map(m => m.replace(/<\/?a:t>/g, "")).join(" ");
-              slideTexts.push(slideText);
-            }
-          }
-          content = slideTexts.join("\n\n");
-        } catch {
-          return res.status(400).json({ error: "Could not parse PowerPoint file" });
-        }
-      } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls") ||
-                 mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-                 mimeType === "application/vnd.ms-excel") {
-        try {
-          const workbook = XLSX.read(file.buffer, { type: "buffer" });
-          const sheetTexts: string[] = [];
-          for (const sheetName of workbook.SheetNames) {
-            const sheet = workbook.Sheets[sheetName];
-            const csv = XLSX.utils.sheet_to_csv(sheet);
-            if (csv.trim()) {
-              sheetTexts.push(`Sheet: ${sheetName}\n${csv}`);
-            }
-          }
-          content = sheetTexts.join("\n\n");
-        } catch {
-          return res.status(400).json({ error: "Could not parse Excel file" });
-        }
-      } else if (mimeType.startsWith("text/") || mimeType === "application/json" ||
-                 fileName.endsWith(".txt") || fileName.endsWith(".md") || fileName.endsWith(".csv")) {
-        content = file.buffer.toString("utf-8");
       } else {
-        return res.status(400).json({ error: "Unsupported file type. Please upload PDF, Word, PowerPoint, Excel, TXT, MD, or CSV files." });
+        return res.status(400).json({ error: "Unsupported file type. Please upload a PDF file." });
       }
 
       if (!content.trim()) {
@@ -1247,7 +1185,7 @@ export async function registerRoutes(
   // Exams routes
   app.get("/api/exams", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -1275,36 +1213,19 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/quickvox/:code", async (req, res) => {
-    try {
-      const code = p(req.params.code).trim();
-      if (!code) {
-        return res.status(404).json({ error: "Not found" });
-      }
-      const exam = await storage.getExamByAccessCode(code);
-      if (!exam || exam.mode !== "quickvox") {
-        return res.status(404).json({ error: "Not found" });
-      }
-      const question = exam.questions?.[0]?.text || "";
-      res.json({ id: exam.id, title: exam.title, question });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch QuickVox" });
-    }
-  });
-
   // =========================================================================
   // VoxPractice — private, student-led oral self-training.
   // Every route is scoped to the authenticated student; practice data is never
   // exposed to professors, directors, or any other role.
   // =========================================================================
 
-  // Resolve the OpenAI key for a practice student: prefer their university's
+  // Resolve the Gemini key for a practice student: prefer their university's
   // configured key, otherwise fall back to the default integration key.
   const resolvePracticeApiKey = async (userId: string): Promise<string | null> => {
     const user = await storage.getUser(userId);
     if (user?.universityId) {
       const uni = await storage.getUniversity(user.universityId);
-      if (uni?.openaiApiKey) return uni.openaiApiKey;
+      if (uni?.geminiApiKey) return uni.geminiApiKey;
     }
     return null;
   };
@@ -1312,7 +1233,7 @@ export async function registerRoutes(
   // Load a practice session and assert the caller owns it. Returns the session
   // or sends the appropriate error response and returns null.
   const loadOwnedPracticeSession = async (req: Request, res: any) => {
-    const userId = req.user!.claims.sub;
+    const userId = getUserId(req);
     const session = await storage.getPracticeSession(p(req.params.id));
     if (!session) {
       res.status(404).json({ error: "Practice session not found" });
@@ -1342,7 +1263,7 @@ export async function registerRoutes(
   // directors, and admins must never access it. Runs after isAuthenticated.
   const requireStudent: express.RequestHandler = async (req, res, next) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "student") {
         return res.status(403).json({ error: "VoxPractice is available to students only" });
@@ -1388,7 +1309,7 @@ export async function registerRoutes(
   // Analyze chosen material into a concept/topic/question summary.
   app.post("/api/practice/analyze-material", isAuthenticated, requireStudent, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const parsed = analyzeMaterialBody.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ error: "Material content is required", details: parsed.error.errors });
@@ -1414,11 +1335,27 @@ export async function registerRoutes(
         if (!file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const content = await extractTextFromUpload(
-          file.buffer,
-          file.originalname || "upload",
-          file.mimetype || "",
-        );
+        const mimeType = file.mimetype || "";
+        const fileName = file.originalname || "";
+        let content = "";
+        
+        if (mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")) {
+          try {
+            const pdfData = await pdf(file.buffer);
+            content = pdfData.text || "";
+          } catch (pdfParseError: any) {
+            console.error("[PDF] pdf-parse failed:", pdfParseError?.message);
+          }
+        } else {
+          return res.status(400).json({ error: "Unsupported file type. Please upload a PDF file." });
+        }
+        
+        if (!content || content.trim().length === 0) {
+          return res.status(400).json({
+            error: "File has no readable text content. Scanned PDFs are not currently supported for practice materials."
+          });
+        }
+        
         res.json({ fileName: file.originalname || "upload", content });
       } catch (error: any) {
         res.status(400).json({ error: error.message || "Could not read this file" });
@@ -1657,6 +1594,7 @@ export async function registerRoutes(
     try {
       const parseResult = insertExamSchema.safeParse(req.body);
       if (!parseResult.success) {
+        console.error("Validation error:", JSON.stringify(parseResult.error.errors, null, 2));
         return res.status(400).json({ 
           error: "Invalid exam data", 
           details: parseResult.error.errors 
@@ -1703,7 +1641,7 @@ export async function registerRoutes(
 
   app.delete("/api/exams/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const user = await storage.getUser(getUserId(req));
       if (!user || (user.role !== "professor" && user.role !== "admin")) {
         return res.status(403).json({ error: "Only professors can delete exams" });
       }
@@ -1736,7 +1674,7 @@ export async function registerRoutes(
       } else if (studentId) {
         subs = await storage.getSubmissionsByStudent(studentId as string);
       } else {
-        const userId = req.user!.claims.sub;
+        const userId = getUserId(req);
         const user = await storage.getUser(userId);
         if (user?.role === "professor") {
           const profExams = await storage.getExamsByProfessor(userId);
@@ -1863,7 +1801,7 @@ export async function registerRoutes(
 
   app.patch("/api/submissions/:id/decision", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const {
         professorDecision,
         professorOverrideReason,
@@ -1955,7 +1893,7 @@ export async function registerRoutes(
 
   app.post("/api/submissions/:id/feedback", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
 
       const submission = await storage.getSubmission(p(req.params.id));
       if (!submission) {
@@ -1986,7 +1924,7 @@ export async function registerRoutes(
       let customApiKey: string | null = null;
       if (professor?.universityId) {
         const uni = await storage.getUniversity(professor.universityId);
-        if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+        if (uni?.geminiApiKey) customApiKey = uni.geminiApiKey;
       }
 
       const feedback = await generateFeedback(
@@ -2028,7 +1966,7 @@ export async function registerRoutes(
     { name: "webcamRecording", maxCount: 1 },
   ]), async (req: any, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -2081,7 +2019,7 @@ export async function registerRoutes(
 
   app.post("/api/submissions/:id/proctoring-status", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -2121,7 +2059,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/recordings/:filename", isAuthenticated, async (req, res) => {
-    const userId = req.user!.claims.sub;
+    const userId = getUserId(req);
     const filename = p(req.params.filename);
     if (filename.includes("..") || filename.includes("/")) {
       return res.status(400).json({ error: "Invalid filename" });
@@ -2141,23 +2079,44 @@ export async function registerRoutes(
       }
     }
 
-    // Check if recording file exists locally
+    // Check if recording file exists locally (for legacy files)
     try {
       const filePath = path.join(RECORDINGS_DIR, filename);
       if (fs.existsSync(filePath)) {
         res.setHeader("Content-Type", "video/webm");
         return res.sendFile(filePath);
       }
-      return res.status(404).json({ error: "Recording not found" });
-    } catch (err: any) {
-      console.error("Error streaming recording:", err);
-      return res.status(500).json({ error: "Failed to stream recording" });
+      
+      const tempPath = path.join(os.tmpdir(), "voxexam-recordings", filename);
+      if (fs.existsSync(tempPath)) {
+        res.setHeader("Content-Type", "video/webm");
+        return res.sendFile(tempPath);
+      }
+
+      // If not local, generate signed URL from GCS
+      if (process.env.GCS_BUCKET_NAME || process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        const storage = new Storage();
+        const bucketName = process.env.GCS_BUCKET_NAME || "voxexam-recordings";
+        const bucket = storage.bucket(bucketName);
+        const file = bucket.file(filename);
+        const [url] = await file.getSignedUrl({
+          version: 'v4',
+          action: 'read',
+          expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+        });
+        return res.redirect(url);
+      }
+
+      return res.status(404).json({ error: "Recording not found on GCS or locally" });
+    } catch (error) {
+      console.error("Error retrieving recording:", error);
+      res.status(500).json({ error: "Failed to retrieve recording" });
     }
   });
 
   app.post("/api/submissions/:id/proctoring", isAuthenticated, express.json({ limit: "50mb" }), async (req: any, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -2185,7 +2144,7 @@ export async function registerRoutes(
         const cls = await storage.getClass(exam.classId);
         if (cls?.universityId) {
           const uni = await storage.getUniversity(cls.universityId);
-          if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+          if (uni?.geminiApiKey) customApiKey = uni.geminiApiKey;
         }
       }
 
@@ -2232,7 +2191,7 @@ export async function registerRoutes(
 
   app.post("/api/submissions/:id/analyze-proctoring", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const submissionId = p(req.params.id);
       const submission = await storage.getSubmission(submissionId);
       if (!submission) {
@@ -2260,7 +2219,7 @@ export async function registerRoutes(
         const cls = await storage.getClass(exam.classId);
         if (cls?.universityId) {
           const uni = await storage.getUniversity(cls.universityId);
-          if (uni?.openaiApiKey) customApiKey = uni.openaiApiKey;
+          if (uni?.geminiApiKey) customApiKey = uni.geminiApiKey;
         }
       }
 
@@ -2283,7 +2242,7 @@ export async function registerRoutes(
 
   app.get("/api/students/:id/performance-radar", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can access performance radar" });
@@ -2319,7 +2278,7 @@ export async function registerRoutes(
 
   app.get("/api/classes/:id/performance-radar", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can access class performance radar" });
@@ -2356,7 +2315,9 @@ export async function registerRoutes(
 
       const studentIds = new Set<string>();
       for (const enrollment of enrollmentsList) {
-        studentIds.add(enrollment.studentId);
+        if (enrollment.studentId) {
+          studentIds.add(enrollment.studentId);
+        }
       }
       for (const exam of scopedExams) {
         for (const sid of (exam.assignedStudentIds || [])) {
@@ -2387,7 +2348,7 @@ export async function registerRoutes(
   // Exam access code regeneration
   app.post("/api/exams/:id/regenerate-code", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const user = await storage.getUser(getUserId(req));
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can regenerate exam codes" });
       }
@@ -2408,7 +2369,7 @@ export async function registerRoutes(
   // Class join code regeneration
   app.post("/api/classes/:id/regenerate-code", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const user = await storage.getUser(getUserId(req));
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can regenerate class codes" });
       }
@@ -2419,7 +2380,7 @@ export async function registerRoutes(
       if (cls.professorId !== user.id) {
         return res.status(403).json({ error: "Not authorized" });
       }
-      const updated = await storage.regenerateClassJoinCode(cls.id);
+      const updated = await storage.regenerateClassClassCode(p(req.params.id));
       res.json(updated);
     } catch (error) {
       res.status(500).json({ error: "Failed to regenerate class code" });
@@ -2429,7 +2390,7 @@ export async function registerRoutes(
   // Support request routes
   app.post("/api/support-requests", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       const request = await storage.createSupportRequest({
         userId,
@@ -2451,7 +2412,7 @@ export async function registerRoutes(
 
   app.get("/api/admin/support-requests", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const user = await storage.getUser(getUserId(req));
       if (!user || user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
       }
@@ -2464,7 +2425,7 @@ export async function registerRoutes(
 
   app.patch("/api/admin/support-requests/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const user = await storage.getUser(getUserId(req));
       if (!user || user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
       }
@@ -2485,7 +2446,7 @@ export async function registerRoutes(
 
   app.get("/api/support-requests/:id/messages", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       const request = await storage.getSupportRequest(p(req.params.id));
       if (!request) {
@@ -2503,7 +2464,7 @@ export async function registerRoutes(
 
   app.post("/api/support-requests/:id/messages", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const user = await storage.getUser(userId);
       const request = await storage.getSupportRequest(p(req.params.id));
       if (!request) {
@@ -2543,7 +2504,7 @@ export async function registerRoutes(
   // Admin user list
   app.get("/api/admin/users", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(req.user!.claims.sub);
+      const user = await storage.getUser(getUserId(req));
       if (!user || user.role !== "admin") {
         return res.status(403).json({ error: "Admin access required" });
       }
@@ -2552,7 +2513,7 @@ export async function registerRoutes(
       const wss = getWebSocketServer();
       const onlineUserIds = wss ? wss.getOnlineUserIds() : [];
       const safeUsers = allUsers.map(u => {
-        const { openaiApiKey, ...safe } = u;
+        const { geminiApiKey, ...safe } = u;
         return { ...safe, isOnline: onlineUserIds.includes(u.id) };
       });
       res.json(safeUsers);
@@ -2564,7 +2525,7 @@ export async function registerRoutes(
   // Get user's own active support request
   app.get("/api/my-support-request", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user!.claims.sub;
+      const userId = getUserId(req);
       const requests = await storage.getSupportRequests();
       const active = requests.find(r => r.userId === userId && r.status !== "resolved");
       res.json(active || null);

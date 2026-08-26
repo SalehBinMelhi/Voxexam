@@ -11,6 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAuth } from "@/hooks/use-auth";
+import {
   Sparkles,
   Upload,
   FileText,
@@ -30,7 +38,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import type { Exam } from "@shared/schema";
+import type { Exam, University } from "@shared/schema";
 
 interface ExamBlueprintConcept {
   id: string;
@@ -59,6 +67,7 @@ interface ExamBlueprint {
 }
 
 export function AdaptiveExamTab() {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [_, setLocation] = useLocation();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +84,7 @@ export function AdaptiveExamTab() {
   const [durationMinutes, setDurationMinutes] = useState(30);
   const [passingScore, setPassingScore] = useState(60);
   const [showScore, setShowScore] = useState(true);
+  const [selectedClassId, setSelectedClassId] = useState<string>("none");
 
   // Exam state
   const [examId, setExamId] = useState<string | null>(null);
@@ -86,7 +96,16 @@ export function AdaptiveExamTab() {
   // Editing state
   const [editingConcept, setEditingConcept] = useState<{ topicIdx: number; conceptIdx: number } | null>(null);
 
-  // Existing adaptive exams
+  // Data fetching
+  const { data: userUniversity } = useQuery<University>({
+    queryKey: ["/api/universities", user?.universityId],
+    enabled: !!user?.universityId,
+  });
+
+  const { data: classes = [] } = useQuery<any[]>({
+    queryKey: ["/api/classes"],
+  });
+
   const { data: allExams = [] } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
   });
@@ -99,20 +118,25 @@ export function AdaptiveExamTab() {
     }
 
     try {
-      const res = await fetch("/api/adaptive-exams", {
+      const reqBody: any = {
+        title: title.trim(),
+        description: description.trim(),
+        subjectName: subjectName.trim(),
+        mode: "adaptive",
+        status: "draft",
+        maxQuestions,
+        maxFollowUpsPerConcept: maxFollowUps,
+        durationMinutes,
+        passingScore,
+        showFinalScoreImmediately: showScore,
+        classId: selectedClassId && selectedClassId !== "none" ? selectedClassId : null,
+      };
+
+      const res = await fetch("/api/exams", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          title,
-          description,
-          subjectName,
-          maxQuestions,
-          maxFollowUpsPerConcept: maxFollowUps,
-          durationMinutes,
-          passingScore,
-          showFinalScoreImmediately: showScore,
-        }),
+        body: JSON.stringify(reqBody),
       });
 
       const data = await res.json();
@@ -231,6 +255,7 @@ export function AdaptiveExamTab() {
     setDurationMinutes(30);
     setPassingScore(60);
     setShowScore(true);
+    setSelectedClassId("none");
     setExamId(null);
     setAccessCode(null);
     setBlueprint(null);
@@ -289,6 +314,24 @@ export function AdaptiveExamTab() {
               </div>
             </div>
 
+            {classes.length > 0 && (
+              <div className="space-y-2">
+                <Label>Class</Label>
+                <Select value={selectedClassId} onValueChange={setSelectedClassId}>
+                  <SelectTrigger data-testid="select-adaptive-class">
+                    <SelectValue placeholder="Select a class..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No class</SelectItem>
+                    {classes.map((cls) => (
+                      <SelectItem key={cls.id} value={cls.id}>{cls.subjectName}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Select a class to link this exam to a specific class roster</p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label>Description / Instructions</Label>
               <Textarea placeholder="Instructions for students..." value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
@@ -339,14 +382,13 @@ export function AdaptiveExamTab() {
               <Upload className="h-5 w-5 text-primary" />
               Upload Lecture / Course Materials
             </CardTitle>
-            <CardDescription>Select lecture PDFs, plain text (.txt), Word documents (.docx), or PowerPoint (.pptx) files.</CardDescription>
+            <CardDescription>Upload your PDF lecture materials (Text or Scanned).</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <input
               ref={fileInputRef}
               type="file"
-              multiple
-              accept=".pdf,.txt,.docx,.md,.pptx"
+              accept="application/pdf,.pdf"
               onChange={(e) => setFiles(Array.from(e.target.files || []))}
               className="block w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
             />

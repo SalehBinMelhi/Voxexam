@@ -91,7 +91,7 @@ export function ClassesTab() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [createClassOpen, setCreateClassOpen] = useState(false);
-  const [newClassName, setNewClassName] = useState("");
+  const [newClassSubjectName, setNewClassSubjectName] = useState("");
   const [newClassStudents, setNewClassStudents] = useState<string[]>([]);
   const [newStudentInput, setNewStudentInput] = useState("");
 
@@ -120,7 +120,7 @@ export function ClassesTab() {
     queryKey: ["/api/users"],
   });
 
-  const visibleClasses = classes.filter(c => !c.name.startsWith("_simple_"));
+  const visibleClasses = classes.filter(c => !c.subjectName.startsWith("_simple_"));
 
   const { data: classMaterialsList = [] } = useQuery<ClassMaterial[]>({
     queryKey: ["/api/classes", materialsClassId || selectedClassId, "materials"],
@@ -148,7 +148,7 @@ export function ClassesTab() {
       queryClient.invalidateQueries({ queryKey: ["/api/classes"] });
       toast({ title: "Class created" });
       setCreateClassOpen(false);
-      setNewClassName("");
+      setNewClassSubjectName("");
       setNewClassStudents([]);
     },
   });
@@ -288,7 +288,7 @@ export function ClassesTab() {
           <div className="flex-1">
             <h3 className="text-lg font-semibold flex items-center gap-2">
               <Layers className="h-5 w-5" />
-              {selectedClass.name}
+              {selectedClass.subjectName}
             </h3>
             <p className="text-sm text-muted-foreground">{classExams.length} exam{classExams.length !== 1 ? "s" : ""} &middot; {(selectedClass.roster?.length || 0) + classEnrollments.length} student{((selectedClass.roster?.length || 0) + classEnrollments.length) !== 1 ? "s" : ""}</p>
           </div>
@@ -599,7 +599,7 @@ export function ClassesTab() {
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept=".pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx,.xls"
+          accept="application/pdf,.pdf"
           onChange={onFileSelected}
         />
 
@@ -667,7 +667,7 @@ export function ClassesTab() {
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base line-clamp-1">{cls.name}</CardTitle>
+                    <CardTitle className="text-base line-clamp-1">{cls.subjectName}</CardTitle>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -713,8 +713,8 @@ export function ClassesTab() {
               <Input
                 id="class-name"
                 placeholder="e.g., CS101 - Intro to Programming"
-                value={newClassName}
-                onChange={(e) => setNewClassName(e.target.value)}
+                value={newClassSubjectName}
+                onChange={(e) => setNewClassSubjectName(e.target.value)}
                 data-testid="input-class-name"
               />
             </div>
@@ -747,8 +747,8 @@ export function ClassesTab() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateClassOpen(false)}>Cancel</Button>
             <Button
-              onClick={() => createClassMutation.mutate({ name: newClassName, roster: newClassStudents })}
-              disabled={!newClassName.trim() || createClassMutation.isPending}
+              onClick={() => createClassMutation.mutate({ name: newClassSubjectName, roster: newClassStudents })}
+              disabled={!newClassSubjectName.trim() || createClassMutation.isPending}
               data-testid="button-submit-class"
             >
               {createClassMutation.isPending ? "Creating..." : "Create"}
@@ -761,7 +761,7 @@ export function ClassesTab() {
         ref={fileInputRef}
         type="file"
         className="hidden"
-        accept=".pdf,.txt,.md,.csv,.json,.docx,.pptx,.xlsx,.xls"
+        accept="application/pdf,.pdf"
         onChange={onFileSelected}
       />
     </div>

@@ -44,6 +44,7 @@ export const universities = pgTable("universities", {
   name: varchar("name").notNull(),
   domain: varchar("domain"),
   openaiApiKey: varchar("openai_api_key"),
+  geminiApiKey: varchar("gemini_api_key"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -53,12 +54,17 @@ export type InsertUniversity = typeof universities.$inferInsert;
 // Classes table
 export const classes = pgTable("classes", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: varchar("name").notNull(),
+  subjectName: varchar("subject_name").notNull(),
+  courseNumber: varchar("course_number"),
+  sectionNumber: varchar("section_number"),
   universityId: varchar("university_id"),
-  professorId: varchar("professor_id").notNull(),
+  professorId: varchar("professor_id"), // Optional now
+  createdByAdminId: varchar("created_by_admin_id"),
   roster: jsonb("roster").$type<string[]>().default([]),
-  joinCode: varchar("join_code").unique(),
+  classCode: varchar("class_code").unique(),
+  status: varchar("status").default("active"),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export type Class = typeof classes.$inferSelect;
@@ -80,9 +86,14 @@ export type InsertClassMaterial = typeof classMaterials.$inferInsert;
 // Enrollments table (students enrolled in classes)
 export const enrollments = pgTable("enrollments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  studentId: varchar("student_id").notNull(),
+  studentId: varchar("student_id"), // Nullable for guest enrollments
+  guestStudentId: varchar("guest_student_id"),
+  displayName: varchar("display_name"),
   classId: varchar("class_id").notNull(),
+  status: varchar("status").default("active"),
   enrolledAt: timestamp("enrolled_at").defaultNow(),
+  lastAccessedAt: timestamp("last_accessed_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export type Enrollment = typeof enrollments.$inferSelect;
@@ -99,6 +110,10 @@ export const exams = pgTable("exams", {
   questions: jsonb("questions").notNull().$type<Question[]>().default([]),
   blueprint: jsonb("blueprint"),
   materialSummary: text("material_summary"),
+  processingMethod: varchar("processing_method"), // local-text | gemini-pdf
+  pageCount: integer("page_count"),
+  processingStatus: varchar("processing_status"), // active | error
+  processingError: text("processing_error"),
   maxQuestions: integer("max_questions").default(10),
   maxFollowUpsPerConcept: integer("max_follow_ups_per_concept").default(2),
   durationMinutes: integer("duration_minutes").default(30),
@@ -141,6 +156,7 @@ export const insertExamSchema = z.object({
   customAccessCode: z.string().max(10).optional(),
   autoGenerateCode: z.boolean().optional(),
   mode: z.enum(["exam", "quickvox", "adaptive"]).optional().default("exam"),
+  status: z.enum(["active", "draft", "inactive"]).optional(),
 });
 
 export type InsertExam = z.infer<typeof insertExamSchema>;

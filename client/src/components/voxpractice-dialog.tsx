@@ -871,7 +871,7 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,.docx,.pptx,.txt,.md,.csv,.xlsx,.xls"
+        accept="application/pdf,.pdf"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];

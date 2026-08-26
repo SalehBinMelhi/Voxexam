@@ -34,6 +34,7 @@ interface AdaptiveExamDialogProps {
   onOpenChange: (open: boolean) => void;
   examId?: string;
   accessCode?: string;
+  onValidNormalExam?: (exam: any) => void;
 }
 
 export function AdaptiveExamDialog({
@@ -41,6 +42,7 @@ export function AdaptiveExamDialog({
   onOpenChange,
   examId,
   accessCode,
+  onValidNormalExam,
 }: AdaptiveExamDialogProps) {
   const { toast } = useToast();
 
@@ -113,6 +115,26 @@ export function AdaptiveExamDialog({
         toast({ title: "Validation Failed", description: data.error || "Invalid exam code", variant: "destructive" });
         return;
       }
+
+      // Check if this is actually a normal exam
+      if (data.mode !== "adaptive") {
+        if (onValidNormalExam) {
+          try {
+            const fullRes = await fetch(`/api/exams/${data.examId}`);
+            if (fullRes.ok) {
+              const fullExam = await fullRes.json();
+              onValidNormalExam(fullExam);
+              onOpenChange(false);
+              return;
+            }
+          } catch (e) {
+            console.error("Failed to fetch full normal exam", e);
+          }
+        }
+        toast({ title: "Invalid Exam Type", description: "This code is for a standard exam, not an adaptive exam.", variant: "destructive" });
+        return;
+      }
+
       setExamData(data);
       setStep("mic_check");
     } catch (err: any) {

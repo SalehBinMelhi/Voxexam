@@ -394,7 +394,7 @@ export function CreateExamDialog({ open, onOpenChange }: CreateExamDialogProps) 
                   <SelectContent>
                     <SelectItem value="none">No class</SelectItem>
                     {classes.map((cls) => (
-                      <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                      <SelectItem key={cls.id} value={cls.id}>{cls.subjectName}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

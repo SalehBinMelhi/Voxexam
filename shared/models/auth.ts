@@ -24,6 +24,7 @@ export const users = pgTable("users", {
   role: varchar("role"),
   universityId: varchar("university_id"),
   openaiApiKey: varchar("openai_api_key"),
+  geminiApiKey: varchar("gemini_api_key"),
   passwordHash: varchar("password_hash"),
   authProvider: varchar("auth_provider").default("local"),
   studentId: varchar("student_id"),

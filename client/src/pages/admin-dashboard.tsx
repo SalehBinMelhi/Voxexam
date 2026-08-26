@@ -18,6 +18,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { AdminClassManagement } from "@/components/admin-class-management";
+import {
   LogOut,
   GraduationCap,
   Send,
@@ -252,8 +259,19 @@ export default function AdminDashboard() {
       </header>
 
       <main className="container mx-auto px-4 py-6">
-        <div className="flex flex-col lg:flex-row gap-6">
-          <div className="lg:w-1/3 space-y-4">
+        <Tabs defaultValue="classes" className="w-full">
+          <TabsList className="mb-6">
+            <TabsTrigger value="classes">Class Management</TabsTrigger>
+            <TabsTrigger value="support">Support Requests</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="classes" className="mt-0">
+            <AdminClassManagement />
+          </TabsContent>
+          
+          <TabsContent value="support" className="mt-0">
+            <div className="flex flex-col lg:flex-row gap-6">
+              <div className="lg:w-1/3 space-y-4">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-lg font-semibold">Support Requests</h2>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -455,6 +473,8 @@ export default function AdminDashboard() {
             )}
           </div>
         </div>
+          </TabsContent>
+        </Tabs>
       </main>
     </div>
   );

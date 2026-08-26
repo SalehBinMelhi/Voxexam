@@ -57,6 +57,27 @@
       "when": 1787064047465,
       "tag": "0007_lumpy_meltdown",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787412399975,
+      "tag": "0008_silly_stingray",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787432308747,
+      "tag": "0009_class_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787671245833,
+      "tag": "0010_red_klaw",
+      "breakpoints": true
     }
   ]
 }

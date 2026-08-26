@@ -9,9 +9,10 @@ import RoleSelect from "@/pages/role-select";
 import AdminDashboard from "@/pages/admin-dashboard";
 import ProfessorDashboard from "@/pages/professor-dashboard";
 import StudentDashboard from "@/pages/student-dashboard";
-import QuickVoxLinkPage from "@/pages/quickvox-link";
+
 import ProfessorExamDetails from "@/pages/professor-exam-details";
 import ProfessorAttemptDetails from "@/pages/professor-attempt-details";
+import AdminLogin from "@/pages/admin-login";
 function AppContent() {
   const { user, isLoading, isAuthenticated } = useAuth();
 
@@ -55,7 +56,8 @@ function AppContent() {
 function Router() {
   return (
     <Switch>
-      <Route path="/q/:code" component={QuickVoxLinkPage} />
+
+      <Route path="/admin/login" component={AdminLogin} />
       <Route path="/" component={AppContent} />
       <Route component={AppContent} />
     </Switch>

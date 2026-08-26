@@ -6,6 +6,7 @@ import { db } from "./db";
 import { users, type User } from "@shared/models/auth";
 import { eq } from "drizzle-orm";
 import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from "crypto";
+import { storage } from "./storage";
 
 // ---------------------------------------------------------------------------
 // Password hashing utilities (Node.js built-in scrypt — no extra dependency)
@@ -66,6 +67,12 @@ export function getSessionMiddleware(): RequestHandler {
     store = new session.MemoryStore();
   }
 
+  if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+    throw new Error("SESSION_SECRET must be set in production");
+  } else if (!process.env.SESSION_SECRET) {
+    console.warn("WARNING: SESSION_SECRET is not set, using default fallback. Do not use this in production.");
+  }
+
   sessionMiddleware = session({
     secret: process.env.SESSION_SECRET || "voxexam-default-local-secret",
     store,
@@ -73,8 +80,9 @@ export function getSessionMiddleware(): RequestHandler {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: false, // Set to true only behind HTTPS in prod
+      secure: process.env.NODE_ENV === "production",
       maxAge: sessionTtl,
+      sameSite: "lax",
     },
   });
 
@@ -258,8 +266,61 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
+  // =========================================================================
+  // ADMIN LOGIN (email/password)
+  // =========================================================================
+  app.post("/api/admin/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password are required." });
+      }
+      const cleanEmail = email.trim().toLowerCase();
+
+      // Find user by email
+      const [user] = await db.select().from(users).where(eq(users.email, cleanEmail));
+      if (!user || !user.passwordHash) {
+        return res.status(401).json({ message: "Invalid email or password." });
+      }
+
+      // Verify password
+      if (!verifyPassword(password, user.passwordHash)) {
+        return res.status(401).json({ message: "Invalid email or password." });
+      }
+
+      if (user.role !== "admin") {
+        return res.status(403).json({ message: "This account is not an admin account." });
+      }
+
+      const sessionUser = {
+        id: user.id,
+        role: "admin",
+        claims: {
+          sub: user.id,
+          email: user.email || cleanEmail,
+          first_name: user.firstName || "Admin",
+          last_name: user.lastName || "",
+        },
+      };
+
+      // Security measure: Regenerate session on login for admin
+      req.session.regenerate((err) => {
+        if (err) return res.status(500).json({ message: "Session generation failed." });
+        
+        req.login(sessionUser, (loginErr) => {
+          if (loginErr) return res.status(500).json({ message: "Login failed." });
+          return res.json({ success: true, user: sessionUser });
+        });
+      });
+    } catch (error: any) {
+      console.error("Admin login error:", error);
+      res.status(500).json({ message: "Login failed. Please try again." });
+    }
+  });
+
   // Demo login endpoint for fast local testing
-  app.post("/api/demo-login", async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_LOGIN === "true") {
+    app.post("/api/demo-login", async (req: Request, res: Response) => {
     try {
       const { role = "student" } = req.body;
       if (!["professor", "student", "admin"].includes(role)) {
@@ -318,6 +379,7 @@ export function registerAuthRoutes(app: Express): void {
       res.status(500).json({ message: "Demo login failed" });
     }
   });
+  }
 
   // Student exam code join sign-in
   app.post("/api/student-login", async (req: Request, res: Response) => {
@@ -357,96 +419,53 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  // Google Sign-In endpoint for students and professors
-  app.post("/api/auth/google", async (req: Request, res: Response) => {
+  app.post("/api/class-login", async (req: Request, res: Response) => {
     try {
-      const { credential, email, name, picture, role = "student" } = req.body;
-
-      let demoSessionId = req.cookies?.demo_session_id;
-      if (!demoSessionId) {
-        demoSessionId = randomUUID().slice(0, 8);
-        res.cookie("demo_session_id", demoSessionId, {
-          httpOnly: true,
-          maxAge: 7 * 24 * 60 * 60 * 1000,
-          sameSite: "lax",
-        });
+      const { studentName, classCode } = req.body;
+      if (!studentName?.trim() || !classCode?.trim()) {
+        return res.status(400).json({ message: "Student name and class code are required" });
       }
 
-      let googleEmail = email || `student.google.${demoSessionId}@voxexam.edu`;
-      let googleName = name || "Google Student";
-      let googlePic = picture || "https://lh3.googleusercontent.com/a/default-user";
-      let googleSub = `google-${demoSessionId}`;
-
-      if (credential && process.env.GOOGLE_CLIENT_ID) {
-        try {
-          const { OAuth2Client } = await import("google-auth-library");
-          const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-          const ticket = await client.verifyIdToken({
-            idToken: credential,
-            audience: process.env.GOOGLE_CLIENT_ID,
-          });
-          const payload = ticket.getPayload();
-          if (payload) {
-            googleEmail = payload.email || googleEmail;
-            googleName = payload.name || payload.given_name || googleName;
-            googlePic = payload.picture || googlePic;
-            googleSub = `google-${payload.sub}`;
-          }
-        } catch (vErr) {
-          console.warn("Google token verification warning:", vErr);
-        }
+      const cls = await storage.getClassByClassCode(classCode.trim());
+      if (!cls) {
+        return res.status(404).json({ message: "Invalid class code" });
       }
 
-      const [existingUser] = await db.select().from(users).where(eq(users.id, googleSub));
-      const parts = googleName.trim().split(" ");
-      const firstName = parts[0] || "Student";
-      const lastName = parts.slice(1).join(" ") || "";
+      const name = studentName.trim();
+      const slug = name.toLowerCase().replace(/\s+/g, "-");
+      const localUserId = `student-${slug}-${randomUUID().slice(0, 6)}`;
 
-      if (!existingUser) {
-        await db.insert(users).values({
-          id: googleSub,
-          email: googleEmail,
-          firstName,
-          lastName,
-          role,
-          authProvider: "google",
-          profileImageUrl: googlePic,
-        });
-      }
+      await db.insert(users).values({
+        id: localUserId,
+        email: `${slug}@local.voxexam`,
+        firstName: name,
+        lastName: "",
+        role: "student",
+        authProvider: "local",
+        studentId: name,
+      });
+
+      // Enroll student in the class
+      await storage.enrollStudentInClass(localUserId, cls.id, name);
 
       const sessionUser = {
-        id: googleSub,
-        role: existingUser?.role || role,
+        id: localUserId,
+        role: "student",
         claims: {
-          sub: googleSub,
-          email: googleEmail,
-          first_name: firstName,
-          last_name: lastName,
-          picture: googlePic,
+          sub: localUserId,
+          email: `${slug}@local.voxexam`,
+          first_name: name,
+          last_name: "",
         },
       };
 
       req.login(sessionUser, (err) => {
-        if (err) return res.status(500).json({ message: "Google session login failed" });
-        return res.json({ success: true, user: sessionUser });
+        if (err) return res.status(500).json({ message: "Student login failed" });
+        return res.json({ success: true, userId: localUserId, classId: cls.id });
       });
     } catch (error: any) {
-      console.error("Google Auth error:", error);
-      res.status(500).json({ message: "Google Sign-In failed" });
+      res.status(500).json({ message: "Class login error" });
     }
-  });
-
-  app.get("/api/auth/google", (req: Request, res: Response) => {
-    if (process.env.GOOGLE_CLIENT_ID) {
-      const redirectUri = `${req.protocol}://${req.get("host")}/api/auth/google/callback`;
-      const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
-        `client_id=${process.env.GOOGLE_CLIENT_ID}&` +
-        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-        `response_type=code&` +
-        `scope=openid%20email%20profile`;
-      return res.redirect(googleAuthUrl);
-    }
-    res.redirect("/?google_demo=true");
   });
 
   // Logout & Demo Logout endpoints
