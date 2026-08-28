@@ -1335,27 +1335,28 @@ export async function registerRoutes(
         if (!file) {
           return res.status(400).json({ error: "No file uploaded" });
         }
-        const mimeType = file.mimetype || "";
-        const fileName = file.originalname || "";
-        let content = "";
-        
-        if (mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf")) {
-          try {
-            const pdfData = await pdf(file.buffer);
-            content = pdfData.text || "";
-          } catch (pdfParseError: any) {
-            console.error("[PDF] pdf-parse failed:", pdfParseError?.message);
-          }
-        } else {
-          return res.status(400).json({ error: "Unsupported file type. Please upload a PDF file." });
+        // Reuse the adaptive-exam PDF pipeline. It first extracts embedded text
+        // and automatically falls back to visual AI analysis for scanned PDFs.
+        const processed = await processLecturePdf(file.buffer, file.originalname || "practice-material.pdf");
+        const content = processed.extractedText || [
+          processed.blueprint.summary,
+          ...processed.blueprint.topics.flatMap((topic) => [
+            topic.title,
+            topic.description,
+            ...topic.concepts.flatMap((concept) => [
+              concept.title,
+              concept.description,
+              ...concept.learningObjectives,
+              ...concept.expectedKeyPoints,
+              ...concept.commonMisconceptions,
+              concept.suggestedInitialQuestion,
+            ]),
+          ]),
+        ].filter(Boolean).join("\n").slice(0, 50_000);
+
+        if (!content.trim()) {
+          return res.status(400).json({ error: "No readable educational content was found in this PDF." });
         }
-        
-        if (!content || content.trim().length === 0) {
-          return res.status(400).json({
-            error: "File has no readable text content. Scanned PDFs are not currently supported for practice materials."
-          });
-        }
-        
         res.json({ fileName: file.originalname || "upload", content });
       } catch (error: any) {
         res.status(400).json({ error: error.message || "Could not read this file" });

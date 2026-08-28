@@ -109,7 +109,9 @@ export function AdaptiveExamTab() {
   const { data: allExams = [] } = useQuery<Exam[]>({
     queryKey: ["/api/exams"],
   });
-  const adaptiveExams = allExams.filter(e => e.mode === "adaptive" && !e.classId);
+  // Class-linked adaptive exams are still owned and reviewed by the professor,
+  // so keep them in the same list as standalone adaptive exams.
+  const adaptiveExams = allExams.filter(e => e.mode === "adaptive");
 
   const handleCreateExam = async () => {
     if (!title.trim()) {
@@ -585,31 +587,33 @@ export function AdaptiveExamTab() {
 
       {/* STEP 4: PUBLISHED */}
       {step === "published" && accessCode && (
-        <Card>
-          <CardContent className="py-12 text-center space-y-6">
-            <div className="w-16 h-16 bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
-              <CheckCircle2 className="h-8 w-8" />
-            </div>
-            <h3 className="text-2xl font-bold">Exam Published Successfully!</h3>
-            <p className="text-sm text-muted-foreground max-w-md mx-auto">
-              Share this unique access code with your students to let them join the adaptive oral exam.
-            </p>
+        <div className="space-y-3">
+          <div className="flex justify-end">
+            <Button onClick={resetForm} className="gap-2" data-testid="button-create-another-adaptive-exam">
+              <Plus className="h-4 w-4" />
+              Create Another Exam
+            </Button>
+          </div>
 
-            <div className="flex items-center justify-center gap-3 bg-muted p-4 rounded-lg max-w-xs mx-auto border">
-              <span className="text-3xl font-black font-mono tracking-widest text-primary">{accessCode}</span>
-              <Button variant="ghost" size="icon" onClick={copyCode} title="Copy Code" data-testid="button-copy-code">
-                <Copy className="h-5 w-5" />
-              </Button>
-            </div>
+          <Card>
+            <CardContent className="py-12 text-center space-y-6">
+              <div className="w-16 h-16 bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                <CheckCircle2 className="h-8 w-8" />
+              </div>
+              <h3 className="text-2xl font-bold">Exam Published Successfully!</h3>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Share this unique access code with your students to let them join the adaptive oral exam.
+              </p>
 
-            <div className="pt-4 flex justify-center">
-              <Button onClick={resetForm} className="gap-2">
-                <Plus className="h-4 w-4" />
-                Create Another Exam
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+              <div className="flex items-center justify-center gap-3 bg-muted p-4 rounded-lg max-w-xs mx-auto border">
+                <span className="text-3xl font-black font-mono tracking-widest text-primary">{accessCode}</span>
+                <Button variant="ghost" size="icon" onClick={copyCode} title="Copy Code" data-testid="button-copy-code">
+                  <Copy className="h-5 w-5" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Existing Adaptive Exams list */}
@@ -647,7 +651,8 @@ export function AdaptiveExamTab() {
                             size="icon"
                             variant="ghost"
                             className="h-6 w-6"
-                            onClick={() => {
+                            onClick={(event) => {
+                              event.stopPropagation();
                               navigator.clipboard.writeText(exam.publicExamCode || "");
                               toast({ title: "Copied!", description: "Access code copied." });
                             }}

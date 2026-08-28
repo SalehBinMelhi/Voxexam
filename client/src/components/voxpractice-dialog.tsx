@@ -824,7 +824,7 @@ export function VoxPracticeDialog({ open, onOpenChange }: { open: boolean; onOpe
                 <span className="text-[10px] font-medium rounded-full bg-primary/10 text-primary px-2 py-0.5">Recommended</span>
               </div>
               <p className="font-medium text-sm">Upload a file</p>
-              <p className="text-xs text-muted-foreground">PDF, DOCX, PPTX or TXT</p>
+              <p className="text-xs text-muted-foreground">PDF, including scanned pages</p>
               <p className="text-xs text-muted-foreground">Most relevant to your coursework</p>
             </CardContent>
           </Card>

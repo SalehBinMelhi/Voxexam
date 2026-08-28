@@ -8,6 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Users, CheckCircle, Clock, Settings, FileQuestion, History, Mic } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DoctorAttemptReviewer } from "@/components/doctor-attempt-reviewer";
+import { queryClient } from "@/lib/queryClient";
 import type { Exam, ExamSubmission } from "@shared/schema";
 
 export default function ProfessorExamDetails() {
@@ -15,6 +17,7 @@ export default function ProfessorExamDetails() {
   const [_, setLocation] = useLocation();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
+  const [selectedAdaptiveAttemptId, setSelectedAdaptiveAttemptId] = useState<string | null>(null);
 
   const { data: exam, isLoading: examLoading } = useQuery<Exam>({
     queryKey: [`/api/exams/${examId}`],
@@ -49,9 +52,31 @@ export default function ProfessorExamDetails() {
     return <div className="p-8 text-center text-red-500">Exam not found or you don't have access.</div>;
   }
 
-  const completedAttempts = attempts.filter(a => a.submittedAt);
-  const averageScore = completedAttempts.length > 0
-    ? completedAttempts.reduce((acc, curr) => acc + (curr.percentageScore || curr.totalScore * 100 || 0), 0) / completedAttempts.length
+  const isAdaptiveExam = exam.mode === "adaptive";
+  const isAttemptCompleted = (attempt: ExamSubmission) =>
+    attempt.status === "completed" || !!attempt.submittedAt;
+  const getAttemptScore = (attempt: ExamSubmission): number | null => {
+    if (isAdaptiveExam) {
+      const score = attempt.doctorFinalScore ?? attempt.finalScore ?? attempt.percentageScore ?? attempt.totalScore;
+      return typeof score === "number" ? score : null;
+    }
+
+    if (typeof attempt.percentageScore === "number") return attempt.percentageScore;
+    return typeof attempt.totalScore === "number" ? attempt.totalScore * 100 : null;
+  };
+  const reviewAttempt = (attemptId: string) => {
+    if (isAdaptiveExam) {
+      setSelectedAdaptiveAttemptId(attemptId);
+      return;
+    }
+    setLocation(`/professor/exams/${exam.id}/attempts/${attemptId}`);
+  };
+  const completedAttempts = attempts.filter(isAttemptCompleted);
+  const completedScores = completedAttempts
+    .map(getAttemptScore)
+    .filter((score): score is number => score !== null);
+  const averageScore = completedScores.length > 0
+    ? completedScores.reduce((sum, score) => sum + score, 0) / completedScores.length
     : 0;
 
   return (
@@ -125,7 +150,7 @@ export default function ProfessorExamDetails() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{attempts.length > 0 ? Math.round(averageScore) + "%" : "N/A"}</div>
+                  <div className="text-2xl font-bold">{completedScores.length > 0 ? Math.round(averageScore) + "%" : "N/A"}</div>
                 </CardContent>
               </Card>
               <Card>
@@ -180,13 +205,12 @@ export default function ProfessorExamDetails() {
                         <TableRow key={attempt.id}>
                           <TableCell className="font-medium">{attempt.studentId}</TableCell>
                           <TableCell>
-                            <Badge variant={attempt.submittedAt ? "outline" : "secondary"}>
-                              {attempt.submittedAt ? "Completed" : "In Progress"}
+                            <Badge variant={isAttemptCompleted(attempt) ? "outline" : "secondary"}>
+                              {isAttemptCompleted(attempt) ? "Completed" : "In Progress"}
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {attempt.percentageScore !== null ? `${Math.round(attempt.percentageScore)}%` : 
-                             attempt.totalScore ? `${Math.round(attempt.totalScore * 100)}%` : "-"}
+                            {getAttemptScore(attempt) !== null ? `${Math.round(getAttemptScore(attempt) as number)}%` : "-"}
                           </TableCell>
                           <TableCell>
                              {attempt.reviewStatus === "manually_adjusted" ? (
@@ -201,7 +225,7 @@ export default function ProfessorExamDetails() {
                             <Button 
                               variant="outline" 
                               size="sm"
-                              onClick={() => setLocation(`/professor/exams/${exam.id}/attempts/${attempt.id}`)}
+                              onClick={() => reviewAttempt(attempt.id)}
                             >
                               Review
                             </Button>
@@ -337,7 +361,7 @@ export default function ProfessorExamDetails() {
                           <Button 
                             variant="outline" 
                             size="sm"
-                            onClick={() => setLocation(`/professor/exams/${exam.id}/attempts/${attempt.id}`)}
+                            onClick={() => reviewAttempt(attempt.id)}
                           >
                             Review
                           </Button>
@@ -385,6 +409,17 @@ export default function ProfessorExamDetails() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <DoctorAttemptReviewer
+        open={selectedAdaptiveAttemptId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedAdaptiveAttemptId(null);
+        }}
+        attemptId={selectedAdaptiveAttemptId}
+        onOverrideSaved={() => {
+          queryClient.invalidateQueries({ queryKey: [`/api/exams/${examId}/attempts`] });
+        }}
+      />
     </div>
   );
 }

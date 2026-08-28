@@ -1,12 +1,8 @@
 import { Buffer } from "node:buffer";
-import { spawn } from "child_process";
-import { writeFile, unlink, readFile } from "fs/promises";
-import { randomUUID } from "crypto";
-import { tmpdir } from "os";
-import { join } from "path";
 import { generateGeminiContent, generateGeminiContentStream, GEMINI_MODEL } from "../../config/gemini";
 
 export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "ogg" | "unknown";
+export type TranscriptionAudioFormat = Exclude<AudioFormat, "unknown">;
 
 export interface SpeechToTextLogprob {
   token?: string;
@@ -58,51 +54,33 @@ export function detectAudioFormat(buffer: Buffer): AudioFormat {
   return "unknown";
 }
 
-/**
- * Convert any audio/video format to WAV using ffmpeg.
- */
-export async function convertToWav(audioBuffer: Buffer): Promise<Buffer> {
-  const inputPath = join(tmpdir(), `input-${randomUUID()}`);
-  const outputPath = join(tmpdir(), `output-${randomUUID()}.wav`);
-
-  try {
-    await writeFile(inputPath, audioBuffer);
-
-    await new Promise<void>((resolve, reject) => {
-      const ffmpeg = spawn("ffmpeg", [
-        "-i", inputPath,
-        "-vn",
-        "-f", "wav",
-        "-ar", "16000",
-        "-ac", "1",
-        "-acodec", "pcm_s16le",
-        "-y",
-        outputPath,
-      ]);
-
-      ffmpeg.stderr.on("data", () => {});
-      ffmpeg.on("close", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg exited with code ${code}`));
-      });
-      ffmpeg.on("error", reject);
-    });
-
-    return await readFile(outputPath);
-  } finally {
-    await unlink(inputPath).catch(() => {});
-    await unlink(outputPath).catch(() => {});
-  }
-}
-
 export async function ensureCompatibleFormat(
   audioBuffer: Buffer
-): Promise<{ buffer: Buffer; format: "wav" | "mp3" }> {
+): Promise<{ buffer: Buffer; format: TranscriptionAudioFormat }> {
   const detected = detectAudioFormat(audioBuffer);
-  if (detected === "wav") return { buffer: audioBuffer, format: "wav" };
-  if (detected === "mp3") return { buffer: audioBuffer, format: "mp3" };
-  const wavBuffer = await convertToWav(audioBuffer);
-  return { buffer: wavBuffer, format: "wav" };
+  if (detected === "unknown") {
+    throw new Error("Unsupported or invalid audio format");
+  }
+
+  // Gemini accepts the browser recording formats directly. Keeping the audio
+  // in memory avoids an ffmpeg runtime dependency and never writes voice data
+  // to a temporary server file.
+  return { buffer: audioBuffer, format: detected };
+}
+
+function transcriptionMimeType(format: TranscriptionAudioFormat): string {
+  switch (format) {
+    case "mp3":
+      return "audio/mpeg";
+    case "webm":
+      return "audio/webm";
+    case "mp4":
+      return "audio/mp4";
+    case "ogg":
+      return "audio/ogg";
+    default:
+      return "audio/wav";
+  }
 }
 
 export async function voiceChat(
@@ -166,30 +144,30 @@ export async function textToSpeechStream(
 
 export async function speechToText(
   audioBuffer: Buffer,
-  format?: "wav" | "mp3" | "webm",
+  format?: TranscriptionAudioFormat,
   prompt?: string
 ): Promise<string>;
 export async function speechToText(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm",
+  format: TranscriptionAudioFormat,
   prompt: string | undefined,
   options?: SpeechToTextOptions & { includeLogprobs?: false }
 ): Promise<string>;
 export async function speechToText(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm",
+  format: TranscriptionAudioFormat,
   prompt: string | undefined,
   options: SpeechToTextOptions & { includeLogprobs: true }
 ): Promise<SpeechToTextResult>;
 export async function speechToText(
   audioBuffer: Buffer,
-  format: "wav" | "mp3" | "webm" = "wav",
+  format: TranscriptionAudioFormat = "wav",
   prompt?: string,
   options?: SpeechToTextOptions
 ): Promise<string | SpeechToTextResult> {
   try {
     const base64Audio = audioBuffer.toString("base64");
-    const mimeType = format === "mp3" ? "audio/mp3" : format === "webm" ? "audio/webm" : "audio/wav";
+    const mimeType = transcriptionMimeType(format);
     const response = await generateGeminiContent({
       model: GEMINI_MODEL,
       contents: [
