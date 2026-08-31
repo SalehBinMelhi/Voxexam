@@ -13,46 +13,64 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Mic,
-  MicOff,
   Square,
-  Play,
   RotateCcw,
   Send,
   Sparkles,
   CheckCircle2,
-  AlertCircle,
-  Clock,
-  BookOpen,
+  Loader2,
   Award,
-  HelpCircle,
-  Volume2,
+  AlertCircle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { queryClient } from "@/lib/queryClient";
 
 interface AdaptiveExamDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  examId?: string;
-  accessCode?: string;
-  onValidNormalExam?: (exam: any) => void;
+  examId: string;
+  attemptId?: string;
+}
+
+interface AdaptiveDiagnosticReport {
+  finalScore: number;
+  strengths: string[];
+  weaknesses: string[];
+  recommendations: string[];
+}
+
+function parseImmediateDiagnosticReport(value: unknown): AdaptiveDiagnosticReport | null {
+  if (!value || typeof value !== "object") return null;
+
+  const report = value as Record<string, unknown>;
+  if (typeof report.finalScore !== "number" || !Number.isFinite(report.finalScore)) return null;
+
+  const stringItems = (items: unknown): string[] =>
+    Array.isArray(items)
+      ? items.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      : [];
+
+  return {
+    finalScore: Math.max(0, Math.min(100, report.finalScore)),
+    strengths: stringItems(report.strengths),
+    weaknesses: stringItems(report.weaknesses),
+    recommendations: stringItems(report.recommendations),
+  };
 }
 
 export function AdaptiveExamDialog({
   open,
   onOpenChange,
   examId,
-  accessCode,
-  onValidNormalExam,
+  attemptId: providedAttemptId,
 }: AdaptiveExamDialogProps) {
   const { toast } = useToast();
 
-  // Exam step state: "code_entry" | "mic_check" | "active" | "completed"
-  const [step, setStep] = useState<"code_entry" | "mic_check" | "active" | "completed">("code_entry");
+  const [step, setStep] = useState<"loading" | "mic_check" | "active" | "completed">("loading");
 
   // Exam state
-  const [enteredCode, setEnteredCode] = useState(accessCode || "");
   const [examData, setExamData] = useState<any>(null);
-  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [activeAttemptId, setActiveAttemptId] = useState<string | null>(providedAttemptId || null);
   const [currentQuestion, setCurrentQuestion] = useState<string>("");
   const [questionNumber, setQuestionNumber] = useState<number>(1);
   const [totalQuestions, setTotalQuestions] = useState<number>(10);
@@ -65,9 +83,10 @@ export function AdaptiveExamDialog({
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [textFallback, setTextFallback] = useState<string>("");
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [isStartingAttempt, setIsStartingAttempt] = useState(false);
 
   // Diagnostic Report State
-  const [finalReport, setFinalReport] = useState<any>(null);
+  const [finalReport, setFinalReport] = useState<AdaptiveDiagnosticReport | null>(null);
 
   // Audio refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -80,11 +99,22 @@ export function AdaptiveExamDialog({
   const [isTestingMic, setIsTestingMic] = useState(false);
 
   useEffect(() => {
-    if (accessCode) {
-      setEnteredCode(accessCode);
-      validateCode(accessCode);
+    if (!open) {
+      setStep("loading");
+      setExamData(null);
+      setActiveAttemptId(providedAttemptId || null);
+      setCurrentQuestion("");
+      setFinalReport(null);
+      setAudioBlob(null);
+      setAudioUrl(null);
+      setTextFallback("");
+      setMicTestPassed(false);
+      setIsStartingAttempt(false);
+      return;
     }
-  }, [accessCode]);
+    setStep("loading");
+    void loadExamById(examId);
+  }, [open, examId, providedAttemptId]);
 
   useEffect(() => {
     return () => {
@@ -100,45 +130,27 @@ export function AdaptiveExamDialog({
     }
   };
 
-  const validateCode = async (codeToTest?: string) => {
-    const code = codeToTest || enteredCode;
-    if (!code.trim()) return;
-
+  const loadExamById = async (id: string) => {
     try {
-      const res = await fetch("/api/student/validate-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessCode: code }),
-      });
-      const data = await res.json();
+      const res = await fetch(`/api/student/exams/${encodeURIComponent(id)}`, { credentials: "include" });
+      const payload = await res.json();
       if (!res.ok) {
-        toast({ title: "Validation Failed", description: data.error || "Invalid exam code", variant: "destructive" });
+        toast({ title: "Exam unavailable", description: payload.error || "This exam cannot be opened.", variant: "destructive" });
+        onOpenChange(false);
         return;
       }
-
-      // Check if this is actually a normal exam
-      if (data.mode !== "adaptive") {
-        if (onValidNormalExam) {
-          try {
-            const fullRes = await fetch(`/api/exams/${data.examId}`);
-            if (fullRes.ok) {
-              const fullExam = await fullRes.json();
-              onValidNormalExam(fullExam);
-              onOpenChange(false);
-              return;
-            }
-          } catch (e) {
-            console.error("Failed to fetch full normal exam", e);
-          }
-        }
-        toast({ title: "Invalid Exam Type", description: "This code is for a standard exam, not an adaptive exam.", variant: "destructive" });
+      const data = payload.data;
+      if (!data?.exam || data.exam.mode !== "adaptive") {
+        toast({ title: "Exam unavailable", description: "This is not an adaptive exam.", variant: "destructive" });
+        onOpenChange(false);
         return;
       }
-
-      setExamData(data);
+      setExamData({ ...data.exam, examId: data.exam.id });
+      setActiveAttemptId(data.attemptId || providedAttemptId || null);
       setStep("mic_check");
-    } catch (err: any) {
-      toast({ title: "Error", description: "Failed to validate code", variant: "destructive" });
+    } catch {
+      toast({ title: "Exam unavailable", description: "Connection error. Please try again.", variant: "destructive" });
+      onOpenChange(false);
     }
   };
 
@@ -158,19 +170,23 @@ export function AdaptiveExamDialog({
   };
 
   const startExamAttempt = async () => {
-    if (!examData?.examId) return;
+    const selectedExamId = examData?.id || examData?.examId;
+    if (!selectedExamId || isStartingAttempt) return;
     try {
+      setIsStartingAttempt(true);
       const res = await fetch("/api/adaptive-attempts/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ examId: examData.examId, studentName: "Student" }),
+        credentials: "include",
+        body: JSON.stringify({ examId: selectedExamId, attemptId: activeAttemptId || undefined }),
       });
-      const data = await res.json();
+      const payload = await res.json();
       if (!res.ok) {
-        toast({ title: "Exam Start Error", description: data.error || "Could not start exam", variant: "destructive" });
+        toast({ title: "Exam Start Error", description: payload.error || "Could not start exam", variant: "destructive" });
         return;
       }
-      setAttemptId(data.attemptId);
+      const data = payload.data || payload;
+      setActiveAttemptId(data.attemptId);
       setCurrentQuestion(data.currentQuestion);
       setQuestionNumber(data.questionNumber || 1);
       setTotalQuestions(data.totalQuestions || 10);
@@ -178,6 +194,8 @@ export function AdaptiveExamDialog({
       setStep("active");
     } catch (err) {
       toast({ title: "Error", description: "Failed to start exam", variant: "destructive" });
+    } finally {
+      setIsStartingAttempt(false);
     }
   };
 
@@ -232,7 +250,7 @@ export function AdaptiveExamDialog({
   };
 
   const submitAnswer = async () => {
-    if (!attemptId) return;
+    if (!activeAttemptId) return;
     if (!audioBlob && !textFallback.trim()) {
       toast({ title: "No Answer Provided", description: "Please record an audio response or type your answer before submitting.", variant: "destructive" });
       return;
@@ -248,22 +266,27 @@ export function AdaptiveExamDialog({
         formData.append("transcriptText", textFallback.trim());
       }
 
-      const res = await fetch(`/api/adaptive-attempts/${attemptId}/answer`, {
+      const res = await fetch(`/api/adaptive-attempts/${activeAttemptId}/answer`, {
         method: "POST",
         body: formData,
+        credentials: "include",
       });
 
-      const data = await res.json();
+      const payload = await res.json();
       if (!res.ok) {
-        toast({ title: "Evaluation Failed", description: data.error || "Gemini evaluation failed", variant: "destructive" });
+        toast({ title: "Evaluation Failed", description: payload.error || "Evaluation failed", variant: "destructive" });
         setIsEvaluating(false);
         return;
       }
+      const data = payload.data || payload;
 
       resetRecording();
 
       if (data.isFinished) {
-        setFinalReport(data.report || data.attempt);
+        // The server only includes `report` when the professor enabled immediate
+        // diagnostic feedback. Its score is preliminary and never an official result.
+        setFinalReport(parseImmediateDiagnosticReport(data.report));
+        queryClient.invalidateQueries({ queryKey: ["/api/student/dashboard"] });
         setStep("completed");
       } else {
         setCurrentQuestion(data.nextQuestion);
@@ -292,28 +315,18 @@ export function AdaptiveExamDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* STEP 1: CODE ENTRY */}
-        {step === "code_entry" && (
-          <div className="space-y-6 py-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Enter Exam Access Code</CardTitle>
-                <CardDescription>Enter the 5-digit code provided by your doctor/professor.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="e.g. 84920"
-                    maxLength={10}
-                    value={enteredCode}
-                    onChange={(e) => setEnteredCode(e.target.value)}
-                    className="flex-1 px-4 py-2 text-lg tracking-widest border rounded-md font-mono bg-background"
-                  />
-                  <Button onClick={() => validateCode()}>Validate Code</Button>
-                </div>
-              </CardContent>
-            </Card>
+        {/* Access codes are validated on the authenticated dashboard before this dialog opens. */}
+        {step === "loading" && (
+          <div
+            className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-lg border bg-muted/30 py-4 text-center"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 className="h-6 w-6 animate-spin text-primary" aria-hidden="true" />
+            <div>
+              <p className="font-medium">Loading your exam</p>
+              <p className="text-sm text-muted-foreground">Checking access, schedule, and attempt status.</p>
+            </div>
           </div>
         )}
 
@@ -353,9 +366,10 @@ export function AdaptiveExamDialog({
             </Card>
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setStep("code_entry")}>Back</Button>
-              <Button onClick={startExamAttempt} disabled={!micTestPassed}>
-                Start Adaptive Oral Exam
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isStartingAttempt}>Cancel</Button>
+              <Button onClick={startExamAttempt} disabled={!micTestPassed || isStartingAttempt}>
+                {isStartingAttempt && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+                {isStartingAttempt ? "Starting exam..." : "Start Adaptive Oral Exam"}
               </Button>
             </div>
           </div>
@@ -455,73 +469,121 @@ export function AdaptiveExamDialog({
           </div>
         )}
 
-        {/* STEP 4: COMPLETED DIAGNOSTIC REPORT */}
+        {/* STEP 4A: IMMEDIATE DIAGNOSTIC REPORT — never the official published result. */}
         {step === "completed" && finalReport && (
           <div className="space-y-6 py-2">
             <Card className="bg-emerald-500/10 border-emerald-500/20">
               <CardHeader className="text-center pb-4">
                 <div className="w-12 h-12 bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <Award className="h-6 w-6" />
+                  <Award className="h-6 w-6" aria-hidden="true" />
                 </div>
                 <CardTitle className="text-2xl font-bold">Exam Completed!</CardTitle>
-                <CardDescription>Your complete oral exam attempt has been analyzed by Google Gemini.</CardDescription>
+                <CardDescription>
+                  Your responses have been analyzed and your preliminary AI diagnostic report is ready.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="text-center">
-                {finalReport.finalScore !== undefined && (
-                  <div className="text-5xl font-black text-emerald-600 mb-2">
-                    {finalReport.finalScore} <span className="text-xl font-normal text-muted-foreground">/ 100</span>
+              <CardContent className="space-y-3 text-center">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Preliminary AI diagnostic score</p>
+                  <div className="text-5xl font-black text-emerald-600">
+                    {finalReport.finalScore}
+                    <span className="text-xl font-normal text-muted-foreground"> / 100</span>
                   </div>
-                )}
+                </div>
+                <div
+                  className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+                  role="note"
+                >
+                  This is AI-generated diagnostic feedback, not your official result. Your professor must review and publish the official result separately.
+                </div>
               </CardContent>
             </Card>
 
-            {/* STRENGTHS & WEAKNESSES */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-emerald-600 flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4" /> Strengths Demonstrated
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="text-sm space-y-1">
-                  {finalReport.strengths?.map((s: string, idx: number) => (
-                    <li key={idx} className="list-disc list-inside text-muted-foreground">{s}</li>
-                  ))}
-                </CardContent>
-              </Card>
+            {(finalReport.strengths.length > 0 || finalReport.weaknesses.length > 0) && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                {finalReport.strengths.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-sm text-emerald-600">
+                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Strengths Demonstrated
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                        {finalReport.strengths.map((strength, index) => (
+                          <li key={`${index}-${strength}`}>{strength}</li>
+                        ))}
+                      </ul>
+                    </CardContent>
+                  </Card>
+                )}
 
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm text-amber-600 flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4" /> Areas for Growth
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="text-sm space-y-1">
-                  {finalReport.weaknesses?.map((w: string, idx: number) => (
-                    <li key={idx} className="list-disc list-inside text-muted-foreground">{w}</li>
-                  ))}
-                </CardContent>
-              </Card>
-            </div>
+                {finalReport.weaknesses.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-sm text-amber-600">
+                        <AlertCircle className="h-4 w-4" aria-hidden="true" /> Areas for Growth
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                        {finalReport.weaknesses.map((weakness, index) => (
+                          <li key={`${index}-${weakness}`}>{weakness}</li>
+                        ))}
+                      </ul>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
 
-            {/* RECOMMENDATIONS */}
-            {finalReport.recommendations?.length > 0 && (
+            {finalReport.recommendations.length > 0 && (
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                    <Sparkles className="h-4 w-4 text-primary" /> Personalized Actionable Recommendations
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold">
+                    <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" /> Personalized Actionable Recommendations
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="text-sm space-y-2">
-                  {finalReport.recommendations.map((rec: string, idx: number) => (
-                    <div key={idx} className="p-2 bg-muted rounded-md text-muted-foreground">{rec}</div>
-                  ))}
+                <CardContent>
+                  <ul className="space-y-2 text-sm">
+                    {finalReport.recommendations.map((recommendation, index) => (
+                      <li key={`${index}-${recommendation}`} className="rounded-md bg-muted p-2 text-muted-foreground">
+                        {recommendation}
+                      </li>
+                    ))}
+                  </ul>
                 </CardContent>
               </Card>
             )}
 
             <div className="flex justify-end">
               <Button onClick={() => onOpenChange(false)}>Close Report</Button>
+            </div>
+          </div>
+        )}
+
+        {/* STEP 4B: SUBMITTED — no immediate report when the professor disabled it. */}
+        {step === "completed" && !finalReport && (
+          <div className="space-y-5 py-4">
+            <Card className="bg-emerald-500/10 border-emerald-500/20">
+              <CardHeader className="text-center pb-4">
+                <div className="w-12 h-12 bg-emerald-500/20 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+                <CardTitle className="text-2xl font-bold">Response Submitted</CardTitle>
+                <CardDescription>
+                  Your adaptive oral exam is complete. Your professor will review and publish the official result.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-center text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+                  Pending professor review. No AI-suggested score is shown as an official result.
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex justify-end">
+              <Button onClick={() => onOpenChange(false)}>Return to Dashboard</Button>
             </div>
           </div>
         )}

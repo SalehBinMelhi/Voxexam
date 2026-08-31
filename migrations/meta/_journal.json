@@ -78,6 +78,13 @@
       "when": 1787671245833,
       "tag": "0010_red_klaw",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1788044747817,
+      "tag": "0011_glossy_moon_knight",
+      "breakpoints": true
     }
   ]
 }

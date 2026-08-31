@@ -3,47 +3,26 @@ import session from "express-session";
 import type { Express, RequestHandler, Request, Response } from "express";
 import connectPg from "connect-pg-simple";
 import { db } from "./db";
-import { users, type User } from "@shared/models/auth";
-import { eq } from "drizzle-orm";
-import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from "crypto";
-import { storage } from "./storage";
-
-// ---------------------------------------------------------------------------
-// Password hashing utilities (Node.js built-in scrypt — no extra dependency)
-// ---------------------------------------------------------------------------
-const SALT_LENGTH = 32;
-const KEY_LENGTH = 64;
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(SALT_LENGTH).toString("hex");
-  const hash = scryptSync(password, salt, KEY_LENGTH).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(":");
-  if (!salt || !hash) return false;
-  const hashBuffer = Buffer.from(hash, "hex");
-  const derivedBuffer = scryptSync(password, salt, KEY_LENGTH);
-  return timingSafeEqual(hashBuffer, derivedBuffer);
-}
-
-// ---------------------------------------------------------------------------
-// Validation helpers
-// ---------------------------------------------------------------------------
-const PROFESSOR_DOMAIN = "@voxexam.ae";
-
-function isValidProfessorEmail(email: string): boolean {
-  return email.toLowerCase().trim().endsWith(PROFESSOR_DOMAIN);
-}
-
-function validatePasswordStrength(password: string): string | null {
-  if (password.length < 8) return "Password must be at least 8 characters long.";
-  if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter.";
-  if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter.";
-  if (!/[0-9]/.test(password)) return "Password must contain at least one number.";
-  return null;
-}
+import { users } from "@shared/models/auth";
+import { eq, sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
+import {
+  PROFESSOR_DOMAIN,
+  hashPassword,
+  isValidEmail,
+  isValidProfessorEmail,
+  normalizeEmail,
+  normalizeFullName,
+  toSafeUser,
+  toSessionPrincipal,
+  validatePasswordStrength,
+  verifyPassword,
+  type SessionPrincipal,
+} from "./auth-utils";
+import {
+  StudentAccountError,
+  StudentAccountService,
+} from "./student-account-service";
 
 // ---------------------------------------------------------------------------
 // Session middleware
@@ -96,8 +75,82 @@ export async function setupAuth(app: Express): Promise<void> {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  passport.serializeUser((user: any, cb) => cb(null, user));
-  passport.deserializeUser((user: any, cb) => cb(null, user));
+  passport.serializeUser((user: any, cb) => {
+    const userId = user?.id || user?.claims?.sub;
+    if (!userId || typeof userId !== "string") {
+      return cb(new Error("Cannot serialize an invalid authentication principal"));
+    }
+    return cb(null, userId);
+  });
+
+  passport.deserializeUser(async (serializedUser: unknown, cb) => {
+    try {
+      const legacyPrincipal = typeof serializedUser === "object" && serializedUser !== null
+        ? serializedUser as { id?: unknown; claims?: { sub?: unknown } }
+        : null;
+      const userId = typeof serializedUser === "string"
+        ? serializedUser
+        : typeof legacyPrincipal?.id === "string"
+          ? legacyPrincipal.id
+          : typeof legacyPrincipal?.claims?.sub === "string"
+            ? legacyPrincipal.claims.sub
+            : null;
+
+      if (!userId) return cb(null, false);
+
+      const [user] = await db.select().from(users).where(eq(users.id, userId));
+      if (!user) return cb(null, false);
+      return cb(null, toSessionPrincipal(user) as any);
+    } catch (error) {
+      return cb(error as Error);
+    }
+  });
+}
+
+function getDatabaseErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  if ("code" in error && typeof error.code === "string") return error.code;
+  if ("cause" in error) return getDatabaseErrorCode(error.cause);
+  return undefined;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return getDatabaseErrorCode(error) === "23505";
+}
+
+function logAuthFailure(context: string, error: unknown): void {
+  const errorName = error instanceof Error ? error.name : "UnknownError";
+  const errorCode = getDatabaseErrorCode(error);
+  console.error(`[AUTH] ${context}`, errorCode ? { errorName, errorCode } : { errorName });
+}
+
+function establishSession(req: Request, principal: SessionPrincipal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((regenerateError) => {
+      if (regenerateError) return reject(regenerateError);
+      req.login(principal as any, (loginError) => {
+        if (loginError) return reject(loginError);
+        return resolve();
+      });
+    });
+  });
+}
+
+const studentAccounts = new StudentAccountService({
+  async findByNormalizedEmail(email) {
+    const [user] = await db.select().from(users).where(sql`lower(${users.email}) = ${email}`);
+    return user;
+  },
+  async createStudent(values) {
+    const [user] = await db.insert(users).values(values).returning();
+    return user;
+  },
+});
+
+function handleStudentAccountError(error: unknown, res: Response): boolean {
+  if (!(error instanceof StudentAccountError)) return false;
+  res.status(error.status).json({ error: error.message });
+  return true;
 }
 
 export function registerAuthRoutes(app: Express): void {
@@ -106,27 +159,57 @@ export function registerAuthRoutes(app: Express): void {
     if (!req.isAuthenticated() || !req.user) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    const sessUser = req.user as any;
-    const userId = sessUser.claims?.sub || sessUser.id;
+    const sessionUser = req.user as any;
+    const userId = sessionUser.id || sessionUser.claims?.sub;
 
     if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const [dbUser] = await db.select().from(users).where(eq(users.id, userId));
-    if (!dbUser) {
-      return res.json({
-        id: userId,
-        email: sessUser.claims?.email || "demo@voxexam.local",
-        firstName: sessUser.claims?.first_name || "Demo",
-        lastName: sessUser.claims?.last_name || "User",
-        role: sessUser.role || "student",
-      });
-    }
+    try {
+      const [dbUser] = await db.select().from(users).where(eq(users.id, userId));
+      if (!dbUser) {
+        req.logout(() => undefined);
+        return res.status(401).json({ message: "Unauthorized" });
+      }
 
-    // Never expose passwordHash to the client
-    const { passwordHash: _ph, ...safeUser } = dbUser;
-    return res.json(safeUser);
+      return res.json(toSafeUser(dbUser));
+    } catch (error) {
+      logAuthFailure("Failed to load the current user", error);
+      return res.status(500).json({ message: "Unable to load the current account." });
+    }
+  });
+
+  // =========================================================================
+  // STUDENT REGISTRATION AND LOGIN
+  // =========================================================================
+  app.post("/api/student/register", async (req: Request, res: Response) => {
+    try {
+      const createdUser = await studentAccounts.register(req.body ?? {});
+
+      await establishSession(req, toSessionPrincipal(createdUser));
+      return res.status(201).json({ data: { user: toSafeUser(createdUser) } });
+    } catch (error) {
+      if (handleStudentAccountError(error, res)) return;
+      if (isUniqueViolation(error)) {
+        return res.status(409).json({ error: "An account with this email already exists." });
+      }
+      logAuthFailure("Student registration failed", error);
+      return res.status(500).json({ error: "Registration failed. Please try again." });
+    }
+  });
+
+  app.post("/api/student/login", async (req: Request, res: Response) => {
+    try {
+      const user = await studentAccounts.authenticate(req.body ?? {});
+
+      await establishSession(req, toSessionPrincipal(user));
+      return res.json({ data: { user: toSafeUser(user) } });
+    } catch (error) {
+      if (handleStudentAccountError(error, res)) return;
+      logAuthFailure("Student login failed", error);
+      return res.status(500).json({ error: "Login failed. Please try again." });
+    }
   });
 
   // =========================================================================
@@ -141,8 +224,8 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(400).json({ message: "All fields are required." });
       }
 
-      const cleanEmail = email.trim().toLowerCase();
-      const trimmedName = fullName.trim();
+      const cleanEmail = normalizeEmail(email);
+      const trimmedName = normalizeFullName(fullName);
 
       // Validate email domain
       if (!isValidProfessorEmail(cleanEmail)) {
@@ -150,8 +233,7 @@ export function registerAuthRoutes(app: Express): void {
       }
 
       // Validate email format
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(cleanEmail)) {
+      if (!isValidEmail(cleanEmail)) {
         return res.status(400).json({ message: "Invalid email format." });
       }
 
@@ -167,7 +249,7 @@ export function registerAuthRoutes(app: Express): void {
       }
 
       // Check for duplicate email
-      const [existing] = await db.select().from(users).where(eq(users.email, cleanEmail));
+      const [existing] = await db.select().from(users).where(sql`lower(${users.email}) = ${cleanEmail}`);
       if (existing) {
         return res.status(409).json({ message: "An account with this email already exists." });
       }
@@ -179,7 +261,7 @@ export function registerAuthRoutes(app: Express): void {
       const firstName = nameParts[0] || "Professor";
       const lastName = nameParts.slice(1).join(" ") || "";
 
-      await db.insert(users).values({
+      const [createdUser] = await db.insert(users).values({
         id: userId,
         email: cleanEmail,
         firstName,
@@ -187,30 +269,16 @@ export function registerAuthRoutes(app: Express): void {
         role: "professor",
         authProvider: "local",
         passwordHash: hashed,
-      });
+      }).returning();
 
-      // Auto-login after registration
-      const sessionUser = {
-        id: userId,
-        role: "professor",
-        claims: {
-          sub: userId,
-          email: cleanEmail,
-          first_name: firstName,
-          last_name: lastName,
-        },
-      };
-
-      req.login(sessionUser, (err) => {
-        if (err) {
-          console.error("Professor registration login error:", err);
-          return res.status(500).json({ message: "Account created but login failed. Please sign in." });
-        }
-        return res.json({ success: true, user: sessionUser });
-      });
-    } catch (error: any) {
-      console.error("Professor registration error:", error);
-      res.status(500).json({ message: "Registration failed. Please try again." });
+      await establishSession(req, toSessionPrincipal(createdUser));
+      return res.json({ success: true, user: toSafeUser(createdUser) });
+    } catch (error: unknown) {
+      if (isUniqueViolation(error)) {
+        return res.status(409).json({ message: "An account with this email already exists." });
+      }
+      logAuthFailure("Professor registration failed", error);
+      return res.status(500).json({ message: "Registration failed. Please try again." });
     }
   });
 
@@ -223,7 +291,7 @@ export function registerAuthRoutes(app: Express): void {
       if (!email || !password) {
         return res.status(400).json({ message: "Email and password are required." });
       }
-      const cleanEmail = email.trim().toLowerCase();
+      const cleanEmail = normalizeEmail(email);
 
       // Validate domain
       if (!isValidProfessorEmail(cleanEmail)) {
@@ -231,7 +299,7 @@ export function registerAuthRoutes(app: Express): void {
       }
 
       // Find user by email
-      const [user] = await db.select().from(users).where(eq(users.email, cleanEmail));
+      const [user] = await db.select().from(users).where(sql`lower(${users.email}) = ${cleanEmail}`);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password." });
       }
@@ -245,24 +313,11 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(403).json({ message: "This account is not a professor account." });
       }
 
-      const sessionUser = {
-        id: user.id,
-        role: "professor",
-        claims: {
-          sub: user.id,
-          email: user.email || cleanEmail,
-          first_name: user.firstName || "Professor",
-          last_name: user.lastName || "",
-        },
-      };
-
-      req.login(sessionUser, (err) => {
-        if (err) return res.status(500).json({ message: "Login failed." });
-        return res.json({ success: true, user: sessionUser });
-      });
-    } catch (error: any) {
-      console.error("Professor login error:", error);
-      res.status(500).json({ message: "Login failed. Please try again." });
+      await establishSession(req, toSessionPrincipal(user));
+      return res.json({ success: true, user: toSafeUser(user) });
+    } catch (error: unknown) {
+      logAuthFailure("Professor login failed", error);
+      return res.status(500).json({ message: "Login failed. Please try again." });
     }
   });
 
@@ -275,10 +330,10 @@ export function registerAuthRoutes(app: Express): void {
       if (!email || !password) {
         return res.status(400).json({ message: "Email and password are required." });
       }
-      const cleanEmail = email.trim().toLowerCase();
+      const cleanEmail = normalizeEmail(email);
 
       // Find user by email
-      const [user] = await db.select().from(users).where(eq(users.email, cleanEmail));
+      const [user] = await db.select().from(users).where(sql`lower(${users.email}) = ${cleanEmail}`);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password." });
       }
@@ -312,18 +367,18 @@ export function registerAuthRoutes(app: Express): void {
           return res.json({ success: true, user: sessionUser });
         });
       });
-    } catch (error: any) {
-      console.error("Admin login error:", error);
-      res.status(500).json({ message: "Login failed. Please try again." });
+    } catch (error: unknown) {
+      logAuthFailure("Admin login failed", error);
+      return res.status(500).json({ message: "Login failed. Please try again." });
     }
   });
 
   // Demo login endpoint for fast local testing
-  if (process.env.NODE_ENV !== "production" || process.env.ENABLE_DEMO_LOGIN === "true") {
+  if (process.env.NODE_ENV !== "production" && process.env.ENABLE_DEMO_LOGIN === "true") {
     app.post("/api/demo-login", async (req: Request, res: Response) => {
     try {
       const { role = "student" } = req.body;
-      if (!["professor", "student", "admin"].includes(role)) {
+      if (!["professor", "student"].includes(role)) {
         return res.status(400).json({ message: "Invalid role specified" });
       }
 
@@ -369,125 +424,40 @@ export function registerAuthRoutes(app: Express): void {
 
       req.login(sessionUser, (err) => {
         if (err) {
-          console.error("Demo login error:", err);
+          logAuthFailure("Demo login session failed", err);
           return res.status(500).json({ message: "Login failed" });
         }
         return res.json({ success: true, user: sessionUser });
       });
-    } catch (error: any) {
-      console.error("Demo login endpoint failure:", error);
-      res.status(500).json({ message: "Demo login failed" });
+    } catch (error: unknown) {
+      logAuthFailure("Demo login failed", error);
+      return res.status(500).json({ message: "Demo login failed" });
     }
   });
   }
 
-  // Student exam code join sign-in
-  app.post("/api/student-login", async (req: Request, res: Response) => {
-    try {
-      const { studentName, studentId, examCode } = req.body;
-      const name = (studentName || studentId || "Student").trim();
-      const slug = name.toLowerCase().replace(/\s+/g, "-");
-      const localUserId = `student-${slug}-${randomUUID().slice(0, 6)}`;
-
-      await db.insert(users).values({
-        id: localUserId,
-        email: `${slug}@local.voxexam`,
-        firstName: name,
-        lastName: "",
-        role: "student",
-        authProvider: "local",
-        studentId: name,
-      });
-
-      const sessionUser = {
-        id: localUserId,
-        role: "student",
-        claims: {
-          sub: localUserId,
-          email: `${slug}@local.voxexam`,
-          first_name: name,
-          last_name: "",
-        },
-      };
-
-      req.login(sessionUser, (err) => {
-        if (err) return res.status(500).json({ message: "Student login failed" });
-        return res.json({ success: true, userId: localUserId });
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: "Student login error" });
-    }
-  });
-
-  app.post("/api/class-login", async (req: Request, res: Response) => {
-    try {
-      const { studentName, classCode } = req.body;
-      if (!studentName?.trim() || !classCode?.trim()) {
-        return res.status(400).json({ message: "Student name and class code are required" });
-      }
-
-      const cls = await storage.getClassByClassCode(classCode.trim());
-      if (!cls) {
-        return res.status(404).json({ message: "Invalid class code" });
-      }
-
-      const name = studentName.trim();
-      const slug = name.toLowerCase().replace(/\s+/g, "-");
-      const localUserId = `student-${slug}-${randomUUID().slice(0, 6)}`;
-
-      await db.insert(users).values({
-        id: localUserId,
-        email: `${slug}@local.voxexam`,
-        firstName: name,
-        lastName: "",
-        role: "student",
-        authProvider: "local",
-        studentId: name,
-      });
-
-      // Enroll student in the class
-      await storage.enrollStudentInClass(localUserId, cls.id, name);
-
-      const sessionUser = {
-        id: localUserId,
-        role: "student",
-        claims: {
-          sub: localUserId,
-          email: `${slug}@local.voxexam`,
-          first_name: name,
-          last_name: "",
-        },
-      };
-
-      req.login(sessionUser, (err) => {
-        if (err) return res.status(500).json({ message: "Student login failed" });
-        return res.json({ success: true, userId: localUserId, classId: cls.id });
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: "Class login error" });
-    }
-  });
-
   // Logout & Demo Logout endpoints
   app.get(["/api/demo-logout", "/api/logout"], (req: Request, res: Response) => {
-    req.logout(() => {
-      if (req.session) {
-        req.session.destroy(() => {});
-      }
-      res.clearCookie("demo_session_id");
-      res.clearCookie("connect.sid");
-      res.redirect("/");
+    req.logout((logoutError) => {
+      if (logoutError) return res.status(500).json({ message: "Logout failed." });
+      req.session.destroy((destroyError) => {
+        if (destroyError) return res.status(500).json({ message: "Logout failed." });
+        res.clearCookie("demo_session_id");
+        res.clearCookie("connect.sid");
+        return res.redirect("/");
+      });
     });
   });
 
   app.post(["/api/demo-logout", "/api/logout"], (req: Request, res: Response) => {
-    req.logout(() => {
-      if (req.session) {
-        req.session.destroy(() => {});
-      }
-      res.clearCookie("demo_session_id");
-      res.clearCookie("connect.sid");
-      res.json({ success: true });
+    req.logout((logoutError) => {
+      if (logoutError) return res.status(500).json({ message: "Logout failed." });
+      req.session.destroy((destroyError) => {
+        if (destroyError) return res.status(500).json({ message: "Logout failed." });
+        res.clearCookie("demo_session_id");
+        res.clearCookie("connect.sid");
+        return res.json({ success: true });
+      });
     });
   });
 }

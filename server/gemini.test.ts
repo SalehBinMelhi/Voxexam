@@ -1,10 +1,7 @@
-import {
-  type ExamBlueprint,
-  type ExamBlueprintConcept,
-  type AnswerEvaluationResult,
-  evaluateAnswerAndGenerateAdaptiveNextQuestion,
-  evaluateCompleteExamAttempt,
-} from "./gemini";
+import type {
+  ExamBlueprint,
+  AnswerEvaluationResult,
+} from "./gemini.ts";
 
 async function runTests() {
   console.log("=== RUNNING VOXEXAM ADAPTIVE GEMINI SUITE ===");

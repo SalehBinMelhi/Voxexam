@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { pgTable, varchar, timestamp, jsonb, real, text, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, varchar, timestamp, jsonb, real, text, boolean, integer, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -94,7 +94,13 @@ export const enrollments = pgTable("enrollments", {
   enrolledAt: timestamp("enrolled_at").defaultNow(),
   lastAccessedAt: timestamp("last_accessed_at"),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("enrollments_student_class_unique")
+    .on(table.studentId, table.classId)
+    .where(sql`${table.studentId} is not null`),
+  index("enrollments_class_id_idx").on(table.classId),
+],
+);
 
 export type Enrollment = typeof enrollments.$inferSelect;
 export type InsertEnrollment = typeof enrollments.$inferInsert;
@@ -115,6 +121,7 @@ export const exams = pgTable("exams", {
   processingStatus: varchar("processing_status"), // active | error
   processingError: text("processing_error"),
   maxQuestions: integer("max_questions").default(10),
+  maxAttempts: integer("max_attempts").notNull().default(1),
   maxFollowUpsPerConcept: integer("max_follow_ups_per_concept").default(2),
   durationMinutes: integer("duration_minutes").default(30),
   passingScore: real("passing_score").default(60),
@@ -143,6 +150,7 @@ export const insertExamSchema = z.object({
   questions: z.array(insertQuestionSchema).optional().default([]),
   blueprint: z.any().optional(),
   maxQuestions: z.number().optional().default(10),
+  maxAttempts: z.number().int().min(1).max(10).optional().default(1),
   maxFollowUpsPerConcept: z.number().optional().default(2),
   durationMinutes: z.number().optional().default(30),
   passingScore: z.number().optional().default(60),
@@ -392,7 +400,10 @@ export const submissions = pgTable("submissions", {
   answerDurationSeconds: real("answer_duration_seconds"),
   estimatedWordCount: integer("estimated_word_count"),
   submittedAt: varchar("submitted_at").notNull(),
-});
+}, (table) => [
+  index("submissions_student_exam_idx").on(table.studentId, table.examId),
+],
+);
 
 export type ExamSubmission = typeof submissions.$inferSelect;
 

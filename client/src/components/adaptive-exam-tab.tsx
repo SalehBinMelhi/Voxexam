@@ -354,12 +354,19 @@ export function AdaptiveExamTab() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between border p-3 rounded-md">
+            <div className="flex items-center justify-between gap-4 border p-3 rounded-md">
               <div className="space-y-0.5">
-                <Label>Show Final Score Immediately</Label>
-                <p className="text-xs text-muted-foreground">Allows student to see final diagnostic report right after submitting.</p>
+                <Label htmlFor="show-adaptive-diagnostic-report">Show Preliminary AI Report Immediately</Label>
+                <p id="show-adaptive-diagnostic-report-help" className="text-xs text-muted-foreground">
+                  When enabled, students see the AI diagnostic score and feedback after submitting. Their official result remains hidden until you review and publish it.
+                </p>
               </div>
-              <Switch checked={showScore} onCheckedChange={setShowScore} />
+              <Switch
+                id="show-adaptive-diagnostic-report"
+                checked={showScore}
+                onCheckedChange={setShowScore}
+                aria-describedby="show-adaptive-diagnostic-report-help"
+              />
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

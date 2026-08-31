@@ -194,12 +194,19 @@ export function DoctorExamCreator({ open, onOpenChange, onExamCreated }: DoctorE
               </div>
             </div>
 
-            <div className="flex items-center justify-between border p-3 rounded-md">
+            <div className="flex items-center justify-between gap-4 border p-3 rounded-md">
               <div className="space-y-0.5">
-                <Label>Show Final Score Immediately</Label>
-                <p className="text-xs text-muted-foreground">Allows student to see final diagnostic report right after submitting.</p>
+                <Label htmlFor="show-creator-diagnostic-report">Show Preliminary AI Report Immediately</Label>
+                <p id="show-creator-diagnostic-report-help" className="text-xs text-muted-foreground">
+                  When enabled, students see the AI diagnostic score and feedback after submitting. Their official result remains hidden until you review and publish it.
+                </p>
               </div>
-              <Switch checked={showScore} onCheckedChange={setShowScore} />
+              <Switch
+                id="show-creator-diagnostic-report"
+                checked={showScore}
+                onCheckedChange={setShowScore}
+                aria-describedby="show-creator-diagnostic-report-help"
+              />
             </div>
 
             <div className="flex justify-end gap-2 pt-2">

@@ -7,16 +7,16 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { Storage } from "@google-cloud/storage";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 const require = createRequire(import.meta.url);
 const pdf = require("pdf-parse");
 
 import { processLecturePdf } from "./pdf/pdf-service";
 import { storage, transcribeAudio, generateQuestionsFromMaterials, aiQuestionChat, generateFeedback, analyzeProctoringScreenshot, analyzeProctoringPatterns, computeStudentRadar, logUserEvent, analyzePracticeMaterial, generatePracticeQuestions, generatePracticeProbe, generatePracticeMicroFeedback, buildPracticeReadinessReport } from "./storage";
-import { isAuthenticated, isProfessor } from "./auth";
+import { isAuthenticated, isProfessor, isStudent } from "./auth";
 import { db } from "./db";
-import { exams, submissions } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { classes, enrollments, exams, submissions, users } from "@shared/schema";
+import { eq, and, or, sql } from "drizzle-orm";
 import {
   analyzeLectureMaterial,
   evaluateAnswerAndGenerateAdaptiveNextQuestion,
@@ -27,6 +27,22 @@ import {
 } from "./gemini";
 import { insertExamSchema, insertExamSubmissionSchema, insertPracticeSessionSchema, TAB_SWITCH_SUSPICIOUS_THRESHOLD, type PracticeQuestion } from "@shared/schema";
 import { z } from "zod";
+import {
+  buildImmediateAdaptiveDiagnosticReport,
+  buildStudentExamSummary,
+  buildStudentHistoryItem,
+  canStudentAccessExam,
+  dedupeAndSortStudentExams,
+  hasStudentMembership,
+  leaveStudentClassMembership,
+  normalizeAccessCode,
+  sanitizeExamForStudent,
+  studentOwnsAttempt,
+  validateAttemptLimit,
+  validateExamCodeExpiry,
+  validateExamWindow,
+  validateNewAttemptCreation,
+} from "./student-experience";
 
 const upload = multer({ 
   storage: multer.memoryStorage(), 
@@ -67,8 +83,8 @@ const recordingUpload = multer({
 });
 
 function getUserId(req: any): string {
-  if (!req?.user) return "demo-professor";
-  return req.user.claims?.sub || req.user.id || req.user.sub || "demo-professor";
+  if (!req?.user) return "";
+  return req.user.claims?.sub || req.user.id || req.user.sub || "";
 }
 
 const RECORDINGS_DIR = path.join(process.cwd(), "recordings");
@@ -147,9 +163,490 @@ export async function registerRoutes(
 
   // Users routes
   const sanitizeUser = (user: any) => {
-    const { geminiApiKey, ...safe } = user;
+    const {
+      passwordHash: _passwordHash,
+      openaiApiKey: _openaiApiKey,
+      geminiApiKey: _geminiApiKey,
+      ...safe
+    } = user;
     return safe;
   };
+
+  type StudentExamGrant = {
+    examId: string;
+    codeFingerprint: string;
+    expiresAt: string | null;
+  };
+
+  const fingerprintAccessCode = (code: string): string => {
+    return createHash("sha256").update(normalizeAccessCode(code)).digest("hex");
+  };
+
+  const getDirectExamGrants = (req: Request): StudentExamGrant[] => {
+    const values = (req.session as any)?.studentExamGrants;
+    if (!Array.isArray(values)) return [];
+    return values.filter((value): value is StudentExamGrant => Boolean(
+      value &&
+      typeof value === "object" &&
+      typeof value.examId === "string" &&
+      typeof value.codeFingerprint === "string" &&
+      (value.expiresAt === null || typeof value.expiresAt === "string"),
+    ));
+  };
+
+  const hasValidDirectExamGrant = (
+    req: Request,
+    exam: Pick<typeof exams.$inferSelect, "id" | "publicExamCode" | "accessCode" | "accessCodeExpiresAt">,
+    now = new Date(),
+  ): boolean => {
+    if (exam.accessCodeExpiresAt && exam.accessCodeExpiresAt.getTime() < now.getTime()) {
+      return false;
+    }
+    const validFingerprints = new Set(
+      [exam.publicExamCode, exam.accessCode]
+        .map(normalizeAccessCode)
+        .filter(Boolean)
+        .map(fingerprintAccessCode),
+    );
+    if (validFingerprints.size === 0) return false;
+
+    return getDirectExamGrants(req).some((grant) => {
+      if (grant.examId !== exam.id || !validFingerprints.has(grant.codeFingerprint)) return false;
+      if (!grant.expiresAt) return true;
+      const expiresAt = new Date(grant.expiresAt).getTime();
+      return Number.isFinite(expiresAt) && expiresAt >= now.getTime();
+    });
+  };
+
+  const getValidDirectExamGrantIds = (
+    req: Request,
+    examRows: ReadonlyArray<typeof exams.$inferSelect>,
+    now = new Date(),
+  ): Set<string> => {
+    return new Set(
+      examRows.filter((exam) => hasValidDirectExamGrant(req, exam, now)).map((exam) => exam.id),
+    );
+  };
+
+  const grantDirectExamAccess = (
+    req: Request,
+    exam: Pick<typeof exams.$inferSelect, "id" | "accessCodeExpiresAt">,
+    normalizedCode: string,
+  ): void => {
+    const grants = getDirectExamGrants(req).filter((grant) => grant.examId !== exam.id);
+    grants.push({
+      examId: exam.id,
+      codeFingerprint: fingerprintAccessCode(normalizedCode),
+      expiresAt: exam.accessCodeExpiresAt?.toISOString() ?? null,
+    });
+    delete (req.session as any).studentExamGrantIds;
+    (req.session as any).studentExamGrants = grants;
+  };
+
+  const professorDisplayName = (user: { firstName: string | null; lastName: string | null } | undefined): string | null => {
+    if (!user) return null;
+    return `${user.firstName || ""} ${user.lastName || ""}`.trim() || null;
+  };
+
+  const sanitizeClassForStudent = (cls: typeof classes.$inferSelect) => ({
+    id: cls.id,
+    subjectName: cls.subjectName,
+    courseNumber: cls.courseNumber ?? null,
+    sectionNumber: cls.sectionNumber ?? null,
+    universityId: cls.universityId ?? null,
+    professorId: cls.professorId ?? null,
+    status: cls.status ?? null,
+  });
+
+  const getStudentMembershipContext = async (studentId: string) => {
+    const membershipRows = (await storage.getEnrollmentsByStudent(studentId)).filter(
+      (membership) => membership.status !== "inactive",
+    );
+    const classIds = new Set(membershipRows.map((membership) => membership.classId));
+    return { membershipRows, classIds };
+  };
+
+  const studentCanAccessExam = async (req: Request, studentId: string, exam: typeof exams.$inferSelect) => {
+    const { classIds } = await getStudentMembershipContext(studentId);
+    const ownAttempts = await storage.getSubmissionsByStudent(studentId);
+    // Attempt ownership permits resuming an active attempt, but a completed
+    // direct-code attempt must not become permanent authorization for a later
+    // attempt after the code expires or rotates.
+    if (ownAttempts.some((attempt) => (
+      attempt.examId === exam.id &&
+      attempt.isPreview !== "true" &&
+      attempt.status === "in_progress"
+    ))) {
+      return true;
+    }
+    return canStudentAccessExam({
+      exam,
+      examId: exam.id,
+      studentId,
+      enrolledClassIds: classIds,
+      directGrantExamIds: hasValidDirectExamGrant(req, exam) ? new Set([exam.id]) : new Set(),
+    });
+  };
+
+  const withStudentExamAttemptLock = async <T>(
+    studentId: string,
+    examId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    return db.transaction(async (transaction) => {
+      // Every attempt-creating path takes the same transaction-scoped lock before
+      // recounting attempts. This closes the count-then-insert race without
+      // changing the grading implementation.
+      await transaction.execute(sql`
+        select pg_advisory_xact_lock(hashtextextended(${`${studentId.length}:${studentId}:${examId}`}, 0))
+      `);
+      return operation();
+    });
+  };
+
+  const classCodeBody = z.object({ classCode: z.string().trim().min(1).max(32) }).strict();
+  const examCodeBody = z.object({ examCode: z.string().trim().min(1).max(32) }).strict();
+
+  // Purpose-built student dashboard. Never return raw users, answer keys, or
+  // unpublished grading fields to the student client.
+  app.get("/api/student/dashboard", isStudent, async (req, res) => {
+    try {
+      const studentId = getUserId(req);
+      const student = await storage.getUser(studentId);
+      if (!student || student.role !== "student") {
+        return res.status(403).json({ error: "Student access required." });
+      }
+
+      const { classIds } = await getStudentMembershipContext(studentId);
+      const classRows = (await Promise.all(Array.from(classIds).map((id) => storage.getClass(id))))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item));
+      const attempts = (await storage.getSubmissionsByStudent(studentId)).filter(
+        (attempt) => attempt.isPreview !== "true",
+      );
+      const attemptedExamIds = new Set(attempts.map((attempt) => attempt.examId));
+      const inProgressExamIds = new Set(
+        attempts.filter((attempt) => attempt.status === "in_progress").map((attempt) => attempt.examId),
+      );
+      const allExams = await storage.getAllExams();
+      const directGrantExamIds = getValidDirectExamGrantIds(req, allExams);
+      const dashboardExams = allExams.filter((exam) => {
+        // Joined-class exams are loaded through the class-scoped endpoint so
+        // they are not duplicated in the ungrouped dashboard list.
+        if (exam.classId && classIds.has(exam.classId)) return false;
+
+        const hasIndividualAccess = exam.assignedStudentIds.includes(studentId);
+        const hasDirectAccess = directGrantExamIds.has(exam.id);
+        const isOwnedInProgressFallback = inProgressExamIds.has(exam.id);
+        if (!hasIndividualAccess && !hasDirectAccess && !isOwnedInProgressFallback) return false;
+        if (exam.archivedAt && !isOwnedInProgressFallback) return false;
+        return exam.status !== "draft" || isOwnedInProgressFallback;
+      });
+      const historyExams = allExams.filter((exam) => attemptedExamIds.has(exam.id));
+
+      // Keep the enrolled-class list separate from class metadata used by direct
+      // exam-code attempts and historical attempts. A student may legitimately
+      // have an exam record without a current class membership.
+      const memberClassById = new Map(classRows.map((cls) => [cls.id, cls]));
+      const metadataExams = Array.from(
+        new Map([...dashboardExams, ...historyExams].map((exam) => [exam.id, exam])).values(),
+      );
+      const additionalClassIds = Array.from(new Set(
+        metadataExams
+          .map((exam) => exam.classId)
+          .filter((classId): classId is string => typeof classId === "string" && !memberClassById.has(classId)),
+      ));
+      const additionalClassRows = (await Promise.all(
+        additionalClassIds.map((id) => storage.getClass(id)),
+      )).filter((item): item is NonNullable<typeof item> => Boolean(item));
+      const classById = new Map(
+        [...classRows, ...additionalClassRows].map((cls) => [cls.id, cls]),
+      );
+
+      const professorIds = new Set<string>();
+      for (const cls of classRows) if (cls.professorId) professorIds.add(cls.professorId);
+      for (const exam of metadataExams) professorIds.add(exam.professorId);
+      const professorRows = await Promise.all(Array.from(professorIds).map((id) => storage.getUser(id)));
+      const professorNames = new Map<string, string | null>();
+      professorRows.forEach((professor, index) => {
+        professorNames.set(Array.from(professorIds)[index], professorDisplayName(professor));
+      });
+
+      const classSummaries = classRows.map((cls) => ({
+        id: cls.id,
+        name: cls.subjectName,
+        courseNumber: cls.courseNumber ?? null,
+        sectionNumber: cls.sectionNumber ?? null,
+        professorName: cls.professorId ? professorNames.get(cls.professorId) ?? null : null,
+      }));
+
+      const examSummaries = dedupeAndSortStudentExams(
+        dashboardExams.map((exam) => {
+          const cls = exam.classId ? classById.get(exam.classId) : undefined;
+          return buildStudentExamSummary({
+            exam,
+            attempts: attempts.filter((attempt) => attempt.examId === exam.id),
+            className: cls?.subjectName ?? null,
+            professorName: professorNames.get(exam.professorId) ?? null,
+          });
+        }),
+      );
+
+      const examById = new Map(historyExams.map((exam) => [exam.id, exam]));
+      const history = attempts
+        .filter((attempt) => attempt.status !== "in_progress")
+        .map((attempt) => {
+          const exam = examById.get(attempt.examId);
+          if (!exam) return null;
+          const cls = exam.classId ? classById.get(exam.classId) : undefined;
+          return buildStudentHistoryItem({
+            submission: attempt,
+            exam,
+            className: cls?.subjectName ?? null,
+            professorName: professorNames.get(exam.professorId) ?? null,
+          });
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .sort((a, b) => new Date(b.completedAt).getTime() - new Date(a.completedAt).getTime());
+
+      return res.json({
+        data: {
+          student: {
+            id: student.id,
+            email: student.email || "",
+            displayName: `${student.firstName || ""} ${student.lastName || ""}`.trim() || "Student",
+          },
+          classes: classSummaries,
+          exams: examSummaries,
+          history,
+        },
+      });
+    } catch (error) {
+      console.error("Student dashboard query failed");
+      return res.status(500).json({ error: "Failed to load the student dashboard." });
+    }
+  });
+
+  app.post("/api/student/classes/join", isStudent, async (req, res) => {
+    try {
+      const parsed = classCodeBody.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "A valid Class Code is required." });
+      const classCode = normalizeAccessCode(parsed.data.classCode);
+      const [cls] = await db
+        .select()
+        .from(classes)
+        .where(sql`upper(${classes.classCode}) = ${classCode}`);
+      if (!cls || cls.status !== "active") {
+        return res.status(404).json({ error: "Invalid Class Code." });
+      }
+
+      const studentId = getUserId(req);
+      const student = await storage.getUser(studentId);
+      if (!student || student.role !== "student") return res.status(403).json({ error: "Student access required." });
+      const studentMemberships = await storage.getEnrollmentsByStudent(studentId);
+      const existing = studentMemberships.find(
+        (membership) => membership.classId === cls.id,
+      );
+      let alreadyJoined = hasStudentMembership(studentMemberships, cls.id);
+      if (existing) {
+        if (existing.status === "inactive") {
+          await db.update(enrollments).set({ status: "active", updatedAt: new Date() }).where(eq(enrollments.id, existing.id));
+        }
+      } else {
+        try {
+          await storage.createEnrollment({
+            studentId,
+            classId: cls.id,
+            displayName: `${student.firstName || ""} ${student.lastName || ""}`.trim() || "Student",
+            status: "active",
+          });
+        } catch (error: any) {
+          if (error?.code !== "23505") throw error;
+          alreadyJoined = true;
+        }
+      }
+
+      const professor = cls.professorId ? await storage.getUser(cls.professorId) : undefined;
+      return res.status(alreadyJoined ? 200 : 201).json({
+        data: {
+          alreadyJoined,
+          message: alreadyJoined ? "You are already a member of this class." : "Class joined successfully.",
+          class: {
+            id: cls.id,
+            name: cls.subjectName,
+            courseNumber: cls.courseNumber ?? null,
+            sectionNumber: cls.sectionNumber ?? null,
+            professorName: professorDisplayName(professor),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Student class join failed");
+      return res.status(500).json({ error: "Unable to join this class right now." });
+    }
+  });
+
+  app.delete("/api/student/classes/:classId/membership", isStudent, async (req, res) => {
+    try {
+      const studentId = getUserId(req);
+      const classId = p(req.params.classId);
+      const deleted = await leaveStudentClassMembership({
+        authenticatedStudentId: studentId,
+        classId,
+        deleteEnrollment: (ownedStudentId, ownedClassId) => (
+          storage.deleteEnrollment(ownedStudentId, ownedClassId)
+        ),
+      });
+      if (!deleted) {
+        return res.status(404).json({ error: "Class membership not found." });
+      }
+      return res.json({
+        data: {
+          classId,
+          message: "You have left the class.",
+        },
+      });
+    } catch {
+      return res.status(500).json({ error: "Unable to leave this class right now." });
+    }
+  });
+
+  app.get("/api/student/classes/:classId/exams", isStudent, async (req, res) => {
+    try {
+      const studentId = getUserId(req);
+      const classId = p(req.params.classId);
+      const memberships = await storage.getEnrollmentsByStudent(studentId);
+      if (!hasStudentMembership(memberships, classId)) {
+        return res.status(403).json({ error: "You are not an active member of this class." });
+      }
+
+      const cls = await storage.getClass(classId);
+      if (!cls) return res.status(404).json({ error: "Class not found." });
+
+      const attempts = (await storage.getSubmissionsByStudent(studentId)).filter(
+        (attempt) => attempt.isPreview !== "true",
+      );
+      const attemptedExamIds = new Set(attempts.map((attempt) => attempt.examId));
+      const classExams = (await storage.getExamsByClass(classId)).filter((exam) => (
+        (!exam.archivedAt && exam.status !== "draft") || attemptedExamIds.has(exam.id)
+      ));
+      const professorIds = Array.from(new Set(classExams.map((exam) => exam.professorId)));
+      const professorRows = await Promise.all(professorIds.map((id) => storage.getUser(id)));
+      const professorNames = new Map<string, string | null>();
+      professorRows.forEach((professor, index) => {
+        professorNames.set(professorIds[index], professorDisplayName(professor));
+      });
+      const examSummaries = dedupeAndSortStudentExams(classExams.map((exam) => (
+        buildStudentExamSummary({
+          exam,
+          attempts: attempts.filter((attempt) => attempt.examId === exam.id),
+          className: cls.subjectName,
+          professorName: professorNames.get(exam.professorId) ?? null,
+        })
+      )));
+
+      return res.json({ data: { classId, exams: examSummaries } });
+    } catch {
+      return res.status(500).json({ error: "Failed to load class exams." });
+    }
+  });
+
+  app.post("/api/student/exams/join", isStudent, async (req, res) => {
+    try {
+      const parsed = examCodeBody.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "A valid Exam Code is required." });
+      const examCode = normalizeAccessCode(parsed.data.examCode);
+      const [exam] = await db
+        .select()
+        .from(exams)
+        .where(or(
+          sql`upper(${exams.publicExamCode}) = ${examCode}`,
+          sql`upper(${exams.accessCode}) = ${examCode}`,
+        ));
+      if (!exam) return res.status(404).json({ error: "Invalid exam code." });
+
+      const now = new Date();
+      const codeExpiry = validateExamCodeExpiry(exam, now);
+      if (!codeExpiry.allowed) return res.status(codeExpiry.status).json({ error: codeExpiry.error });
+      const window = validateExamWindow(exam, now);
+      if (!window.allowed) return res.status(window.status).json({ error: window.error });
+      if (exam.mode === "adaptive" && !exam.blueprint) {
+        return res.status(403).json({ error: "This exam is not ready yet." });
+      }
+
+      const studentId = getUserId(req);
+      const attempts = (await storage.getSubmissionsByStudent(studentId)).filter(
+        (attempt) => attempt.examId === exam.id && attempt.isPreview !== "true",
+      );
+      const attemptLimit = validateAttemptLimit(exam, attempts);
+      if (!attemptLimit.allowed) {
+        const message = (exam.maxAttempts ?? 1) === 1 && attempts.some((attempt) => attempt.status !== "in_progress")
+          ? "You have already completed this exam."
+          : attemptLimit.error;
+        return res.status(attemptLimit.status).json({ error: message });
+      }
+
+      grantDirectExamAccess(req, exam, examCode);
+      const cls = exam.classId ? await storage.getClass(exam.classId) : undefined;
+      const professor = await storage.getUser(exam.professorId);
+      const summary = buildStudentExamSummary({
+        exam,
+        attempts,
+        className: cls?.subjectName ?? null,
+        professorName: professorDisplayName(professor),
+        now,
+      });
+      return res.json({ data: { message: "Exam access confirmed.", exam: summary } });
+    } catch (error) {
+      console.error("Student exam code join failed");
+      return res.status(500).json({ error: "Unable to access this exam right now." });
+    }
+  });
+
+  app.get("/api/student/exams/:id", isStudent, async (req, res) => {
+    try {
+      const studentId = getUserId(req);
+      const exam = await storage.getExam(p(req.params.id));
+      if (!exam) return res.status(404).json({ error: "Exam not found." });
+      if (!(await studentCanAccessExam(req, studentId, exam))) {
+        return res.status(403).json({ error: "You do not have permission to access this exam." });
+      }
+      const window = validateExamWindow(exam);
+      if (!window.allowed) return res.status(window.status).json({ error: window.error });
+      const attempts = (await storage.getSubmissionsByStudent(studentId)).filter(
+        (attempt) => attempt.examId === exam.id && attempt.isPreview !== "true",
+      );
+      const attemptLimit = validateAttemptLimit(exam, attempts);
+      if (!attemptLimit.allowed) return res.status(attemptLimit.status).json({ error: attemptLimit.error });
+      const inProgress = attempts.find((attempt) => attempt.status === "in_progress");
+      return res.json({ data: { exam: sanitizeExamForStudent(exam), attemptId: inProgress?.id ?? null } });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to open this exam." });
+    }
+  });
+
+  app.get("/api/student/results/:attemptId", isStudent, async (req, res) => {
+    try {
+      const studentId = getUserId(req);
+      const attempt = await storage.getSubmission(p(req.params.attemptId));
+      if (!attempt || !studentOwnsAttempt(studentId, attempt)) {
+        return res.status(404).json({ error: "Result not found." });
+      }
+      const exam = await storage.getExam(attempt.examId);
+      if (!exam) return res.status(404).json({ error: "Exam not found." });
+      const cls = exam.classId ? await storage.getClass(exam.classId) : undefined;
+      const professor = await storage.getUser(exam.professorId);
+      return res.json({
+        data: buildStudentHistoryItem({
+          submission: attempt,
+          exam,
+          className: cls?.subjectName ?? null,
+          professorName: professorDisplayName(professor),
+        }),
+      });
+    } catch (error) {
+      return res.status(500).json({ error: "Failed to load this result." });
+    }
+  });
 
   // =========================================================================
   // GOOGLE GEMINI ADAPTIVE ORAL EXAM ROUTES
@@ -251,19 +748,21 @@ export async function registerRoutes(
   });
 
   // 4. Validate Student Access Code (Student)
-  app.post("/api/student/validate-code", async (req, res) => {
+  app.post("/api/student/validate-code", isStudent, async (req, res) => {
     try {
       const { accessCode } = req.body;
       if (!accessCode || typeof accessCode !== "string") {
         return res.status(400).json({ error: "Access code is required" });
       }
 
-      const cleanCode = accessCode.trim();
-      let [rawExam] = await db.select().from(exams).where(eq(exams.publicExamCode, cleanCode));
-      if (!rawExam) {
-        const result = await db.select().from(exams).where(eq(exams.accessCode, cleanCode));
-        rawExam = result[0];
-      }
+      const cleanCode = normalizeAccessCode(accessCode);
+      const [rawExam] = await db
+        .select()
+        .from(exams)
+        .where(or(
+          sql`upper(${exams.publicExamCode}) = ${cleanCode}`,
+          sql`upper(${exams.accessCode}) = ${cleanCode}`,
+        ));
 
       if (!rawExam) {
         return res.status(404).json({ error: "Invalid exam code. Please check with your professor." });
@@ -279,13 +778,27 @@ export async function registerRoutes(
         return res.status(403).json({ error: "This exam is not active." });
       }
 
+      const window = validateExamWindow(exam);
+      if (!window.allowed) {
+        return res.status(window.status).json({ error: window.error });
+      }
+
       if (exam.mode === "adaptive" && !exam.blueprint) {
         return res.status(403).json({ error: "This adaptive exam is incomplete (missing blueprint). Please check with your professor." });
       }
 
-      if (exam.accessCodeExpiresAt && new Date(exam.accessCodeExpiresAt) < new Date()) {
-        return res.status(410).json({ error: "This exam code has expired." });
+      const codeExpiry = validateExamCodeExpiry(exam);
+      if (!codeExpiry.allowed) return res.status(codeExpiry.status).json({ error: codeExpiry.error });
+
+      const studentId = getUserId(req);
+      const attempts = (await storage.getSubmissionsByStudent(studentId)).filter(
+        (attempt) => attempt.examId === exam.id && attempt.isPreview !== "true",
+      );
+      const attemptLimit = validateAttemptLimit(exam, attempts);
+      if (!attemptLimit.allowed) {
+        return res.status(attemptLimit.status).json({ error: attemptLimit.error });
       }
+      grantDirectExamAccess(req, exam, cleanCode);
 
       res.json({
         valid: true,
@@ -304,72 +817,122 @@ export async function registerRoutes(
   });
 
   // 5. Start Adaptive Exam Attempt (Student)
-  app.post("/api/adaptive-attempts/start", async (req, res) => {
+  app.post("/api/adaptive-attempts/start", isStudent, async (req, res) => {
     try {
-      const { examId, studentId = "student-demo", studentName = "Student" } = req.body;
+      const { examId } = req.body;
+      const studentId = getUserId(req);
+      if (!examId || typeof examId !== "string") {
+        return res.status(400).json({ error: "Exam ID is required" });
+      }
       const exam = await storage.getExam(examId);
 
-      if (!exam || !exam.blueprint) {
+      if (!exam || exam.mode !== "adaptive" || !exam.blueprint) {
         return res.status(404).json({ error: "Exam or exam blueprint not found" });
       }
-
-      const blueprint = exam.blueprint as ExamBlueprint;
-      const firstTopic = blueprint.topics?.[0];
-      const firstConcept = firstTopic?.concepts?.[0];
-
-      if (!firstConcept) {
-        return res.status(400).json({ error: "No concepts available in this exam blueprint" });
+      if (!(await studentCanAccessExam(req, studentId, exam))) {
+        return res.status(403).json({ error: "You do not have permission to access this exam." });
       }
+      const window = validateExamWindow(exam);
+      if (!window.allowed) return res.status(window.status).json({ error: window.error });
 
-      const initialQuestion = firstConcept.suggestedInitialQuestion || `Explain the key ideas of ${firstConcept.title}.`;
+      const startResult = await withStudentExamAttemptLock(studentId, exam.id, async () => {
+        const existingAttempts = (await storage.getSubmissionsByStudent(studentId)).filter(
+          (attempt) => attempt.examId === exam.id && attempt.isPreview !== "true",
+        );
+        const inProgress = existingAttempts.find((attempt) => attempt.status === "in_progress");
+        if (inProgress) {
+          const logs = (inProgress.questionLogs as any[]) || [];
+          const currentLog = logs[logs.length - 1];
+          return {
+            ok: true,
+            data: {
+              attemptId: inProgress.id,
+              examTitle: exam.title,
+              currentQuestion: currentLog?.question || "",
+              questionNumber: logs.length || 1,
+              totalQuestions: exam.maxQuestions || 10,
+              conceptTitle: currentLog?.conceptTitle || "",
+              resumed: true,
+            },
+          } as const;
+        }
 
-      const initialAdaptiveState = {
-        currentTopicIndex: 0,
-        currentConceptIndex: 0,
-        currentConceptId: firstConcept.id,
-        currentConceptTitle: firstConcept.title,
-        followUpCountForConcept: 0,
-        totalQuestionsAsked: 1,
-        conceptCoverageMap: {},
-      };
+        const attemptLimit = validateAttemptLimit(exam, existingAttempts);
+        if (!attemptLimit.allowed) {
+          return {
+            ok: false,
+            status: attemptLimit.status,
+            error: attemptLimit.error || "You have used all allowed attempts.",
+          } as const;
+        }
 
-      const initialQuestionLog = {
-        questionIndex: 1,
-        conceptId: firstConcept.id,
-        conceptTitle: firstConcept.title,
-        question: initialQuestion,
-        createdAt: new Date().toISOString(),
-      };
+        const blueprint = exam.blueprint as ExamBlueprint;
+        const firstConcept = blueprint.topics?.[0]?.concepts?.[0];
+        if (!firstConcept) {
+          return {
+            ok: false,
+            status: 400,
+            error: "No concepts available in this exam blueprint",
+          } as const;
+        }
 
-      const [attempt] = await db.insert(submissions).values({
-        examId,
-        studentId,
-        status: "in_progress",
-        currentConceptIndex: 0,
-        adaptiveState: initialAdaptiveState as any,
-        questionLogs: [initialQuestionLog] as any,
-        responses: [],
-        scores: {},
-        totalScore: 0,
-        submittedAt: new Date().toISOString(),
-      }).returning();
+        const initialQuestion = firstConcept.suggestedInitialQuestion || `Explain the key ideas of ${firstConcept.title}.`;
+        const initialAdaptiveState = {
+          currentTopicIndex: 0,
+          currentConceptIndex: 0,
+          currentConceptId: firstConcept.id,
+          currentConceptTitle: firstConcept.title,
+          followUpCountForConcept: 0,
+          totalQuestionsAsked: 1,
+          conceptCoverageMap: {},
+        };
+        const initialQuestionLog = {
+          questionIndex: 1,
+          conceptId: firstConcept.id,
+          conceptTitle: firstConcept.title,
+          question: initialQuestion,
+          createdAt: new Date().toISOString(),
+        };
 
-      res.json({
-        attemptId: attempt.id,
-        examTitle: exam.title,
-        currentQuestion: initialQuestion,
-        questionNumber: 1,
-        totalQuestions: exam.maxQuestions || 10,
-        conceptTitle: firstConcept.title,
+        const [attempt] = await db.insert(submissions).values({
+          examId,
+          studentId,
+          startedAt: new Date(),
+          status: "in_progress",
+          currentConceptIndex: 0,
+          adaptiveState: initialAdaptiveState as any,
+          questionLogs: [initialQuestionLog] as any,
+          responses: [],
+          scores: {},
+          totalScore: 0,
+          submittedAt: new Date().toISOString(),
+        }).returning();
+
+        return {
+          ok: true,
+          data: {
+            attemptId: attempt.id,
+            examTitle: exam.title,
+            currentQuestion: initialQuestion,
+            questionNumber: 1,
+            totalQuestions: exam.maxQuestions || 10,
+            conceptTitle: firstConcept.title,
+          },
+        } as const;
       });
-    } catch (error: any) {
-      console.error("Start attempt error:", error);
-      res.status(500).json({ error: "Failed to start exam attempt: " + error.message });
+
+      if (!startResult.ok) {
+        return res.status(startResult.status).json({ error: startResult.error });
+      }
+      return res.json(startResult.data);
+    } catch {
+      console.error("Adaptive attempt start failed");
+      return res.status(500).json({ error: "Failed to start exam attempt." });
     }
   });
 
   // 6. Submit Audio/Text Answer & Get Next Adaptive Question (Student)
-  app.post("/api/adaptive-attempts/:id/answer", recordingUpload.single("audio"), async (req, res) => {
+  app.post("/api/adaptive-attempts/:id/answer", isStudent, recordingUpload.single("audio"), async (req, res) => {
     try {
       const attemptId = p(req.params.id);
       const { transcriptText } = req.body;
@@ -380,6 +943,11 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Exam attempt not found" });
       }
 
+      const studentId = getUserId(req);
+      if (!studentOwnsAttempt(studentId, attempt)) {
+        return res.status(403).json({ error: "You do not have permission to modify this attempt." });
+      }
+
       if (attempt.status === "completed") {
         return res.status(400).json({ error: "Exam attempt is already completed" });
       }
@@ -388,9 +956,16 @@ export async function registerRoutes(
       if (!exam || !exam.blueprint) {
         return res.status(404).json({ error: "Exam definition not found" });
       }
+      const window = validateExamWindow(exam);
+      if (!window.allowed) {
+        return res.status(window.status).json({ error: window.error });
+      }
 
       const blueprint = exam.blueprint as ExamBlueprint;
-      const logs = (attempt.questionLogs as any[]) || [];
+      const originalLogs = Array.isArray(attempt.questionLogs)
+        ? structuredClone(attempt.questionLogs as any[])
+        : [];
+      const logs = structuredClone(originalLogs);
       const currentLog = logs[logs.length - 1];
 
       if (!currentLog) {
@@ -534,32 +1109,61 @@ export async function registerRoutes(
           misconceptions: finalReport.misconceptions as any,
           recommendations: finalReport.recommendations as any,
           futureSuggestions: finalReport.futureSuggestions as any,
-        }).where(eq(submissions.id, attemptId)).returning();
+          submittedAt: new Date().toISOString(),
+        }).where(and(
+          eq(submissions.id, attemptId),
+          eq(submissions.status, "in_progress"),
+          eq(submissions.questionLogs, originalLogs),
+        )).returning();
+
+        if (!finalAttempt) {
+          return res.status(409).json({
+            error: "This answer was already processed. Reopen the exam to continue from the latest question.",
+          });
+        }
+
+        const immediateReport = buildImmediateAdaptiveDiagnosticReport({
+          exam,
+          attempt: finalAttempt,
+        });
 
         return res.json({
           isFinished: true,
-          evaluation: evalResult,
-          report: finalReport,
-          attempt: finalAttempt,
+          status: "pending_review",
+          attempt: {
+            id: finalAttempt.id,
+            status: finalAttempt.status,
+            submittedAt: finalAttempt.submittedAt,
+          },
+          ...(immediateReport ? { report: immediateReport } : {}),
         });
       } else {
         const [updatedAttempt] = await db.update(submissions).set({
           questionLogs: logs as any,
           adaptiveState: state as any,
-        }).where(eq(submissions.id, attemptId)).returning();
+        }).where(and(
+          eq(submissions.id, attemptId),
+          eq(submissions.status, "in_progress"),
+          eq(submissions.questionLogs, originalLogs),
+        )).returning();
+
+        if (!updatedAttempt) {
+          return res.status(409).json({
+            error: "This answer was already processed. Reopen the exam to continue from the latest question.",
+          });
+        }
 
         return res.json({
           isFinished: false,
-          evaluation: evalResult,
           nextQuestion: nextQuestionText,
           questionNumber: logs.length,
           totalQuestions: maxQ,
           conceptTitle: nextConcept?.title,
         });
       }
-    } catch (error: any) {
-      console.error("Submit adaptive answer error:", error);
-      res.status(500).json({ error: "Failed to evaluate answer: " + error.message });
+    } catch {
+      console.error("Adaptive answer submission failed");
+      return res.status(500).json({ error: "Failed to evaluate this answer." });
     }
   });
 
@@ -577,8 +1181,28 @@ export async function registerRoutes(
       if (attempt.studentId !== userId && (!exam || exam.professorId !== userId)) {
         return res.status(403).json({ error: "Not authorized to view this attempt" });
       }
+      const currentUser = await storage.getUser(userId);
+      if (attempt.studentId === userId && currentUser?.role === "student") {
+        const logs = (attempt.questionLogs as any[]) || [];
+        const currentLog = logs[logs.length - 1];
+        return res.json({
+          attempt: {
+            id: attempt.id,
+            status: attempt.status,
+            submittedAt: attempt.submittedAt,
+          },
+          exam: exam ? sanitizeExamForStudent(exam) : null,
+          currentQuestion: attempt.status === "in_progress" ? currentLog?.question || "" : null,
+          questionNumber: logs.length || 1,
+          totalQuestions: exam?.maxQuestions || 10,
+          conceptTitle: attempt.status === "in_progress" ? currentLog?.conceptTitle || "" : null,
+          resultStatus: attempt.status === "completed" && attempt.professorDecision
+            ? "published"
+            : "pending_review",
+        });
+      }
 
-      res.json({ attempt, exam });
+      return res.json({ attempt, exam });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch attempt" });
     }
@@ -600,6 +1224,9 @@ export async function registerRoutes(
       const exam = await storage.getExam(attempt.examId);
       if (!exam || exam.professorId !== doctorId) {
         return res.status(403).json({ error: "Not authorized to override scores for this exam" });
+      }
+      if (attempt.status !== "completed") {
+        return res.status(409).json({ error: "This attempt must be completed before a result can be published." });
       }
 
       const existingOverrides = (attempt.doctorScoreOverrides as any[]) || [];
@@ -677,13 +1304,17 @@ export async function registerRoutes(
   });
 
   const sanitizeUniversity = (uni: any) => {
-    const { geminiApiKey, ...safe } = uni;
-    return { ...safe, hasApiKey: !!geminiApiKey };
+    const { geminiApiKey, openaiApiKey, ...safe } = uni;
+    return { ...safe, hasApiKey: !!(geminiApiKey || openaiApiKey) };
   };
 
   app.get("/api/users", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
+      const requester = await storage.getUser(userId);
+      if (!requester || (requester.role !== "professor" && requester.role !== "admin")) {
+        return res.status(403).json({ error: "Professor or admin access required" });
+      }
       let users = await storage.getAllUsers();
 
       const demoMatch = userId.match(/^demo-(professor|student)-(.+)$/);
@@ -705,7 +1336,12 @@ export async function registerRoutes(
 
   app.get("/api/users/:id", isAuthenticated, async (req, res) => {
     try {
-      const user = await storage.getUser(p(req.params.id));
+      const requester = await storage.getUser(getUserId(req));
+      const targetId = p(req.params.id);
+      if (!requester || (requester.id !== targetId && requester.role !== "professor" && requester.role !== "admin")) {
+        return res.status(403).json({ error: "Not authorized to view this user" });
+      }
+      const user = await storage.getUser(targetId);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
@@ -718,18 +1354,27 @@ export async function registerRoutes(
   app.patch("/api/users/:id/role", isAuthenticated, async (req, res) => {
     try {
       const userId = getUserId(req);
-      if (userId !== p(req.params.id)) {
+      const targetId = p(req.params.id);
+      const currentUser = await storage.getUser(userId);
+      if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
+      if (currentUser.role !== "admin" && userId !== targetId) {
         return res.status(403).json({ error: "Cannot update another user's role" });
       }
       const { role, universityId } = req.body;
       if (!role || (role !== "professor" && role !== "student")) {
         return res.status(400).json({ error: "Invalid role" });
       }
-      const user = await storage.updateUserRole(p(req.params.id), role, universityId);
+      if (currentUser.role !== "admin" && currentUser.role && currentUser.role !== role) {
+        return res.status(403).json({ error: "You cannot change your account role." });
+      }
+      if (currentUser.role === "student") {
+        return res.status(403).json({ error: "Student roles are assigned by the server and cannot be changed." });
+      }
+      const user = await storage.updateUserRole(targetId, role, universityId);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(user);
+      res.json(sanitizeUser(user));
     } catch (error) {
       res.status(500).json({ error: "Failed to update user role" });
     }
@@ -907,10 +1552,15 @@ export async function registerRoutes(
         const classes = await storage.getAllClasses();
         res.json(classes.filter(c => c.status !== 'archived'));
       } else if (user.role === "student") {
-        const enrollmentsList = await storage.getEnrollmentsByStudent(userId);
+        const enrollmentsList = (await storage.getEnrollmentsByStudent(userId))
+          .filter((enrollment) => enrollment.status !== "inactive");
         const classIds = enrollmentsList.map(e => e.classId);
         const allClasses = await Promise.all(classIds.map(id => storage.getClass(id)));
-        res.json(allClasses.filter(Boolean));
+        res.json(
+          allClasses
+            .filter((cls): cls is NonNullable<typeof cls> => Boolean(cls))
+            .map(sanitizeClassForStudent),
+        );
       } else {
         res.json([]);
       }
@@ -921,11 +1571,23 @@ export async function registerRoutes(
 
   app.get("/api/classes/:id", isAuthenticated, async (req, res) => {
     try {
+      const requesterId = getUserId(req);
+      const requester = await storage.getUser(requesterId);
       const cls = await storage.getClass(p(req.params.id));
       if (!cls) {
         return res.status(404).json({ error: "Class not found" });
       }
-      res.json(cls);
+      if (requester?.role === "student") {
+        const memberships = await storage.getEnrollmentsByStudent(requesterId);
+        if (!memberships.some((membership) => membership.classId === cls.id && membership.status !== "inactive")) {
+          return res.status(403).json({ error: "You are not enrolled in this class" });
+        }
+      } else if (requester?.role === "professor" && cls.professorId !== requesterId) {
+        return res.status(403).json({ error: "Not authorized to view this class" });
+      } else if (!requester || !["professor", "admin"].includes(requester.role || "")) {
+        return res.status(403).json({ error: "Not authorized to view this class" });
+      }
+      res.json(requester?.role === "student" ? sanitizeClassForStudent(cls) : cls);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch class" });
     }
@@ -1023,7 +1685,13 @@ export async function registerRoutes(
       if (!user || user.role !== "professor") {
         return res.status(403).json({ error: "Only professors can delete classes" });
       }
-      const deleted = await storage.deleteClass(p(req.params.id));
+      const classId = p(req.params.id);
+      const cls = await storage.getClass(classId);
+      if (!cls) return res.status(404).json({ error: "Class not found" });
+      if (cls.professorId !== userId) {
+        return res.status(403).json({ error: "You can only delete your own classes" });
+      }
+      const deleted = await storage.deleteClass(classId);
       if (!deleted) {
         return res.status(404).json({ error: "Class not found" });
       }
@@ -1036,11 +1704,18 @@ export async function registerRoutes(
   // Enrollments routes
   app.get("/api/classes/:classId/enrollments", isAuthenticated, async (req, res) => {
     try {
-      const enrollmentsList = await storage.getEnrollmentsByClass(p(req.params.classId));
+      const requester = await storage.getUser(getUserId(req));
+      const classId = p(req.params.classId);
+      const cls = await storage.getClass(classId);
+      if (!cls) return res.status(404).json({ error: "Class not found" });
+      if (!requester || (requester.role !== "admin" && (requester.role !== "professor" || cls.professorId !== requester.id))) {
+        return res.status(403).json({ error: "Professor or admin access required" });
+      }
+      const enrollmentsList = await storage.getEnrollmentsByClass(classId);
       const students = await Promise.all(
         enrollmentsList.map(async (e) => {
           const user = e.studentId ? await storage.getUser(e.studentId) : null;
-          return { ...e, student: user };
+          return { ...e, student: user ? sanitizeUser(user) : null };
         })
       );
       res.json(students);
@@ -1049,32 +1724,24 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/classes/:classId/enroll", isAuthenticated, async (req, res) => {
-    try {
-      const userId = getUserId(req);
-      const classId = p(req.params.classId);
-      
-      const existingEnrollments = await storage.getEnrollmentsByStudent(userId);
-      const alreadyEnrolled = existingEnrollments.some(e => e.classId === classId);
-      if (alreadyEnrolled) {
-        return res.status(400).json({ error: "Already enrolled in this class" });
-      }
-      
-      const enrollment = await storage.createEnrollment({ studentId: userId, classId });
-      res.status(201).json(enrollment);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to enroll" });
-    }
+  app.post("/api/classes/:classId/enroll", isStudent, async (_req, res) => {
+    return res.status(410).json({ error: "Join classes from the Student Dashboard using a Class Code." });
   });
 
-  app.post("/api/classes/:classId/enrollments", isAuthenticated, async (req, res) => {
+  app.post("/api/classes/:classId/enrollments", isProfessor, async (req, res) => {
     try {
       const { studentId } = req.body;
       const classId = p(req.params.classId);
+      const professorId = getUserId(req);
+      const cls = await storage.getClass(classId);
+      if (!cls) return res.status(404).json({ error: "Class not found" });
+      if (cls.professorId !== professorId) return res.status(403).json({ error: "You can only manage your own class" });
       
       if (!studentId) {
         return res.status(400).json({ error: "Student ID is required" });
       }
+      const student = await storage.getUser(studentId);
+      if (!student || student.role !== "student") return res.status(404).json({ error: "Student account not found" });
       
       const existingEnrollments = await storage.getEnrollmentsByClass(classId);
       const alreadyEnrolled = existingEnrollments.some(e => e.studentId === studentId);
@@ -1091,7 +1758,14 @@ export async function registerRoutes(
 
   app.delete("/api/classes/:classId/enrollments/:studentId", isAuthenticated, async (req, res) => {
     try {
-      const deleted = await storage.deleteEnrollment(p(req.params.studentId), p(req.params.classId));
+      const requester = await storage.getUser(getUserId(req));
+      const classId = p(req.params.classId);
+      const cls = await storage.getClass(classId);
+      if (!cls) return res.status(404).json({ error: "Class not found" });
+      if (!requester || (requester.role !== "admin" && (requester.role !== "professor" || cls.professorId !== requester.id))) {
+        return res.status(403).json({ error: "Professor or admin access required" });
+      }
+      const deleted = await storage.deleteEnrollment(p(req.params.studentId), classId);
       if (!deleted) {
         return res.status(404).json({ error: "Enrollment not found" });
       }
@@ -1104,7 +1778,20 @@ export async function registerRoutes(
   // Class Materials routes
   app.get("/api/classes/:classId/materials", isAuthenticated, async (req, res) => {
     try {
-      const materials = await storage.getMaterialsByClass(p(req.params.classId));
+      const requesterId = getUserId(req);
+      const requester = await storage.getUser(requesterId);
+      const classId = p(req.params.classId);
+      const cls = await storage.getClass(classId);
+      if (!cls) return res.status(404).json({ error: "Class not found" });
+      if (requester?.role === "student") {
+        const memberships = await storage.getEnrollmentsByStudent(requesterId);
+        if (!memberships.some((membership) => membership.classId === classId && membership.status !== "inactive")) {
+          return res.status(403).json({ error: "You are not enrolled in this class" });
+        }
+      } else if (!requester || (requester.role !== "admin" && (requester.role !== "professor" || cls.professorId !== requesterId))) {
+        return res.status(403).json({ error: "Not authorized to view class materials" });
+      }
+      const materials = await storage.getMaterialsByClass(classId);
       res.json(materials.map(m => ({ ...m, content: m.content.substring(0, 200) + (m.content.length > 200 ? "..." : "") })));
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch materials" });
@@ -1191,22 +1878,35 @@ export async function registerRoutes(
 
       if (user.role === "professor") {
         const examsList = await storage.getExamsByProfessor(userId);
-        res.json(examsList);
-      } else {
+        res.json(examsList.filter((exam) => !exam.archivedAt));
+      } else if (user.role === "student") {
         const enrollmentsList = await storage.getEnrollmentsByStudent(userId);
-        const classIds = enrollmentsList.map(e => e.classId);
-        
+        const classIds = new Set(enrollmentsList.filter((e) => e.status !== "inactive").map((e) => e.classId));
+        const ownAttempts = await storage.getSubmissionsByStudent(userId);
+        const attemptedExamIds = new Set(ownAttempts.map((attempt) => attempt.examId));
         const allExams = await storage.getAllExams();
+        const directGrantExamIds = getValidDirectExamGrantIds(req, allExams);
         const myExams = allExams.filter(exam => {
-          const assignedById = exam.assignedStudentIds.includes(userId);
-          const assignedByName = (exam.assignedStudentNames || []).some(
-            n => n.toLowerCase() === (user.firstName?.toLowerCase() + " " + user.lastName?.toLowerCase()) ||
-                 n.toLowerCase() === (user.email?.toLowerCase() || "")
-          );
-          const inClass = exam.classId && classIds.includes(exam.classId);
-          return assignedById || assignedByName || inClass;
+          if (exam.archivedAt && !attemptedExamIds.has(exam.id)) return false;
+          const related = attemptedExamIds.has(exam.id) || canStudentAccessExam({
+            exam,
+            examId: exam.id,
+            studentId: userId,
+            enrolledClassIds: classIds,
+            directGrantExamIds,
+          });
+          return related && (exam.status !== "draft" || attemptedExamIds.has(exam.id));
         });
-        res.json(myExams);
+        // The list endpoint is metadata-only for students. Questions are returned
+        // only by the guarded exam-detail endpoint once the exam is available.
+        res.json(myExams.map((exam) => ({
+          ...sanitizeExamForStudent(exam),
+          questions: [],
+        })));
+      } else if (user.role === "admin") {
+        res.json(await storage.getAllExams());
+      } else {
+        res.status(403).json({ error: "Not authorized to view exams" });
       }
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch exams" });
@@ -1563,7 +2263,33 @@ export async function registerRoutes(
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
       }
-      res.json(exam);
+      const userId = getUserId(req);
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
+      if (user.role === "student") {
+        if (!(await studentCanAccessExam(req, userId, exam))) {
+          return res.status(403).json({ error: "You do not have permission to access this exam." });
+        }
+        const window = validateExamWindow(exam);
+        if (!window.allowed) {
+          return res.status(window.status).json({ error: window.error });
+        }
+        const attempts = (await storage.getSubmissionsByStudent(userId)).filter(
+          (attempt) => attempt.examId === exam.id && attempt.isPreview !== "true",
+        );
+        const attemptLimit = validateAttemptLimit(exam, attempts);
+        if (!attemptLimit.allowed) {
+          return res.status(attemptLimit.status).json({ error: attemptLimit.error });
+        }
+        return res.json(sanitizeExamForStudent(exam));
+      }
+      if (user.role === "professor" && exam.professorId !== userId) {
+        return res.status(403).json({ error: "Not authorized to view this exam" });
+      }
+      if (user.role !== "professor" && user.role !== "admin") {
+        return res.status(403).json({ error: "Not authorized to view this exam" });
+      }
+      return res.json(exam);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch exam" });
     }
@@ -1591,7 +2317,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/exams", isAuthenticated, async (req, res) => {
+  app.post("/api/exams", isProfessor, async (req, res) => {
     try {
       const parseResult = insertExamSchema.safeParse(req.body);
       if (!parseResult.success) {
@@ -1653,7 +2379,18 @@ export async function registerRoutes(
       if (user.role === "professor" && existing.professorId !== user.id) {
         return res.status(403).json({ error: "Not authorized to delete this exam" });
       }
-      const deleted = await storage.deleteExam(p(req.params.id));
+      const existingAttempts = await storage.getSubmissionsByExam(existing.id);
+      if (existingAttempts.length > 0) {
+        // Preserve the exam definition required to render historical attempts.
+        // It disappears from professor/student active lists but remains available
+        // to authorized result and history lookups.
+        await storage.updateExam(existing.id, {
+          status: "inactive",
+          archivedAt: new Date(),
+        });
+        return res.status(204).send();
+      }
+      const deleted = await storage.deleteExam(existing.id);
       if (!deleted) {
         return res.status(404).json({ error: "Exam not found" });
       }
@@ -1667,31 +2404,54 @@ export async function registerRoutes(
   app.get("/api/submissions", isAuthenticated, async (req, res) => {
     try {
       const { examId, studentId } = req.query;
-      
+      const userId = getUserId(req);
+      const user = await storage.getUser(userId);
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
+
       let subs;
       const includePreview = req.query.includePreview === "true";
-      if (examId) {
-        subs = await storage.getSubmissionsByExam(examId as string);
-      } else if (studentId) {
-        subs = await storage.getSubmissionsByStudent(studentId as string);
-      } else {
-        const userId = getUserId(req);
-        const user = await storage.getUser(userId);
-        if (user?.role === "professor") {
-          const profExams = await storage.getExamsByProfessor(userId);
-          const examIds = profExams.map(e => e.id);
-          const allSubs = await storage.getAllSubmissions();
-          subs = allSubs.filter(s => examIds.includes(s.examId));
-        } else {
-          subs = await storage.getSubmissionsByStudent(userId);
+      if (user.role === "student") {
+        subs = await storage.getSubmissionsByStudent(userId);
+      } else if (user.role === "professor") {
+        const profExams = await storage.getExamsByProfessor(userId);
+        const ownedExamIds = new Set(profExams.map((exam) => exam.id));
+        if (examId && !ownedExamIds.has(String(examId))) {
+          return res.status(403).json({ error: "Not authorized to view these submissions" });
         }
+        const allSubs = examId
+          ? await storage.getSubmissionsByExam(String(examId))
+          : await storage.getAllSubmissions();
+        subs = allSubs.filter((submission) => ownedExamIds.has(submission.examId));
+      } else if (user.role === "admin") {
+        subs = examId
+          ? await storage.getSubmissionsByExam(String(examId))
+          : studentId
+            ? await storage.getSubmissionsByStudent(String(studentId))
+            : await storage.getAllSubmissions();
+      } else {
+        return res.status(403).json({ error: "Not authorized to view submissions" });
       }
 
       if (!includePreview) {
         subs = subs.filter(s => s.isPreview !== "true");
       }
       
-      res.json(subs);
+      if (user.role === "student") {
+        const safeResults = await Promise.all(subs.map(async (submission) => {
+          const exam = await storage.getExam(submission.examId);
+          if (!exam) return null;
+          const cls = exam.classId ? await storage.getClass(exam.classId) : undefined;
+          const professor = await storage.getUser(exam.professorId);
+          return buildStudentHistoryItem({
+            submission,
+            exam,
+            className: cls?.subjectName ?? null,
+            professorName: professorDisplayName(professor),
+          });
+        }));
+        return res.json(safeResults.filter(Boolean));
+      }
+      return res.json(subs);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch submissions" });
     }
@@ -1703,7 +2463,30 @@ export async function registerRoutes(
       if (!submission) {
         return res.status(404).json({ error: "Submission not found" });
       }
-      res.json(submission);
+      const userId = getUserId(req);
+      const user = await storage.getUser(userId);
+      const exam = await storage.getExam(submission.examId);
+      if (!user || !exam) return res.status(404).json({ error: "Submission not found" });
+      if (user.role === "student") {
+        if (submission.studentId !== userId || submission.isPreview === "true") {
+          return res.status(403).json({ error: "Not authorized to view this submission" });
+        }
+        const cls = exam.classId ? await storage.getClass(exam.classId) : undefined;
+        const professor = await storage.getUser(exam.professorId);
+        return res.json(buildStudentHistoryItem({
+          submission,
+          exam,
+          className: cls?.subjectName ?? null,
+          professorName: professorDisplayName(professor),
+        }));
+      }
+      if (user.role === "professor" && exam.professorId !== userId) {
+        return res.status(403).json({ error: "Not authorized to view this submission" });
+      }
+      if (user.role !== "professor" && user.role !== "admin") {
+        return res.status(403).json({ error: "Not authorized to view this submission" });
+      }
+      return res.json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch submission" });
     }
@@ -1721,10 +2504,26 @@ export async function registerRoutes(
 
       const { examId, responses, isPreview, consentGiven, consentTimestamp } = parseResult.data;
       const studentId = getUserId(req);
+      const currentUser = await storage.getUser(studentId);
+      if (!currentUser) return res.status(401).json({ error: "Unauthorized" });
 
       const exam = await storage.getExam(examId);
       if (!exam) {
         return res.status(404).json({ error: "Exam not found" });
+      }
+
+      if (isPreview) {
+        if (currentUser.role !== "professor" || exam.professorId !== studentId) {
+          return res.status(403).json({ error: "Only the exam's professor can preview this exam" });
+        }
+      } else if (currentUser.role !== "student") {
+        return res.status(403).json({ error: "Student access required" });
+      }
+
+      if (!isPreview && exam.mode === "adaptive") {
+        return res.status(409).json({
+          error: "Adaptive exams must be completed through the active adaptive attempt.",
+        });
       }
 
       if (consentGiven !== true) {
@@ -1737,37 +2536,96 @@ export async function registerRoutes(
       }
 
       if (!isPreview) {
-        if (exam.startTime && exam.endTime) {
-          const now = new Date();
-          const start = new Date(exam.startTime);
-          const end = new Date(exam.endTime);
-          
-          if (now < start || now > end) {
-            return res.status(400).json({ error: "Exam is not currently active" });
-          }
+        if (!(await studentCanAccessExam(req, studentId, exam))) {
+          return res.status(403).json({ error: "You do not have permission to access this exam." });
         }
-
-        const existingSubmissions = await storage.getSubmissionsByStudent(studentId);
-        const alreadySubmitted = existingSubmissions.some(s => s.examId === examId && s.isPreview !== "true");
-        if (alreadySubmitted) {
-          return res.status(400).json({ error: "You have already submitted this exam" });
-        }
+        const window = validateExamWindow(exam);
+        if (!window.allowed) return res.status(window.status).json({ error: window.error });
       }
 
-      const submission = await storage.createSubmission(studentId, examId, responses, !!isPreview, {
-        consentGiven: true,
-        consentTimestamp: consentDate,
-      });
+      const submissionResult = isPreview
+        ? {
+            ok: true,
+            data: await storage.createSubmission(studentId, examId, responses, true, {
+              consentGiven: true,
+              consentTimestamp: consentDate,
+            }),
+          } as const
+        : await withStudentExamAttemptLock(studentId, examId, async () => {
+            const currentExam = await storage.getExam(examId);
+            if (!currentExam) {
+              return { ok: false, status: 404, error: "Exam not found." } as const;
+            }
+            if (!(await studentCanAccessExam(req, studentId, currentExam))) {
+              return {
+                ok: false,
+                status: 403,
+                error: "You do not have permission to access this exam.",
+              } as const;
+            }
+            const currentWindow = validateExamWindow(currentExam);
+            if (!currentWindow.allowed) {
+              return {
+                ok: false,
+                status: currentWindow.status,
+                error: currentWindow.error || "This exam is unavailable.",
+              } as const;
+            }
+            const existingSubmissions = (await storage.getSubmissionsByStudent(studentId)).filter(
+              (submission) => submission.examId === examId && submission.isPreview !== "true",
+            );
+            const attemptLimit = validateNewAttemptCreation(currentExam, existingSubmissions);
+            if (!attemptLimit.allowed) {
+              return {
+                ok: false,
+                status: attemptLimit.status,
+                error: (currentExam.maxAttempts ?? 1) === 1 && attemptLimit.error === "You have used all allowed attempts."
+                  ? "You have already completed this exam."
+                  : attemptLimit.error || "You have used all allowed attempts.",
+              } as const;
+            }
+            return {
+              ok: true,
+              data: await storage.createSubmission(studentId, examId, responses, false, {
+                consentGiven: true,
+                consentTimestamp: consentDate,
+              }),
+            } as const;
+          });
+
+      if (!submissionResult.ok) {
+        return res.status(submissionResult.status).json({ error: submissionResult.error });
+      }
+      const submission = submissionResult.data;
       if (!isPreview) {
         logUserEvent(studentId, "exam_submitted", { examId, submissionId: submission.id });
       }
-      res.status(201).json(submission);
+      if (!isPreview) {
+        if (exam.mode === "quickvox") {
+          return res.status(201).json({
+            id: submission.id,
+            examId: submission.examId,
+            status: submission.status,
+            submittedAt: submission.submittedAt,
+            quickvoxInsight: submission.quickvoxInsight,
+            quickvoxFollowUp: submission.quickvoxFollowUp,
+          });
+        }
+        return res.status(201).json({
+          id: submission.id,
+          examId: submission.examId,
+          status: submission.status,
+          submittedAt: submission.submittedAt,
+          resultStatus: "pending_review",
+        });
+      }
+      return res.status(201).json(submission);
     } catch (error) {
       res.status(500).json({ error: "Failed to create submission" });
     }
   });
 
-  app.patch("/api/submissions/:id/score", isAuthenticated, async (req, res) => {
+  app.patch("/api/submissions/:id/score", isProfessor, async (req, res) => {
     try {
       const { questionId, score, understandingScore } = req.body;
       
@@ -1781,6 +2639,13 @@ export async function registerRoutes(
 
       if (understandingScore !== undefined && (understandingScore < 0 || understandingScore > 1)) {
         return res.status(400).json({ error: "Understanding score must be between 0 and 1" });
+      }
+
+      const existing = await storage.getSubmission(p(req.params.id));
+      if (!existing) return res.status(404).json({ error: "Submission not found" });
+      const exam = await storage.getExam(existing.examId);
+      if (!exam || exam.professorId !== getUserId(req)) {
+        return res.status(403).json({ error: "Only the exam's professor can update this score" });
       }
 
       const submission = await storage.updateSubmissionScore(
@@ -1800,7 +2665,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/submissions/:id/decision", isAuthenticated, async (req, res) => {
+  app.patch("/api/submissions/:id/decision", isProfessor, async (req, res) => {
     try {
       const userId = getUserId(req);
       const {
@@ -1841,6 +2706,9 @@ export async function registerRoutes(
 
       if (exam.professorId !== userId) {
         return res.status(403).json({ error: "Only the exam's professor can record a decision" });
+      }
+      if (submission.status !== "completed") {
+        return res.status(409).json({ error: "This attempt must be completed before a result can be published." });
       }
 
       const aiTotal = (typeof aiTotalScore === "number" && aiTotalScore >= 0 && aiTotalScore <= 1)
@@ -1892,7 +2760,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/submissions/:id/feedback", isAuthenticated, async (req, res) => {
+  app.post("/api/submissions/:id/feedback", isProfessor, async (req, res) => {
     try {
       const userId = getUserId(req);
 
@@ -1906,7 +2774,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Exam not found" });
       }
 
-      if (exam.professorId !== userId && submission.studentId !== userId) {
+      if (exam.professorId !== userId) {
         return res.status(403).json({ error: "Not authorized to generate feedback for this submission" });
       }
 
@@ -2062,21 +2930,31 @@ export async function registerRoutes(
   app.get("/api/recordings/:filename", isAuthenticated, async (req, res) => {
     const userId = getUserId(req);
     const filename = p(req.params.filename);
-    if (filename.includes("..") || filename.includes("/")) {
+    if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) {
       return res.status(400).json({ error: "Invalid filename" });
     }
 
-    const submissionIdMatch = filename.match(/(?:screen|webcam)_([^_]+)_/);
-    if (submissionIdMatch) {
-      const subId = submissionIdMatch[1];
-      const submission = await storage.getSubmission(subId);
-      if (submission) {
-        if (submission.studentId !== userId) {
-          const exam = await storage.getExam(submission.examId);
-          if (!exam || exam.professorId !== userId) {
-            return res.status(403).json({ error: "Not authorized to view this recording" });
-          }
-        }
+    const recordingPath = `/api/recordings/${filename}`;
+    const [submission] = await db
+      .select()
+      .from(submissions)
+      .where(or(
+        eq(submissions.screenRecordingUrl, recordingPath),
+        eq(submissions.webcamRecordingUrl, recordingPath),
+      ))
+      .limit(1);
+    if (!submission) {
+      return res.status(404).json({ error: "Recording not found" });
+    }
+
+    const requester = await storage.getUser(userId);
+    if (!requester) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    if (submission.studentId !== userId && requester.role !== "admin") {
+      const exam = await storage.getExam(submission.examId);
+      if (!exam || requester.role !== "professor" || exam.professorId !== userId) {
+        return res.status(403).json({ error: "Not authorized to view this recording" });
       }
     }
 
@@ -2267,6 +3145,12 @@ export async function registerRoutes(
         }
         const classExams = await storage.getExamsByClass(classId);
         filterExamIds = classExams.map(e => e.id);
+      } else {
+        // Without an explicit class, scope the aggregate to exams owned by the
+        // authenticated professor. A student ID alone is never authorization
+        // to inspect work submitted to another professor.
+        const professorExams = await storage.getExamsByProfessor(userId);
+        filterExamIds = professorExams.map((exam) => exam.id);
       }
 
       const radar = await computeStudentRadar(studentId, filterExamIds);
@@ -2514,8 +3398,7 @@ export async function registerRoutes(
       const wss = getWebSocketServer();
       const onlineUserIds = wss ? wss.getOnlineUserIds() : [];
       const safeUsers = allUsers.map(u => {
-        const { geminiApiKey, ...safe } = u;
-        return { ...safe, isOnline: onlineUserIds.includes(u.id) };
+        return { ...sanitizeUser(u), isOnline: onlineUserIds.includes(u.id) };
       });
       res.json(safeUsers);
     } catch (error) {

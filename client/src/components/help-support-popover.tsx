@@ -191,7 +191,7 @@ export function HelpSupportPopover({ role, activeTab }: HelpSupportPopoverProps)
             <li>Create a class under your university</li>
             <li>Upload course materials</li>
             <li>Share the class join code with students</li>
-            <li>Students join using the code on the login page</li>
+            <li>Students sign in, then join from their dashboard using the code</li>
             <li>Create exams - AI can generate questions from materials</li>
           </ol>
         </div>
@@ -216,12 +216,12 @@ export function HelpSupportPopover({ role, activeTab }: HelpSupportPopoverProps)
       <div className="space-y-2">
         <p className="font-semibold">How to take an exam</p>
         <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-sm">
-          <li>Enter your exam code or class code on the login page</li>
-          <li>Find your exam under Active Exams</li>
-          <li>Click Take Exam</li>
+          <li>Sign in to your student account</li>
+          <li>Use Join Class with Code or Join Exam with Code on your dashboard</li>
+          <li>Open an available exam from My Exams</li>
           <li>Allow camera and screen sharing</li>
           <li>Answer each question</li>
-          <li>Click Submit - scores appear right away</li>
+          <li>Submit your answers; official results appear after professor review</li>
         </ol>
       </div>
     );

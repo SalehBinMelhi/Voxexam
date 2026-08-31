@@ -1714,7 +1714,7 @@ class DatabaseStorage implements IStorage {
     }
 
     // Polyfill accessCode for backwards compatibility
-    if (exam.publicExamCode) {
+    if (exam.publicExamCode && !exam.accessCode) {
       exam.accessCode = exam.publicExamCode;
     }
 
@@ -2341,7 +2341,11 @@ class DatabaseStorage implements IStorage {
 
   // Exam access code methods
   async getExamByAccessCode(code: string): Promise<Exam | undefined> {
-    const [exam] = await db.select().from(exams).where(eq(exams.accessCode, code));
+    const normalized = code.trim().toUpperCase();
+    const [exam] = await db.select().from(exams).where(sql`
+      upper(${exams.publicExamCode}) = ${normalized}
+      OR upper(${exams.accessCode}) = ${normalized}
+    `);
     return exam || undefined;
   }
 
@@ -2355,6 +2359,7 @@ class DatabaseStorage implements IStorage {
     const newExpiry = new Date(Date.now() + expiryMs);
     const [updated] = await db.update(exams).set({
       accessCode: newCode,
+      publicExamCode: newCode,
       accessCodeExpiresAt: newExpiry,
     }).where(eq(exams.id, examId)).returning();
     return updated || undefined;
@@ -2366,7 +2371,8 @@ class DatabaseStorage implements IStorage {
   }
 
   async getClassByClassCode(code: string): Promise<Class | undefined> {
-    const [cls] = await db.select().from(classes).where(eq(classes.classCode, code));
+    const normalized = code.trim().toUpperCase();
+    const [cls] = await db.select().from(classes).where(sql`upper(${classes.classCode}) = ${normalized}`);
     return cls || undefined;
   }
 
@@ -2377,10 +2383,16 @@ class DatabaseStorage implements IStorage {
   }
 
   async enrollStudentInClass(studentId: string, classId: string, displayName?: string): Promise<any> {
+    const [existing] = await db.select().from(enrollments).where(and(
+      eq(enrollments.studentId, studentId),
+      eq(enrollments.classId, classId),
+    ));
+    if (existing) return existing;
     const [enrollment] = await db.insert(enrollments).values({
       classId,
-      guestStudentId: studentId,
+      studentId,
       displayName: displayName || "Student",
+      status: "active",
     }).returning();
     return enrollment;
   }

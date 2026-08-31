@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useAuth } from "@/hooks/use-auth";
 import {
   Dialog,
   DialogContent,
@@ -42,7 +41,8 @@ import {
   Sparkles,
   Share2,
 } from "lucide-react";
-import type { Exam, ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
+import type { ExamResponse, ExamSubmission, QuestionType } from "@shared/schema";
+import type { StudentTakeExam } from "@shared/student-experience";
 import { format, parseISO, differenceInMinutes } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 
@@ -312,7 +312,11 @@ function AudioRecorder({ questionId, questionText, textValue, audioData, onTextC
 }
 
 interface TakeExamDialogProps {
-  exam: Exam;
+  exam: Omit<StudentTakeExam, "questions"> & {
+    questions: Array<StudentTakeExam["questions"][number] & { correctAnswer?: string }>;
+    accessCode?: string | null;
+  };
+  attemptId?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   previewMode?: boolean;
@@ -321,8 +325,7 @@ interface TakeExamDialogProps {
 type ExamPhase = "setup" | "consent" | "exam" | "results";
 type RecordingUploadStatus = "idle" | "saving" | "saved" | "failed";
 
-export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }: TakeExamDialogProps) {
-  const { user } = useAuth();
+export function TakeExamDialog({ exam, attemptId, open, onOpenChange, previewMode = false }: TakeExamDialogProps) {
   const { toast } = useToast();
   const [phase, setPhase] = useState<ExamPhase>("setup");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -664,7 +667,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     mutationFn: async (data: {
       examId: string;
       responses: ExamResponse[];
-      studentId: string;
+      attemptId?: string;
       isPreview?: boolean;
       consentGiven: boolean;
       consentTimestamp: string;
@@ -675,6 +678,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     },
     onSuccess: async (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/submissions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/student/dashboard"] });
       setSubmissionResult(result);
       setPhase("results");
 
@@ -809,7 +813,7 @@ export function TakeExamDialog({ exam, open, onOpenChange, previewMode = false }
     submitMutation.mutate({
       examId: exam.id,
       responses: examResponses,
-      studentId: user?.id || "",
+      attemptId,
       isPreview: previewMode || undefined,
       consentGiven,
       consentTimestamp: consentTimestamp || new Date().toISOString(),

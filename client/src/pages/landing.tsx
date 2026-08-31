@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { GraduationCap, Mic, Brain, Shield, UserCog, BookOpen, ChevronRight, LogIn, AlertCircle, Users, KeyRound, UserPlus } from "lucide-react";
+import { GraduationCap, Mic, Brain, Shield, BookOpen, ChevronRight, LogIn, AlertCircle, KeyRound, UserPlus } from "lucide-react";
 
 type FeatureKey = "audio" | "grading" | "management" | null;
 
@@ -101,15 +101,14 @@ const featureDetails: Record<Exclude<FeatureKey, null>, { title: string; icon: t
 export default function LandingPage() {
   const [activeFeature, setActiveFeature] = useState<FeatureKey>(null);
 
-  // Student login state
-  const [studentIdInput, setStudentIdInput] = useState("");
-  const [examCodeInput, setExamCodeInput] = useState("");
-  const [studentLoginError, setStudentLoginError] = useState("");
-  const [studentLoginLoading, setStudentLoginLoading] = useState(false);
-  const [classStudentName, setClassStudentName] = useState("");
-  const [classCodeInput, setClassCodeInput] = useState("");
-  const [classLoginError, setClassLoginError] = useState("");
-  const [classLoginLoading, setClassLoginLoading] = useState(false);
+  // Student account authentication state
+  const [studentTab, setStudentTab] = useState<"signin" | "register">("signin");
+  const [studentFullName, setStudentFullName] = useState("");
+  const [studentEmail, setStudentEmail] = useState("");
+  const [studentPassword, setStudentPassword] = useState("");
+  const [studentConfirmPassword, setStudentConfirmPassword] = useState("");
+  const [studentAuthError, setStudentAuthError] = useState("");
+  const [studentAuthLoading, setStudentAuthLoading] = useState(false);
 
   // Professor auth state
   const [professorDialogOpen, setProfessorDialogOpen] = useState(false);
@@ -121,83 +120,90 @@ export default function LandingPage() {
   const [profError, setProfError] = useState("");
   const [profLoading, setProfLoading] = useState(false);
 
-  // Demo state
-  const [loggingIn, setLoggingIn] = useState<string | null>(null);
-
-  const handleStudentLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setStudentLoginError("");
-    if (!studentIdInput.trim() || !examCodeInput.trim()) {
-      setStudentLoginError("Both fields are required.");
-      return;
-    }
-    setStudentLoginLoading(true);
+  const readAuthError = async (res: Response, fallback: string) => {
     try {
-      const res = await fetch("/api/student-login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ studentId: studentIdInput.trim(), examCode: examCodeInput.trim() }),
-      });
       const data = await res.json();
-      if (res.ok) {
-        window.location.href = "/";
-      } else {
-        setStudentLoginError(data.message || "Login failed. Please try again.");
-      }
+      return typeof data?.error === "string"
+        ? data.error
+        : typeof data?.message === "string"
+          ? data.message
+          : fallback;
     } catch {
-      setStudentLoginError("Connection error. Please try again.");
-    } finally {
-      setStudentLoginLoading(false);
+      return fallback;
     }
   };
 
-  const handleClassLogin = async (e: React.FormEvent) => {
+  const handleStudentSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    setClassLoginError("");
-    if (!classStudentName.trim() || !classCodeInput.trim()) {
-      setClassLoginError("Both fields are required.");
+    setStudentAuthError("");
+    const email = studentEmail.trim().toLowerCase();
+    if (!email || !studentPassword) {
+      setStudentAuthError("Email and password are required.");
       return;
     }
-    setClassLoginLoading(true);
+    setStudentAuthLoading(true);
     try {
-      const res = await fetch("/api/class-login", {
+      const res = await fetch("/api/student/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ studentName: classStudentName.trim(), classCode: classCodeInput.trim() }),
+        body: JSON.stringify({ email, password: studentPassword }),
       });
-      const data = await res.json();
       if (res.ok) {
         window.location.href = "/";
       } else {
-        setClassLoginError(data.message || "Login failed. Please try again.");
+        setStudentAuthError(await readAuthError(res, "Sign-in failed. Please try again."));
       }
     } catch {
-      setClassLoginError("Connection error. Please try again.");
+      setStudentAuthError("Connection error. Please try again.");
     } finally {
-      setClassLoginLoading(false);
+      setStudentAuthLoading(false);
     }
   };
 
-
-
-  const handleDemoLogin = async (role: "professor" | "student") => {
-    setLoggingIn(role);
+  const handleStudentRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setStudentAuthError("");
+    const fullName = studentFullName.trim();
+    const email = studentEmail.trim().toLowerCase();
+    if (!fullName || !email || !studentPassword || !studentConfirmPassword) {
+      setStudentAuthError("All fields are required.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setStudentAuthError("Enter a valid email address.");
+      return;
+    }
+    if (studentPassword.length < 8) {
+      setStudentAuthError("Password must be at least 8 characters.");
+      return;
+    }
+    if (studentPassword !== studentConfirmPassword) {
+      setStudentAuthError("Passwords do not match.");
+      return;
+    }
+    setStudentAuthLoading(true);
     try {
-      const res = await fetch("/api/demo-login", {
+      const res = await fetch("/api/student/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({
+          fullName,
+          email,
+          password: studentPassword,
+          confirmPassword: studentConfirmPassword,
+        }),
       });
       if (res.ok) {
         window.location.href = "/";
+      } else {
+        setStudentAuthError(await readAuthError(res, "Registration failed. Please try again."));
       }
-    } catch (e) {
-      console.error("Demo login failed:", e);
+    } catch {
+      setStudentAuthError("Connection error. Please try again.");
     } finally {
-      setLoggingIn(null);
+      setStudentAuthLoading(false);
     }
   };
 
@@ -332,58 +338,138 @@ export default function LandingPage() {
                     </div>
                   </div>
 
-                  <Tabs defaultValue="join-exam" className="w-full">
+                  <Tabs
+                    value={studentTab}
+                    onValueChange={(value) => {
+                      setStudentTab(value as "signin" | "register");
+                      setStudentAuthError("");
+                    }}
+                    className="w-full"
+                  >
                     <TabsList className="w-full" data-testid="tabs-student-login">
-                      <TabsTrigger value="join-exam" className="flex-1" data-testid="tab-join-exam">Join Exam</TabsTrigger>
-                      <TabsTrigger value="join-class" className="flex-1" data-testid="tab-join-class">Join Class</TabsTrigger>
+                      <TabsTrigger value="signin" className="flex-1 gap-1.5" data-testid="tab-student-signin">
+                        <LogIn className="h-3.5 w-3.5" />
+                        Sign In
+                      </TabsTrigger>
+                      <TabsTrigger value="register" className="flex-1 gap-1.5" data-testid="tab-student-register">
+                        <UserPlus className="h-3.5 w-3.5" />
+                        Create New Account
+                      </TabsTrigger>
                     </TabsList>
-                    <TabsContent value="join-exam">
+                    <TabsContent value="signin" className="mt-4">
                       <p className="text-sm text-muted-foreground mb-4">
-                        Enter your name and exam code provided by your professor.
+                        Sign in to access your classes, exams, and published results.
                       </p>
-                      <form onSubmit={handleStudentLogin} className="space-y-3">
+                      <form onSubmit={handleStudentSignIn} className="space-y-4">
                         <div className="space-y-1.5">
-                          <Label htmlFor="student-id">Your Name</Label>
-                          <Input id="student-id" placeholder="e.g. John Smith" value={studentIdInput} onChange={(e) => setStudentIdInput(e.target.value)} disabled={studentLoginLoading} data-testid="input-student-id" />
+                          <Label htmlFor="student-email-signin">Email</Label>
+                          <Input
+                            id="student-email-signin"
+                            type="email"
+                            autoComplete="email"
+                            placeholder="student@university.ac.ae"
+                            value={studentEmail}
+                            onChange={(e) => setStudentEmail(e.target.value)}
+                            disabled={studentAuthLoading}
+                            required
+                            data-testid="input-student-email-signin"
+                          />
                         </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor="exam-code">Exam Code</Label>
-                          <Input id="exam-code" placeholder="Enter 5-digit code or exam ID" value={examCodeInput} onChange={(e) => setExamCodeInput(e.target.value)} disabled={studentLoginLoading} data-testid="input-exam-code" />
+                          <Label htmlFor="student-password-signin">Password</Label>
+                          <Input
+                            id="student-password-signin"
+                            type="password"
+                            autoComplete="current-password"
+                            placeholder="Enter your password"
+                            value={studentPassword}
+                            onChange={(e) => setStudentPassword(e.target.value)}
+                            disabled={studentAuthLoading}
+                            required
+                            data-testid="input-student-password-signin"
+                          />
                         </div>
-                        {studentLoginError && (
-                          <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-student-login-error">
+                        {studentAuthError && (
+                          <div className="flex items-start gap-2 text-sm text-destructive" role="alert" aria-live="polite" data-testid="text-student-auth-error">
                             <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                            <span>{studentLoginError}</span>
+                            <span>{studentAuthError}</span>
                           </div>
                         )}
-                        <Button type="submit" className="w-full gap-2" size="lg" disabled={studentLoginLoading} data-testid="button-student-login">
+                        <Button type="submit" className="w-full gap-2" size="lg" disabled={studentAuthLoading} data-testid="button-student-signin">
                           <LogIn className="h-4 w-4" />
-                          {studentLoginLoading ? "Logging in..." : "Enter Exam"}
+                          {studentAuthLoading ? "Signing in..." : "Sign In"}
                         </Button>
                       </form>
                     </TabsContent>
-                    <TabsContent value="join-class">
+                    <TabsContent value="register" className="mt-4">
                       <p className="text-sm text-muted-foreground mb-4">
-                        Enter your name and the class code to join a class.
+                        Create your private student account. Class and exam codes are entered after sign-in.
                       </p>
-                      <form onSubmit={handleClassLogin} className="space-y-3">
+                      <form onSubmit={handleStudentRegister} className="space-y-4">
                         <div className="space-y-1.5">
-                          <Label htmlFor="class-student-name">Your Name</Label>
-                          <Input id="class-student-name" placeholder="e.g. John Smith" value={classStudentName} onChange={(e) => setClassStudentName(e.target.value)} disabled={classLoginLoading} data-testid="input-class-student-name" />
+                          <Label htmlFor="student-fullname">Full Name</Label>
+                          <Input
+                            id="student-fullname"
+                            autoComplete="name"
+                            placeholder="e.g. Aisha Al Mansouri"
+                            value={studentFullName}
+                            onChange={(e) => setStudentFullName(e.target.value)}
+                            disabled={studentAuthLoading}
+                            required
+                            data-testid="input-student-fullname"
+                          />
                         </div>
                         <div className="space-y-1.5">
-                          <Label htmlFor="class-code">Class Code</Label>
-                          <Input id="class-code" placeholder="Enter class join code" value={classCodeInput} onChange={(e) => setClassCodeInput(e.target.value)} disabled={classLoginLoading} data-testid="input-class-code" />
+                          <Label htmlFor="student-email-register">Email</Label>
+                          <Input
+                            id="student-email-register"
+                            type="email"
+                            autoComplete="email"
+                            placeholder="student@university.ac.ae"
+                            value={studentEmail}
+                            onChange={(e) => setStudentEmail(e.target.value)}
+                            disabled={studentAuthLoading}
+                            required
+                            data-testid="input-student-email-register"
+                          />
                         </div>
-                        {classLoginError && (
-                          <div className="flex items-center gap-2 text-sm text-destructive" data-testid="text-class-login-error">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="student-password-register">Password</Label>
+                          <Input
+                            id="student-password-register"
+                            type="password"
+                            autoComplete="new-password"
+                            placeholder="At least 8 characters"
+                            value={studentPassword}
+                            onChange={(e) => setStudentPassword(e.target.value)}
+                            disabled={studentAuthLoading}
+                            required
+                            data-testid="input-student-password-register"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="student-confirm-password">Confirm Password</Label>
+                          <Input
+                            id="student-confirm-password"
+                            type="password"
+                            autoComplete="new-password"
+                            placeholder="Re-enter your password"
+                            value={studentConfirmPassword}
+                            onChange={(e) => setStudentConfirmPassword(e.target.value)}
+                            disabled={studentAuthLoading}
+                            required
+                            data-testid="input-student-confirm-password"
+                          />
+                        </div>
+                        {studentAuthError && (
+                          <div className="flex items-start gap-2 text-sm text-destructive" role="alert" aria-live="polite" data-testid="text-student-auth-error">
                             <AlertCircle className="h-4 w-4 flex-shrink-0" />
-                            <span>{classLoginError}</span>
+                            <span>{studentAuthError}</span>
                           </div>
                         )}
-                        <Button type="submit" className="w-full gap-2" size="lg" disabled={classLoginLoading} data-testid="button-class-login">
-                          <Users className="h-4 w-4" />
-                          {classLoginLoading ? "Joining..." : "Join Class"}
+                        <Button type="submit" className="w-full gap-2" size="lg" disabled={studentAuthLoading} data-testid="button-student-register">
+                          <UserPlus className="h-4 w-4" />
+                          {studentAuthLoading ? "Creating account..." : "Create New Account"}
                         </Button>
                       </form>
                     </TabsContent>
@@ -391,33 +477,6 @@ export default function LandingPage() {
                 </CardContent>
               </Card>
 
-              <div className="space-y-3">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Demo Access</p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => handleDemoLogin("professor")}
-                    disabled={loggingIn !== null}
-                    data-testid="button-login-professor-demo"
-                  >
-                    <UserCog className="h-3.5 w-3.5" />
-                    {loggingIn === "professor" ? "Logging in..." : "Demo Professor"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => handleDemoLogin("student")}
-                    disabled={loggingIn !== null}
-                    data-testid="button-login-student-demo"
-                  >
-                    <BookOpen className="h-3.5 w-3.5" />
-                    {loggingIn === "student" ? "Logging in..." : "Demo Student"}
-                  </Button>
-                </div>
-              </div>
             </div>
 
             <div className="hidden lg:flex items-center justify-center">

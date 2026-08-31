@@ -51,7 +51,7 @@ class VoxWebSocketServer {
         }
         this.clients.get(userId)!.push(client);
 
-        console.log(`[WS] Client connected: ${userId} (${userRole}), total connections: ${this.getTotalConnections()}`);
+        console.log(`[WS] Client connected (${userRole}), total connections: ${this.getTotalConnections()}`);
 
         ws.on("message", (data) => {
           try {
@@ -69,11 +69,11 @@ class VoxWebSocketServer {
             if (idx !== -1) userClients.splice(idx, 1);
             if (userClients.length === 0) this.clients.delete(userId);
           }
-          console.log(`[WS] Client disconnected: ${userId}, total connections: ${this.getTotalConnections()}`);
+          console.log(`[WS] Client disconnected, total connections: ${this.getTotalConnections()}`);
         });
 
         ws.on("error", (err) => {
-          console.error(`[WS] Error for ${userId}:`, err.message);
+          console.error("[WS] Client connection error:", err.message);
         });
 
         this.send(ws, { type: "connected", userId });
